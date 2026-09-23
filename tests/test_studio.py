@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from flamoris_studio.app import ImageRequest, create_app
 from flamoris_studio.db import Asset, Base, Execution, User
 from flamoris_studio.gateway import GatewayError
+from flamoris_studio.gateway import GenerationGateway
 from flamoris_studio.media import Thumbnails, filename, inspect_image
 
 
@@ -140,3 +141,17 @@ def test_media_bounds():
     assert ImageRequest(**image_request()).parameters()["positive_prompt"] == "a quiet stage"
     with pytest.raises(ValueError):
         inspect_image(b"bad", "image/png")
+
+
+@pytest.mark.asyncio
+async def test_gateway_normalizes_sdk_v2_result(monkeypatch):
+    from mcp.types import CallToolResult, ImageContent
+    gateway = GenerationGateway()
+
+    async def call(name, args=None):
+        assert name == "assets.get" and args == {"asset_id": "internal-only"}
+        return CallToolResult(content=[ImageContent(type="image", data="aGVsbG8=", mimeType="image/png")])
+
+    monkeypatch.setattr(gateway, "_call", call)
+    data, mime = await gateway.content("internal-only", 1024)
+    assert data == b"hello" and mime == "image/png"
