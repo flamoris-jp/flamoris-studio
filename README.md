@@ -95,6 +95,10 @@ In early phases, result assets may come from `flamoris-generation-mcp`.
 
 Later, `flamoris-studio-client` will make large desktop-local projects and media available through explicit asset references without requiring permanent storage on the Studio server.
 
+## Deployment
+
+For the decopon Docker/Compose and nginx setup, see [docs/DECOPON_DEPLOYMENT.md](docs/DECOPON_DEPLOYMENT.md). Deployment configuration and database credentials stay outside the repository.
+
 ## Architecture
 
 Phase 1 architecture and implementation boundaries are defined in [docs/STUDIO_ARCHITECTURE.md](docs/STUDIO_ARCHITECTURE.md).

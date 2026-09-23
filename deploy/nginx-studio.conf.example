@@ -1,0 +1,32 @@
+# Install only after DNS and an HTTPS certificate are ready.
+# Replace studio.example.invalid and both certificate paths.
+limit_req_zone $binary_remote_addr zone=studio_auth:10m rate=5r/m;
+
+server {
+    listen 80;
+    server_name studio.example.invalid;
+    return 301 https://$host$request_uri;
+}
+server {
+    listen 443 ssl;
+    server_name studio.example.invalid;
+    ssl_certificate /etc/letsencrypt/live/studio.example.invalid/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/studio.example.invalid/privkey.pem;
+    client_max_body_size 1m;
+
+    location /api/auth/ {
+        limit_req zone=studio_auth burst=10 nodelay;
+        proxy_pass http://127.0.0.1:5087;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_read_timeout 60s;
+    }
+    location / {
+        proxy_pass http://127.0.0.1:5087;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_read_timeout 60s;
+    }
+}
