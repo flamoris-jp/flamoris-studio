@@ -14,7 +14,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .auth import COOKIE, clear_session, current_user, database, digest, hasher, new_csrf, require_csrf, start_session
+from .auth import COOKIE, CSRF_COOKIE, clear_session, current_user, database, digest, hasher, new_csrf, require_csrf, start_session
 from .db import Asset, Execution, LoginSession, User, make_session_factory, now
 from .gateway import GatewayError, GenerationGateway
 from .media import Thumbnails, filename, inspect_image
@@ -123,7 +123,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             login = db.get(LoginSession, digest(token))
             if login and login.expires_at > now():
                 user = db.get(User, login.user_id)
-        csrf = new_csrf(response)
+        csrf = new_csrf(response, request.cookies.get(CSRF_COOKIE))
         response.headers["Cache-Control"] = "no-store"
         return {"authenticated": user is not None, "userName": user.email if user else None,
                 "csrfToken": csrf, "allowRegistration": os.getenv("STUDIO_ALLOW_REGISTRATION") == "1"}
@@ -238,21 +238,40 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         if final["status"] != "completed":
             return view(execution, db)
         listing = await app.state.gateway.assets(execution.upstream_job_id)
+        # jobs.result files and assets.list output_index both follow the
+        # snapshot's output order. Never derive a path from the asset ID or
+        # use a stored path to serve content; assets.get remains authoritative.
+        files = final.get("files", [])
+        output_paths = {}
+        if isinstance(files, list):
+            for index, file in enumerate(files[:64]):
+                if isinstance(file, dict) and isinstance(file.get("file"), str):
+                    path = file["file"]
+                    if 0 < len(path) <= 4096 and os.path.isabs(path):
+                        output_paths[index] = path
         # Lock the parent row to serialize concurrent catalog updates across processes.
         db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution.id})
-        known = set(db.scalars(select(Asset.upstream_asset_id).where(Asset.execution_id == execution.id)))
+        known = {asset.upstream_asset_id: asset for asset in db.scalars(
+            select(Asset).where(Asset.execution_id == execution.id, Asset.user_id == user_id))}
         for item in listing[:64]:
             if item.get("media_kind") != "image" or item.get("mime_type") not in {"image/png", "image/jpeg", "image/webp"}:
                 continue
             upstream = item.get("asset_id")
-            if not isinstance(upstream, str) or not 0 < len(upstream) <= 256 or upstream in known:
+            if not isinstance(upstream, str) or not 0 < len(upstream) <= 256:
+                continue
+            output_index = item.get("output_index")
+            storage_path = output_paths.get(output_index) if type(output_index) is int else None
+            if upstream in known:
+                if storage_path is not None:
+                    known[upstream].storage_path = storage_path
                 continue
             original = item.get("filename") if isinstance(item.get("filename"), str) else None
-            db.add(Asset(user_id=user_id, execution_id=execution.id, upstream_asset_id=upstream,
-                         storage_locator=upstream, original_filename=original,
+            asset = Asset(user_id=user_id, execution_id=execution.id, upstream_asset_id=upstream,
+                         storage_locator=upstream, storage_path=storage_path, original_filename=original,
                          display_name=filename(original), media_kind="image", mime_type=item["mime_type"],
-                         size_bytes=item.get("size_bytes") if isinstance(item.get("size_bytes"), int) else None))
-            known.add(upstream)
+                         size_bytes=item.get("size_bytes") if isinstance(item.get("size_bytes"), int) else None)
+            db.add(asset)
+            known[upstream] = asset
         db.commit()
         for asset in db.scalars(select(Asset).where(Asset.execution_id == execution.id,
                                                    Asset.thumbnail_locator.is_(None)).limit(8)):
