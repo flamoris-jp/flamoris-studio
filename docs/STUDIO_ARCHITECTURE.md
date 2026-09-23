@@ -64,7 +64,6 @@ Phase 1 does not include:
 - Kachinco integration;
 - FLAMORIS 2D integration;
 - persistent prompt presets;
-- persistent execution history;
 - a general workflow designer;
 - a universal schema-driven form renderer;
 - Studio-owned GPU/runtime switching;
@@ -75,6 +74,8 @@ Phase 1 does not include:
 Phase 1 also does not require a particular external identity provider. The authentication mechanism must be replaceable behind ASP.NET Core authentication/authorization boundaries. Local accounts, OIDC, or another deployment-appropriate mechanism may be selected by the implementation Issue, but anonymous cross-user access is not acceptable.
 
 These may be introduced only by later design/Issues.
+
+Phase 1 **does** persist Studio ownership/catalog metadata for users, executions, and assets. This persistence supports multi-user authorization, restart-safe references, basic history, and future Phase 2 features without making Studio the execution or binary-asset authority.
 
 ## 4. Current upstream reality
 
@@ -169,6 +170,8 @@ Do not introduce SSR, server components, or a schema-generated form framework un
 
 - ASP.NET Core
 - .NET 10
+- Entity Framework Core
+- PostgreSQL (shared infrastructure hosted on decopon, using a Studio-specific database or schema and least-privilege credentials)
 
 The backend owns:
 
@@ -179,7 +182,8 @@ The backend owns:
 - generation/intelligence gateway implementations;
 - result/asset retrieval;
 - validation and resource bounds;
-- logging and diagnostics.
+- logging and diagnostics;
+- Studio user/execution/asset catalog persistence.
 
 ### MCP client implementation
 
@@ -212,7 +216,7 @@ FLAMORIS Studio
 ASP.NET Core
    |
    +-- authentication / authorization
-   +-- per-user execution & asset handle registry
+   +-- PostgreSQL-backed per-user execution & asset catalog
    +-- serves built React application
    +-- Studio HTTP API
    +-- MCP client connections
@@ -258,6 +262,7 @@ Production should be same-origin where practical.
 | Studio presentation/orchestration | Studio |
 | Authentication/session boundary | Studio / configured identity provider |
 | Authorization for Studio-visible executions/assets | Studio |
+| Studio user/execution/asset catalog metadata | Studio PostgreSQL |
 | GPU runtime activation/shutdown/exclusivity | `flamoris-lime-manager` |
 | Generation workflows | `flamoris-generation-mcp` |
 | Generation jobs | `flamoris-generation-mcp` |
@@ -283,6 +288,8 @@ flamoris-studio/
       Configuration/
       Identity/
       Access/
+      Data/
+      Catalog/
       Intelligence/
       Generation/
       Executions/
@@ -497,11 +504,11 @@ Phase 1 needs a stable internal `StudioUserId` derived from the authenticated pr
 
 Authentication implementation is intentionally replaceable. Use standard ASP.NET Core authentication/authorization primitives so a deployment can use an appropriate provider without changing generation/application code.
 
-### User-scoped registry
+### User-scoped persistent catalog
 
 Generation MCP currently owns shared process-level job IDs and does not provide a Studio-user authorization layer.
 
-Studio therefore needs a small user-scoped reference registry:
+Studio therefore needs a PostgreSQL-backed user-scoped execution/asset catalog:
 
 ```text
 StudioExecutionHandle
@@ -515,11 +522,11 @@ StudioAssetHandle
   -> upstream asset ID
 ```
 
-These mappings are **access-control references**, not second execution/asset authorities.
+These mappings are **access-control and catalog references**, not second execution/asset authorities.
 
-The owning MCP still decides job state and asset content.
+The owning MCP still decides live job state and asset content.
 
-Phase 1 may keep the registry in memory. Losing the registry on Studio restart is acceptable: old transient handles become inaccessible rather than falling back to raw upstream IDs.
+The Studio mappings are persisted in PostgreSQL so user ownership and generated-result references survive Studio restarts.
 
 Do not accept an arbitrary upstream `job_id` or `asset_id` from the browser as sufficient authorization.
 
@@ -604,7 +611,7 @@ The browser never constructs a raw provider graph.
 workflow_id
   -> jobs.submit
   -> upstream job_id
-  -> register (StudioUserId, upstream job_id)
+  -> persist (StudioUserId, request snapshot, upstream job_id)
   -> opaque StudioExecutionHandle
 ```
 
@@ -640,7 +647,109 @@ assets.list
 
 The Result panel displays normalized metadata and asset actions.
 
-## 17. Asset representation
+## 17. PostgreSQL catalog model
+
+PostgreSQL is introduced in Phase 1.
+
+Its purpose is to persist **Studio-owned metadata**, not to duplicate MCP execution authority or store large generated binaries.
+
+Use a dedicated Studio database or schema and a least-privilege Studio database user on decopon PostgreSQL.
+
+### Users
+
+Conceptual fields:
+
+```text
+users
+  id                  UUID / stable StudioUserId
+  external_subject?   identity-provider subject when applicable
+  display_name?
+  created_at
+  updated_at
+```
+
+Authentication credentials should remain with the selected identity mechanism. Do not invent a second password system merely because Studio has a users table.
+
+### Executions
+
+Conceptual fields:
+
+```text
+executions
+  id                  UUID / opaque StudioExecutionHandle
+  user_id
+  source              generation | intelligence
+  category            image | music | ...
+  operation
+  workflow?
+  upstream_job_id?    server-side only
+  request_snapshot    JSONB
+  last_known_status   cache/presentation only
+  submitted_at
+  started_at?
+  completed_at?
+  created_at
+  updated_at
+```
+
+`request_snapshot` stores the normalized Studio request needed for inspection and future rerun/history features.
+
+It may include prompts and generation parameters, so it is private user data and must never be exposed cross-user or logged wholesale.
+
+`last_known_status` is a cache for presentation/history. The owning MCP remains authoritative for live execution state.
+
+### Assets
+
+Conceptual fields:
+
+```text
+assets
+  id                  UUID / opaque StudioAssetHandle
+  user_id
+  execution_id
+  source
+  upstream_asset_id?  server-side only
+  storage_provider
+  storage_locator
+  storage_path?       optional internal diagnostic/catalog path
+  original_filename?
+  display_name
+  media_kind
+  mime_type
+  size_bytes?
+  width?
+  height?
+  checksum?
+  thumbnail_locator?
+  availability
+  created_at
+  updated_at
+  metadata            JSONB
+```
+
+The binary image/audio/video itself is not stored in PostgreSQL.
+
+`storage_locator` is the durable abstraction used by Studio. It may represent a Generation MCP asset reference today and a Studio Client/local asset reference later.
+
+`storage_path` is optional internal metadata when a real filesystem path is known and useful. It is not an asset identity, must not be trusted as a browser-supplied path, and must never be exposed as authorization.
+
+### Thumbnails
+
+Studio may create small thumbnails/previews for catalog/history performance.
+
+Store thumbnail files outside PostgreSQL in a Studio-managed bounded storage location and persist only `thumbnail_locator` plus metadata in PostgreSQL.
+
+For images, a bounded WebP/JPEG thumbnail (for example around 256 px) is appropriate.
+
+Do not fetch or decode a full-size remote asset on every history-grid render when a safe thumbnail already exists.
+
+### History foundation
+
+Phase 1 does not need a full History product UI, but persisted executions/assets intentionally form the foundation for Phase 2 history.
+
+A later history UI should query Studio-owned catalog records by authenticated user rather than scanning Generation MCP output directories.
+
+## 18. Asset representation
 
 Core invariant:
 
@@ -671,7 +780,7 @@ Do not expose Generation MCP local output paths to the browser.
 
 Do not derive local filesystem access from provider-supplied names.
 
-## 18. Result preview and download
+## 19. Result preview and download
 
 Generated file retrieval is a first-class Phase 1 feature.
 
@@ -737,7 +846,7 @@ Use validated upstream media metadata plus a Studio allowlist appropriate to the
 
 Unknown media can be downloadable only if explicitly supported by the governing Issue; do not render arbitrary active content inline.
 
-## 19. Studio HTTP API
+## 20. Studio HTTP API
 
 Exact resource names may evolve, but Phase 1 should expose a small typed API.
 
@@ -764,30 +873,42 @@ The public Studio API is not required to mirror MCP tool names one-for-one.
 
 Prefer task-oriented Studio DTOs.
 
-## 20. Persistence
+## 21. Persistence
 
-Phase 1 does not require an application content database for jobs/history/assets.
+Phase 1 uses PostgreSQL for Studio-owned identity/catalog metadata.
 
-Do not add SQLite/PostgreSQL solely to preserve MCP-owned job state.
+The initial deployment target is the existing PostgreSQL infrastructure on decopon, using a Studio-specific database or schema and least-privilege credentials.
 
-Multi-user authentication may require an identity store depending on the selected authentication implementation. A minimal identity store is allowed when required for accounts/credentials; it must remain separate in purpose from execution/history/asset authority. Deployments using an external identity provider may not need a local identity database.
+Persist:
 
-Phase 1 persistence is limited to:
+- Studio user identity mapping as required by the selected authentication mechanism;
+- execution ownership and opaque Studio handles;
+- normalized request snapshots;
+- upstream execution/job references;
+- cached/presentation status and timestamps;
+- asset ownership and opaque Studio handles;
+- storage/provider locators;
+- optional internal storage paths when known;
+- media metadata;
+- thumbnail locators;
+- basic availability state.
 
-- normal application configuration;
-- no durable prompt history;
-- no durable Studio job database;
-- no durable Studio asset cache;
-- an in-memory per-user execution/asset handle registry is allowed and expected for Phase 1.
+Do not persist large generated image/audio/video binaries in PostgreSQL.
 
-Browser draft state may be transient.
+Do not treat persisted `last_known_status` as the live execution authority; refresh from the owning MCP when current state matters.
 
-Persistent history/presets belong to a later phase with an explicit ownership/retention design.
+Do not create a second provider queue or independently mutate Generation MCP execution state from the database.
 
-## 21. Configuration
+Browser draft state may remain transient.
+
+A full History/Presets user experience belongs to a later phase, but Phase 1 intentionally stores the metadata needed to implement those features without a migration from transient in-memory handles.
+
+## 22. Configuration
 
 Backend configuration may include:
 
+- PostgreSQL connection configuration / secret reference;
+- thumbnail/catalog storage location;
 - Generation MCP endpoint;
 - Intelligence MCP endpoint when implemented;
 - request timeout;
@@ -799,7 +920,7 @@ Secrets must come from deployment configuration/secret storage, not committed co
 
 Do not expose backend MCP endpoints, credentials, internal hostnames, or private tunnel identifiers through frontend configuration.
 
-## 22. Error model
+## 23. Error model
 
 Normalize MCP/provider failures into bounded Studio errors.
 
@@ -825,7 +946,7 @@ User-facing messages should be useful without exposing:
 
 Preserve diagnostic correlation/log information server-side.
 
-## 23. Cancellation
+## 24. Cancellation
 
 For Generation:
 
@@ -843,7 +964,7 @@ Do not report a job as cancelled merely because the browser requested cancellati
 
 Continue resolving state until the owning MCP reports a terminal state or the request itself returns an authoritative terminal result.
 
-## 24. Runtime authority
+## 25. Runtime authority
 
 Studio does not call LIME Manager merely to activate JANKU/YuE2/LLM before each request.
 
@@ -866,7 +987,7 @@ LIME Manager
 
 This prevents GPU topology from leaking into the product UI/backend architecture.
 
-## 25. Frontend availability behavior
+## 26. Frontend availability behavior
 
 Each category/editor must handle:
 
@@ -889,11 +1010,14 @@ Music generation is not available from the configured Generation MCP.
 
 Do not expose provider connection secrets in that message.
 
-## 26. Security
+## 27. Security
 
 Phase 1 security requirements:
 
 - user-specific APIs require authentication;
+- all catalog queries are filtered/authorized by stable StudioUserId;
+- database credentials are backend-only and least-privilege;
+- storage paths/locators are server-side metadata and never accepted directly from browser input;
 - authorization is checked server-side for every execution/result/cancel/preview/download operation;
 - opaque Studio execution/asset handles are scoped to the authenticated Studio user;
 - raw upstream job/asset IDs are never treated as authorization tokens;
@@ -912,7 +1036,7 @@ The exact authentication provider is configurable and may be selected by a dedic
 
 Deployment must not expose Studio or unauthenticated MCP services beyond the intended trust boundary without an explicit access-control design.
 
-## 27. Observability
+## 28. Observability
 
 Use structured logging through `Flamoris.Logging`.
 
@@ -928,7 +1052,7 @@ Useful fields may include:
 
 Do not log entire prompts, generated binary content, secrets, or arbitrary attachments by default.
 
-## 28. Testing strategy
+## 29. Testing strategy
 
 ### Backend unit tests
 
@@ -947,6 +1071,11 @@ Cover:
 - cross-user execution access rejection;
 - cross-user result/cancel rejection;
 - cross-user asset preview/download rejection;
+- PostgreSQL ownership/catalog persistence;
+- request_snapshot privacy boundaries;
+- storage locator/path handling;
+- thumbnail locator validation;
+- restart-safe execution/asset handle resolution;
 - busy responses that do not leak another user's metadata.
 
 ### Gateway integration tests
@@ -988,11 +1117,13 @@ A local fake backend/upstream fixture may verify the Browser -> Studio -> fake M
 
 Live LIME/ComfyUI verification is a manual/integration environment check, not a normal CI requirement.
 
-## 29. Phase 1 acceptance criteria
+## 30. Phase 1 acceptance criteria
 
 ### Foundation
 
 - React/TypeScript/Vite frontend exists.
+- EF Core/PostgreSQL persistence is configured for Studio-owned catalog metadata.
+- migrations/create/update flow is deterministic and documented.
 - ASP.NET Core .NET 10 backend exists.
 - production backend can serve the built frontend.
 - structured logging is enabled.
@@ -1006,7 +1137,7 @@ Live LIME/ComfyUI verification is a manual/integration environment check, not a 
 - browser has no direct MCP dependency.
 - outbound MCP access is behind Studio gateway interfaces.
 - Studio does not own GPU runtime state.
-- Studio has no Phase 1 content database for job/history/asset authority; a minimal identity store is permitted when required by the selected authentication implementation.
+- Studio persists user/execution/asset catalog metadata in PostgreSQL without taking over live MCP execution authority.
 - Studio asset representation contains no provider-local filesystem path.
 
 ### Image vertical slice
@@ -1041,11 +1172,11 @@ When no Music generation capability is available:
 
 When the Generation MCP music capability becomes available, the Music editor maps to that real contract.
 
-## 30. Recommended implementation Issues
+## 31. Recommended implementation Issues
 
 The Phase 1 design should be implemented as several reviewable Issues.
 
-### Issue A — Bootstrap Studio shell, identity boundary, and build
+### Issue A — Bootstrap Studio shell, identity/database foundation, and build
 
 Scope:
 
@@ -1058,6 +1189,9 @@ Scope:
 - ASP.NET Core authentication/authorization foundation;
 - stable internal Studio user identity;
 - authenticated session endpoint;
+- EF Core + PostgreSQL foundation;
+- initial users/executions/assets schema and migrations;
+- Studio-specific least-privilege database configuration;
 - CI.
 
 ### Issue B — Add outbound MCP gateway foundation
@@ -1068,7 +1202,7 @@ Scope:
 - configuration;
 - Generation MCP connection;
 - gateway interfaces;
-- per-user opaque execution/asset handle registry;
+- PostgreSQL-backed per-user opaque execution/asset catalog;
 - normalized error model;
 - fake MCP test infrastructure.
 
@@ -1083,11 +1217,15 @@ Scope:
 - busy behavior;
 - tests.
 
-### Issue D — Implement result asset preview and download
+### Issue D — Implement result asset catalog, thumbnails, preview and download
 
 Scope:
 
-- asset reference DTO;
+- asset reference/catalog DTO;
+- persistent asset metadata;
+- storage provider/locator and optional internal path metadata;
+- created timestamps and basic media metadata;
+- bounded thumbnail generation/storage and thumbnail locator;
 - `assets.list` / `assets.get`;
 - image preview;
 - bounded content endpoint;
@@ -1105,7 +1243,7 @@ Blocked until Intelligence MCP has a concrete public contract.
 
 Blocked until Generation MCP has a concrete Music capability/workflow contract.
 
-## 31. Work handoff guidance
+## 32. Work handoff guidance
 
 For initial architecture/foundation implementation:
 
@@ -1119,7 +1257,8 @@ Reasoning is intentionally high for the first implementation because it establis
 - job/asset semantics;
 - security-sensitive download behavior;
 - future Intelligence/Music extension points;
-- multi-user authentication/authorization and cross-user isolation.
+- multi-user authentication/authorization and cross-user isolation;
+- PostgreSQL ownership/catalog persistence and future history foundation.
 
 After the foundation is stable, isolated UI editors, tests, and small fixes can use a lighter reasoning level.
 
@@ -1128,10 +1267,11 @@ Commit meaningful units frequently.
 Suggested commit boundaries for the initial Work task:
 
 1. solution/frontend foundation;
-2. backend/application contracts;
-3. MCP gateway foundation;
-4. Image vertical slice;
-5. asset preview/download;
-6. tests/docs/fixes.
+2. identity + EF Core/PostgreSQL foundation and migrations;
+3. backend/application/catalog contracts;
+4. MCP gateway foundation;
+5. Image vertical slice;
+6. asset catalog/thumbnail/preview/download;
+7. tests/docs/fixes.
 
 Do not hold the entire Phase 1 implementation as one uncommitted change.
