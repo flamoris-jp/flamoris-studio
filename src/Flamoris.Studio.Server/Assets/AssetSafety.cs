@@ -16,16 +16,28 @@ public static class AssetSafety
 
     public static bool ValidImage(byte[] bytes, string mime)
     {
-        if (mime == "image/png") return bytes.AsSpan().StartsWith([137, 80, 78, 71, 13, 10, 26, 10]);
-        if (mime == "image/jpeg") return bytes.AsSpan().StartsWith([255, 216, 255]);
-        if (mime == "image/webp") return bytes.Length >= 12 &&
-            bytes.AsSpan().StartsWith("RIFF"u8) && bytes.AsSpan(8, 4).SequenceEqual("WEBP"u8);
-        return false;
+        var signature = mime switch
+        {
+            "image/png" => bytes.AsSpan().StartsWith([137, 80, 78, 71, 13, 10, 26, 10]),
+            "image/jpeg" => bytes.AsSpan().StartsWith([255, 216, 255]),
+            "image/webp" => bytes.Length >= 12 && bytes.AsSpan().StartsWith("RIFF"u8) &&
+                bytes.AsSpan(8, 4).SequenceEqual("WEBP"u8),
+            _ => false
+        };
+        if (!signature) return false;
+        try
+        {
+            var info = Image.Identify(bytes);
+            return info is { Width: > 0 and <= 8192, Height: > 0 and <= 8192 } &&
+                (long)info.Width * info.Height <= 32_000_000;
+        }
+        catch { return false; }
     }
 }
 
 public sealed class ThumbnailStore(IConfiguration config)
 {
+    private readonly SemaphoreSlim gate = new(1, 1);
     private string Root => config["Assets:ThumbnailDirectory"] ?? "";
 
     public async Task<string?> Save(Guid id, byte[] bytes, CancellationToken ct)
@@ -42,16 +54,28 @@ public sealed class ThumbnailStore(IConfiguration config)
         await image.SaveAsync(stream, new WebpEncoder { Quality = 70 }, ct);
         var max = config.GetValue<long>("Assets:MaxThumbnailBytes", 262144);
         if (stream.Length > max || stream.Length <= 0) return null;
-        Directory.CreateDirectory(Root);
-        var target = Path.Combine(Root, id.ToString("N") + ".webp");
-        var temp = Path.Combine(Root, Guid.NewGuid().ToString("N") + ".tmp");
+        await gate.WaitAsync(ct);
         try
         {
-            await File.WriteAllBytesAsync(temp, stream.ToArray(), ct);
-            File.Move(temp, target, overwrite: true);
-            return id.ToString("N");
+            Directory.CreateDirectory(Root);
+            var budget = config.GetValue<long>("Assets:MaxThumbnailStorageBytes", 1073741824);
+            long used = 0;
+            foreach (var file in Directory.EnumerateFiles(Root, "*.webp"))
+            {
+                used += new FileInfo(file).Length;
+                if (used + stream.Length > budget) return null;
+            }
+            var target = Path.Combine(Root, id.ToString("N") + ".webp");
+            var temp = Path.Combine(Root, Guid.NewGuid().ToString("N") + ".tmp");
+            try
+            {
+                await File.WriteAllBytesAsync(temp, stream.ToArray(), ct);
+                File.Move(temp, target, overwrite: true);
+                return id.ToString("N");
+            }
+            finally { if (File.Exists(temp)) File.Delete(temp); }
         }
-        finally { if (File.Exists(temp)) File.Delete(temp); }
+        finally { gate.Release(); }
     }
 
     public async Task<byte[]?> Load(string locator, CancellationToken ct)

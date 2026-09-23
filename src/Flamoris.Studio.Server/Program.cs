@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 128 * 1024);
 var connection = builder.Configuration.GetConnectionString("Studio");
 if (string.IsNullOrWhiteSpace(connection))
     throw new InvalidOperationException("ConnectionStrings:Studio must be configured outside the repository.");
@@ -121,7 +122,8 @@ app.MapPost("/api/auth/register", async (Credentials input, UserManager<StudioUs
     SignInManager<StudioUser> signIn, IConfiguration config) =>
 {
     if (!config.GetValue<bool>("Identity:AllowRegistration")) return Results.NotFound();
-    if (input.Email.Length > 256 || input.Password.Length > 256) return Results.BadRequest();
+    if (string.IsNullOrWhiteSpace(input.Email) || input.Email.Length > 256 ||
+        input.Password is null || input.Password.Length > 256) return Results.BadRequest();
     var user = new StudioUser { UserName = input.Email, Email = input.Email };
     var created = await manager.CreateAsync(user, input.Password);
     if (!created.Succeeded) return Results.BadRequest(new { error = "Unable to create account." });
@@ -131,7 +133,8 @@ app.MapPost("/api/auth/register", async (Credentials input, UserManager<StudioUs
 
 app.MapPost("/api/auth/login", async (Credentials input, SignInManager<StudioUser> signIn) =>
 {
-    if (input.Email.Length > 256 || input.Password.Length > 256) return Results.BadRequest();
+    if (string.IsNullOrWhiteSpace(input.Email) || input.Email.Length > 256 ||
+        input.Password is null || input.Password.Length > 256) return Results.BadRequest();
     var result = await signIn.PasswordSignInAsync(input.Email, input.Password,
         isPersistent: false, lockoutOnFailure: true);
     return result.Succeeded ? Results.Ok() : Results.Unauthorized();
