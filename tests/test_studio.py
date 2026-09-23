@@ -2,6 +2,7 @@ import io
 import os
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -188,7 +189,7 @@ def test_file_paths_use_output_index_not_asset_list_position(clients):
                        "output-second": "/private/outputs/second.png"}
 
 
-def test_fresh_migration_chain_is_independent_of_live_metadata(clients, monkeypatch):
+def test_fresh_migration_chain_is_independent_of_live_metadata(clients):
     from alembic.config import Config
     from alembic.runtime.migration import MigrationContext
     from alembic.operations import Operations
@@ -203,14 +204,14 @@ def test_fresh_migration_chain_is_independent_of_live_metadata(clients, monkeypa
     def forbidden(*args, **kwargs):
         raise AssertionError("historical migrations must not use live Base metadata")
 
-    monkeypatch.setattr(Base.metadata, "create_all", forbidden)
-    monkeypatch.setattr(Base.metadata, "drop_all", forbidden)
     schema = "migration_" + uuid.uuid4().hex
     with factory.kw["bind"].begin() as conn:
         conn.execute(text(f'CREATE SCHEMA "{schema}"'))
         conn.execute(text(f'SET LOCAL search_path TO "{schema}"'))
         context = MigrationContext.configure(conn)
-        with Operations.context(context):
+        with Operations.context(context), \
+             patch.object(Base.metadata, "create_all", side_effect=forbidden), \
+             patch.object(Base.metadata, "drop_all", side_effect=forbidden):
             for revision in revisions:
                 revision.module.upgrade()
             assert conn.execute(text("SELECT to_regclass('users')")).scalar() == "users"
