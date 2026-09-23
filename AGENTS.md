@@ -12,6 +12,8 @@ Studio is a creative control plane.
 
 Phase 1 focuses on the AI Prompt Console and the smallest complete vertical slices needed to submit work, observe jobs, preview results, and retrieve generated assets.
 
+Studio is multi-user from the beginning. Every user-visible execution, result, prompt, attachment, and asset access path must be scoped to the authenticated Studio user/session.
+
 Do not revive assumptions from the old Studio architecture that required the Studio server to directly own or permanently store large production projects.
 
 ## Authority boundaries
@@ -68,7 +70,14 @@ Studio must not become a competing authority for:
    - Reuse FLAMORIS shared logging, MCP, diagnostics, and security components when appropriate.
    - Do not copy shared library source into this repository merely for convenience.
 
-8. **Bound remote and media operations**
+8. **Multi-user isolation is an architectural boundary**
+   - Treat authenticated user identity as part of every Studio-facing execution and asset access decision.
+   - Upstream MCP job IDs and asset IDs are identifiers, not authorization grants.
+   - Do not expose raw shared-upstream identifiers as sufficient proof of ownership.
+   - Use Studio-owned opaque handles/mappings and verify ownership before status, result, cancel, preview, or download operations.
+   - Do not leak another user's prompt, parameters, filenames, result metadata, active job identity, or diagnostics through busy/error responses.
+
+9. **Bound remote and media operations**
    - Explicitly bound request sizes, result sizes, downloads, uploads, timeouts, concurrency, and retries.
    - Never invisibly retry non-idempotent submissions after ambiguous failure.
 
@@ -94,6 +103,8 @@ Prefer complete vertical slices over broad scaffolding.
 Result UI must distinguish presentation from ownership.
 
 For generated media:
+
+- verify that the authenticated user owns the Studio execution/asset reference before resolving the upstream asset;
 
 - obtain metadata/content through the owning MCP;
 - validate media type and size;
@@ -137,6 +148,8 @@ Add targeted integration tests for Studio gateway contracts and result/download 
 Never commit, log, or return secrets, credentials, API keys, private keys, cookies, or private tunnel identifiers.
 
 Treat prompts, attachments, generated outputs, local-project metadata, and user files as potentially private.
+
+In a multi-user deployment, authorization failures must fail closed. A user must not gain access to another user's execution or asset through guessed/replayed Studio or upstream identifiers.
 
 Validate untrusted provider/MCP responses before using them as URLs, paths, filenames, media types, commands, or structured control data.
 
