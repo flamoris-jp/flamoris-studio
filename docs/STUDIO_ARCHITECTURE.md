@@ -1243,7 +1243,17 @@ Blocked until Intelligence MCP has a concrete public contract.
 
 Blocked until Generation MCP has a concrete Music capability/workflow contract.
 
-## 32. Work handoff guidance
+## 32. Implementation tracking
+
+Current Phase 1 Issues:
+
+- [#1 Phase 1A: bootstrap multi-user Studio and complete Image generation vertical slice](https://github.com/flamoris-jp/flamoris-studio/issues/1) — implementation-ready
+- [#2 Phase 1B: integrate Intelligence editor after Intelligence MCP contract exists](https://github.com/flamoris-jp/flamoris-studio/issues/2) — blocked by Intelligence MCP contract
+- [#3 Phase 1C: integrate Music editor after Generation MCP music capability exists](https://github.com/flamoris-jp/flamoris-studio/issues/3) — blocked by Generation MCP Music capability
+
+Phase 1A is the only implementation-ready Phase 1 slice at the time of this design revision.
+
+## 33. Work handoff guidance
 
 For initial architecture/foundation implementation:
 
