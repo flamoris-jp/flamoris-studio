@@ -31,7 +31,7 @@ class GenerationGateway:
         try:
             async with self._connection() as session:
                 result = await session.call_tool(name, args or {}, read_timeout_seconds=45)
-            if result.isError:
+            if result.is_error:
                 # Upstream error strings are never forwarded to browser.
                 message = " ".join(getattr(item, "text", "") for item in result.content)
                 code = "busy" if "busy" in message.lower() else "upstream_failure"
@@ -45,7 +45,7 @@ class GenerationGateway:
 
     async def _json(self, name: str, args: dict | None = None) -> dict:
         result = await self._call(name, args)
-        data = result.structuredContent
+        data = result.structured_content
         if not isinstance(data, dict):
             raise GatewayError("upstream_failure")
         return data
@@ -98,4 +98,4 @@ class GenerationGateway:
             raise GatewayError("upstream_failure") from exc
         if len(data) > max_bytes:
             raise GatewayError("validation")
-        return data, image.mimeType
+        return data, image.mime_type
