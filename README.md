@@ -8,6 +8,8 @@ It coordinates AI-facing workflows through stable MCP boundaries while deliberat
 
 Studio is **multi-user by design**. Authenticated users must be isolated from one another: prompts, execution references, results, and asset downloads are user-scoped even when an upstream MCP service is shared.
 
+Phase 1 uses ASP.NET Core Identity with PostgreSQL-backed local accounts and secure cookie authentication. Studio-owned user/execution/asset catalog metadata is stored in PostgreSQL; generated media binaries remain outside the database.
+
 ## Direction
 
 Studio starts small.
