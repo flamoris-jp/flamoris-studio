@@ -1,12 +1,14 @@
 import io
 import os
 import uuid
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
 from flamoris_studio.app import ImageRequest, create_app
 from flamoris_studio.db import Asset, Base, Execution, User
@@ -41,14 +43,16 @@ class FakeGateway:
         return {"status": "completed"}
 
     async def result(self, job):
-        return {"status": "completed"}
+        return {"status": "completed", "files": [
+            {"file": "/private/generation/output/000.png", "size_bytes": len(self.image)}]}
 
     async def cancel(self, job):
         return {"status": "running"}
 
     async def assets(self, job):
         return [{"asset_id": "private-asset", "filename": "../../photo.png",
-                 "mime_type": "image/png", "media_kind": "image", "size_bytes": len(self.image)}]
+                 "mime_type": "image/png", "media_kind": "image", "size_bytes": len(self.image),
+                 "output_index": 0}]
 
     async def content(self, asset, max_bytes):
         return self.image, "image/png"
@@ -101,6 +105,10 @@ def test_multi_user_generation_and_private_assets(clients):
     assert result.status_code == 200, result.text
     asset_id = result.json()["assets"][0]["id"]
     assert "private-asset" not in result.text and "private-job" not in result.text
+    assert "/private/generation" not in result.text
+    with factory() as db:
+        saved = db.scalar(select(Asset))
+        assert saved.storage_path == "/private/generation/output/000.png"
     for route in ("thumbnail", "content", "download"):
         path = f"/api/executions/{execution_id}/assets/{asset_id}/{route}"
         assert b.get(path).status_code == 404
@@ -134,6 +142,83 @@ def test_validation_and_csrf(clients):
     assert a.post("/api/generation/image/jobs", json=request,
                   headers={"X-CSRF-TOKEN": csrf}).status_code == 422
     assert gateway.submit_count == 0
+
+
+def test_csrf_remains_valid_across_tabs(clients):
+    first, second, gateway, _ = clients
+    initial_token = register(first, "tabs@example.test")
+    second.cookies.update(first.cookies)
+    other_tab_token = second.get("/api/session").json()["csrfToken"]
+    assert initial_token == other_tab_token
+    # Both tabs must be able to submit after either refreshes the session view.
+    assert first.post("/api/generation/image/jobs", json=image_request(),
+                      headers={"X-CSRF-TOKEN": initial_token}).status_code == 201
+    assert second.post("/api/generation/image/jobs", json=image_request(),
+                       headers={"X-CSRF-TOKEN": other_tab_token}).status_code == 201
+    assert gateway.submit_count == 2
+
+
+def test_file_paths_use_output_index_not_asset_list_position(clients):
+    client, _, gateway, factory = clients
+    csrf = register(client, "order@example.test")
+
+    async def result(job):
+        return {"status": "completed", "files": [
+            {"file": "/private/outputs/first.png", "size_bytes": len(gateway.image)},
+            {"file": "/private/outputs/second.png", "size_bytes": len(gateway.image)}]}
+
+    async def assets(job):
+        return [
+            {"asset_id": "output-second", "filename": "second.png", "mime_type": "image/png",
+             "media_kind": "image", "output_index": 1},
+            {"asset_id": "output-first", "filename": "first.png", "mime_type": "image/png",
+             "media_kind": "image", "output_index": 0},
+        ]
+
+    gateway.result = result
+    gateway.assets = assets
+    created = client.post("/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf})
+    execution_id = created.json()["id"]
+    response = client.get(f"/api/executions/{execution_id}/result")
+    assert response.status_code == 200
+    assert "/private/outputs/" not in response.text
+    with factory() as db:
+        records = {asset.upstream_asset_id: asset.storage_path for asset in db.scalars(select(Asset))}
+    assert records == {"output-first": "/private/outputs/first.png",
+                       "output-second": "/private/outputs/second.png"}
+
+
+def test_fresh_migration_chain_is_independent_of_live_metadata(clients, monkeypatch):
+    from alembic.config import Config
+    from alembic.runtime.migration import MigrationContext
+    from alembic.operations import Operations
+    from alembic.script import ScriptDirectory
+
+    _, _, _, factory = clients
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
+    revisions = list(reversed(list(ScriptDirectory.from_config(config).walk_revisions())))
+    assert revisions
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("historical migrations must not use live Base metadata")
+
+    monkeypatch.setattr(Base.metadata, "create_all", forbidden)
+    monkeypatch.setattr(Base.metadata, "drop_all", forbidden)
+    schema = "migration_" + uuid.uuid4().hex
+    with factory.kw["bind"].begin() as conn:
+        conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+        conn.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+        context = MigrationContext.configure(conn)
+        with Operations.context(context):
+            for revision in revisions:
+                revision.module.upgrade()
+            assert conn.execute(text("SELECT to_regclass('users')")).scalar() == "users"
+            assert conn.execute(text("SELECT to_regclass('assets')")).scalar() == "assets"
+            for revision in reversed(revisions):
+                revision.module.downgrade()
+            assert conn.execute(text("SELECT to_regclass('users')")).scalar() is None
+        conn.execute(text(f'DROP SCHEMA "{schema}"'))
 
 
 def test_media_bounds():
