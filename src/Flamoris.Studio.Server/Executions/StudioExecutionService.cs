@@ -92,11 +92,18 @@ public sealed class StudioExecutionService(
         if (result.Status != "completed") return View(execution);
 
         var listing = await gateway.ListAssets(execution.UpstreamJobId, ct);
+        // Serialize catalog insertion across simultaneous result requests, including
+        // requests handled by another Studio process sharing this database.
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT 1 FROM executions WHERE \"Id\" = {execution.Id} FOR UPDATE", ct);
+        var knownIds = await db.Assets.Where(x => x.ExecutionId == execution.Id)
+            .Select(x => x.UpstreamAssetId).ToListAsync(ct);
         foreach (var item in listing.Take(64))
         {
             if (item.MediaKind != "image" || !new[] { "image/png", "image/jpeg", "image/webp" }.Contains(item.MimeType))
                 continue;
-            if (execution.Assets.Any(x => x.UpstreamAssetId == item.AssetId)) continue;
+            if (knownIds.Contains(item.AssetId)) continue;
             var asset = new StudioAsset
             {
                 UserId = user.Value, ExecutionId = execution.Id,
@@ -106,8 +113,12 @@ public sealed class StudioExecutionService(
             };
             db.Assets.Add(asset);
             execution.Assets.Add(asset);
+            knownIds.Add(item.AssetId);
         }
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+        db.Entry(execution).Collection(x => x.Assets).IsLoaded = false;
+        await db.Entry(execution).Collection(x => x.Assets).LoadAsync(ct);
 
         foreach (var asset in execution.Assets.Where(x => x.ThumbnailLocator is null).Take(8))
         {

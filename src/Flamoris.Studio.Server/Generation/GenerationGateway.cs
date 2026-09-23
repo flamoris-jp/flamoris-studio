@@ -121,9 +121,10 @@ public sealed class McpGenerationGateway(IConfiguration configuration) : IGenera
         var result = await Call("assets.get", Args("asset_id", assetId), ct);
         var image = result.Content.OfType<ImageContentBlock>().SingleOrDefault()
             ?? throw new GatewayException(GatewayError.UpstreamFailure);
-        // Check encoded length before materializing decoded content.
+        // The SDK has already decoded this MCP image block. The upstream caps
+        // images at 64 MiB; Studio enforces its own stricter configured cap.
         var max = configuration.GetValue<long>("Assets:MaxBytes", 67108864);
-        if (image.Data.Length > (max + 2) / 3 * 4 + 8)
+        if (image.Data.Length > max)
             throw new GatewayException(GatewayError.Validation);
         return new(image.DecodedData.ToArray(), image.MimeType);
     }

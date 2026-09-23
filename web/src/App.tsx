@@ -14,6 +14,11 @@ export default function App() {
   useEffect(() => { api.session().then(setSession).catch(() => setError('Studio is unavailable.')) }, [])
   useEffect(() => { if (session?.authenticated) api.discovery().then(setDiscovery).catch(() => setDiscovery({ available: false, checkpoints: [], loras: [], templates: [] })) }, [session?.authenticated])
   useEffect(() => {
+    if (!session?.authenticated) return
+    const id = window.location.hash.match(/^#execution\/([0-9a-f-]{36})$/)?.[1]
+    if (id) api.result(id).then(setExecution).catch(() => { window.location.hash = ''; setError('Saved execution is unavailable.') })
+  }, [session?.authenticated])
+  useEffect(() => {
     if (!execution || ['completed', 'failed', 'cancelled', 'busy', 'submission_unknown'].includes(execution.state)) return
     const timer = window.setInterval(() => {
       if (document.hidden) return
@@ -33,7 +38,7 @@ export default function App() {
     {section === 'Image' ? <><p>Turn a prompt into something you can keep.</p>
       {discovery?.available ? <ImageEditor discovery={discovery} busy={busy} onSubmit={async form => {
         setBusy(true); setError(''); setExecution(null)
-        try { setExecution(await api.submit(form, session.csrfToken)) }
+        try { const created = await api.submit(form, session.csrfToken); setExecution(created); window.location.hash = `execution/${created.id}` }
         catch (e) { setError(e instanceof Error ? e.message : 'Generation failed.') }
         finally { setBusy(false) }
       }} /> : <section className="panel"><h2>Image generation unavailable</h2><p>The configured generation service has no available image capability.</p><button onClick={() => api.discovery().then(setDiscovery).catch(() => setError('Service unavailable.'))}>Check again</button></section>}
