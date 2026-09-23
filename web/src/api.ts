@@ -1,4 +1,4 @@
-export type Session = { authenticated: boolean; userName: string | null; csrfToken: string }
+export type Session = { authenticated: boolean; userName: string | null; csrfToken: string; allowRegistration: boolean }
 export type Model = { id: string; name: string }
 export type Discovery = { available: boolean; templates: string[]; checkpoints: Model[]; loras: Model[] }
 export type Asset = { id: string; displayName: string; mimeType: string; sizeBytes: number | null; hasThumbnail: boolean; previewUrl: string; downloadUrl: string; thumbnailUrl: string }
@@ -11,7 +11,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     if (response.status === 401) throw new Error('Session expired. Refresh and sign in again.')
     throw new Error(body.message || body.error || `Request failed (${response.status}).`)
   }
-  return response.json() as Promise<T>
+  const text = await response.text()
+  return (text ? JSON.parse(text) : undefined) as T
 }
 const post = <T>(path: string, body: unknown, csrf: string) => request<T>(path, {
   method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify(body),

@@ -1,6 +1,4 @@
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Webp;
-using SixLabors.ImageSharp.Processing;
+using SkiaSharp;
 
 namespace Flamoris.Studio.Server.Assets;
 
@@ -27,8 +25,12 @@ public static class AssetSafety
         if (!signature) return false;
         try
         {
-            var info = Image.Identify(bytes);
-            return info is { Width: > 0 and <= 8192, Height: > 0 and <= 8192 } &&
+            using var stream = new SKMemoryStream(bytes);
+            using var codec = SKCodec.Create(stream);
+            var info = codec?.Info;
+            var expected = mime switch { "image/png" => SKEncodedImageFormat.Png,
+                "image/jpeg" => SKEncodedImageFormat.Jpeg, _ => SKEncodedImageFormat.Webp };
+            return codec?.EncodedFormat == expected && info is { Width: > 0 and <= 8192, Height: > 0 and <= 8192 } &&
                 (long)info.Width * info.Height <= 32_000_000;
         }
         catch { return false; }
@@ -43,17 +45,21 @@ public sealed class ThumbnailStore(IConfiguration config)
     public async Task<string?> Save(Guid id, byte[] bytes, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(Root)) return null;
-        // Bounded decode: reject huge pixel dimensions before allocating the full image.
-        var info = Image.Identify(bytes);
-        if (info is null || info.Width <= 0 || info.Height <= 0 ||
-            info.Width > 8192 || info.Height > 8192 || (long)info.Width * info.Height > 32_000_000)
-            return null;
-        using var image = Image.Load(bytes);
-        image.Mutate(x => x.Resize(new ResizeOptions { Size = new Size(256, 256), Mode = ResizeMode.Max }));
-        await using var stream = new MemoryStream();
-        await image.SaveAsync(stream, new WebpEncoder { Quality = 70 }, ct);
+        // The caller validated dimensions before decoding. The output is bounded.
+        using var bitmap = SKBitmap.Decode(bytes);
+        if (bitmap is null) return null;
+        var ratio = Math.Min(256d / bitmap.Width, 256d / bitmap.Height);
+        var width = Math.Max(1, (int)Math.Round(bitmap.Width * Math.Min(1, ratio)));
+        var height = Math.Max(1, (int)Math.Round(bitmap.Height * Math.Min(1, ratio)));
+        using var surface = SKSurface.Create(new SKImageInfo(width, height));
+        if (surface is null) return null;
+        surface.Canvas.DrawBitmap(bitmap, new SKRect(0, 0, width, height));
+        using var image = surface.Snapshot();
+        using var encoded = image.Encode(SKEncodedImageFormat.Webp, 70);
+        if (encoded is null) return null;
+        var thumbnail = encoded.ToArray();
         var max = config.GetValue<long>("Assets:MaxThumbnailBytes", 262144);
-        if (stream.Length > max || stream.Length <= 0) return null;
+        if (thumbnail.LongLength > max || thumbnail.Length == 0) return null;
         await gate.WaitAsync(ct);
         try
         {
@@ -63,13 +69,13 @@ public sealed class ThumbnailStore(IConfiguration config)
             foreach (var file in Directory.EnumerateFiles(Root, "*.webp"))
             {
                 used += new FileInfo(file).Length;
-                if (used + stream.Length > budget) return null;
+                if (used + thumbnail.LongLength > budget) return null;
             }
             var target = Path.Combine(Root, id.ToString("N") + ".webp");
             var temp = Path.Combine(Root, Guid.NewGuid().ToString("N") + ".tmp");
             try
             {
-                await File.WriteAllBytesAsync(temp, stream.ToArray(), ct);
+                await File.WriteAllBytesAsync(temp, thumbnail, ct);
                 File.Move(temp, target, overwrite: true);
                 return id.ToString("N");
             }

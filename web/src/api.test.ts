@@ -4,7 +4,7 @@ import { api } from './api'
 afterEach(() => vi.unstubAllGlobals())
 
 test('image submission includes CSRF token and same-origin credentials', async () => {
-  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'studio-id', state: 'queued', assets: [] }) })
+  const fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify({ id: 'studio-id', state: 'queued', assets: [] }) })
   vi.stubGlobal('fetch', fetch)
   await api.submit({ positivePrompt: 'a quiet stage' }, 'token-123')
   expect(fetch).toHaveBeenCalledWith('/api/generation/image/jobs', expect.objectContaining({

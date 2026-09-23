@@ -8,13 +8,16 @@ using Flamoris.Studio.Server.Generation;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 128 * 1024);
 var connection = builder.Configuration.GetConnectionString("Studio");
 if (string.IsNullOrWhiteSpace(connection))
     throw new InvalidOperationException("ConnectionStrings:Studio must be configured outside the repository.");
-builder.Services.AddDbContext<StudioDbContext>(options => options.UseNpgsql(connection));
+builder.Services.AddDbContext<StudioDbContext>(options => options.UseNpgsql(connection)
+    // The first migration is SQL-authored. Generate a model snapshot before the next schema change.
+    .ConfigureWarnings(warnings => warnings.Ignore(RelationalEventId.PendingModelChangesWarning)));
 builder.Services.AddIdentityCore<StudioUser>(options =>
     {
         options.Password.RequiredLength = 12;
@@ -108,13 +111,13 @@ app.Use(async (context, next) =>
     await next();
 });
 
-app.MapGet("/api/session", (HttpContext context, IAntiforgery antiforgery) =>
+app.MapGet("/api/session", (HttpContext context, IAntiforgery antiforgery, IConfiguration config) =>
 {
     context.Response.Headers.CacheControl = "no-store";
     var token = antiforgery.GetAndStoreTokens(context).RequestToken;
     return Results.Ok(new { authenticated = context.User.Identity?.IsAuthenticated == true,
         userName = context.User.Identity?.IsAuthenticated == true ? context.User.Identity.Name : null,
-        csrfToken = token });
+        csrfToken = token, allowRegistration = config.GetValue<bool>("Identity:AllowRegistration") });
 });
 
 app.MapGet("/api/system/status", () => Results.Ok(new { healthy = true, service = "studio" }));
@@ -149,6 +152,9 @@ app.MapPost("/api/auth/logout", async (SignInManager<StudioUser> signIn) =>
 var api = app.MapGroup("/api").RequireAuthorization();
 api.MapGet("/generation/image/discovery", async (IGenerationGateway gateway, CancellationToken ct) =>
 {
+    if (!await gateway.IsHealthy(ct))
+        return Results.Ok(new { available = false, templates = Array.Empty<string>(),
+            checkpoints = Array.Empty<GenerationModel>(), loras = Array.Empty<GenerationModel>() });
     var capability = await gateway.GetImageCapability(ct);
     if (!capability.Available) return Results.Ok(new { available = false, templates = Array.Empty<string>(),
         checkpoints = Array.Empty<GenerationModel>(), loras = Array.Empty<GenerationModel>() });

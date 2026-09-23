@@ -30,7 +30,7 @@ export default function App() {
     return () => clearInterval(timer)
   }, [execution?.id, execution?.state])
   if (!session) return <div className="center"><h1>FLAMORIS Studio</h1><p>{error || 'Connecting…'}</p></div>
-  if (!session.authenticated) return <Account onReady={setSession} />
+  if (!session.authenticated) return <Account allowRegistration={session.allowRegistration} onReady={setSession} />
   return <div className="layout"><aside><div className="brand">✦ <strong>FLAMORIS</strong><small>STUDIO</small></div><p className="eyebrow">WORKSPACE</p>
     <nav aria-label="Creative domains">{sections.map(name => <button key={name} aria-current={section === name ? 'page' : undefined} onClick={() => setSection(name)}>{name}</button>)}</nav>
     <div className="account-footer"><span>{session.userName}</span><button onClick={async () => { try { await api.logout(session.csrfToken); setSession(await api.session()); setExecution(null) } catch { setError('Could not sign out.') } }}>Sign out</button></div></aside>
@@ -54,7 +54,7 @@ export default function App() {
     </> : <section className="panel"><span className="eyebrow">COMING LATER</span><h2>{section} is unavailable</h2><p>This editor will connect when its MCP capability is ready.</p></section>}</main></div>
 }
 
-function Account({ onReady }: { onReady: (session: Session) => void }) {
+function Account({ allowRegistration, onReady }: { allowRegistration: boolean; onReady: (session: Session) => void }) {
   const [email, setEmail] = useState(''), [password, setPassword] = useState(''), [register, setRegister] = useState(false)
   const [error, setError] = useState(''), [busy, setBusy] = useState(false)
   return <div className="center"><div className="login panel"><div className="brand">✦ <strong>FLAMORIS</strong><small>STUDIO</small></div>
@@ -66,7 +66,7 @@ function Account({ onReady }: { onReady: (session: Session) => void }) {
       <label>Email<input type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} /></label>
       <label>Password<input type="password" autoComplete={register ? 'new-password' : 'current-password'} required minLength={register ? 12 : undefined} value={password} onChange={e => setPassword(e.target.value)} /></label>
       {error && <p role="alert" className="error">{error}</p>}<button className="primary" disabled={busy}>{register ? 'Create account' : 'Sign in'}</button></form>
-    <button className="text-button" onClick={() => { setRegister(!register); setError('') }}>{register ? 'Have an account? Sign in' : 'Need an account? Register'}</button>
+    {allowRegistration && <button className="text-button" onClick={() => { setRegister(!register); setError('') }}>{register ? 'Have an account? Sign in' : 'Need an account? Register'}</button>}
   </div></div>
 }
 
