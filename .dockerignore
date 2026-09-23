@@ -1,0 +1,17 @@
+.git
+.venv
+**/__pycache__
+**/*.pyc
+**/*.egg-info
+.pytest_cache
+web/node_modules
+web/dist
+web/coverage
+web/*.tsbuildinfo
+.env
+.env.*
+**/.env
+**/.env.*
+tmp
+temp
+*.log
