@@ -35,3 +35,13 @@ jobs:
         with: { node-version: '22', cache: npm, cache-dependency-path: web/package-lock.json }
       - run: npm ci && npm run build && npm test
         working-directory: web
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production container
+        run: docker build --tag flamoris-studio:ci .
+      - name: Check packaged server and frontend
+        run: |
+          docker run --rm --entrypoint python flamoris-studio:ci -c "import flamoris_studio.app; from pathlib import Path; assert Path('/app/web/dist/index.html').is_file()"
