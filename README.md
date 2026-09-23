@@ -88,6 +88,10 @@ In early phases, result assets may come from `flamoris-generation-mcp`.
 
 Later, `flamoris-studio-client` will make large desktop-local projects and media available through explicit asset references without requiring permanent storage on the Studio server.
 
+## Architecture
+
+Phase 1 architecture and implementation boundaries are defined in [docs/STUDIO_ARCHITECTURE.md](docs/STUDIO_ARCHITECTURE.md).
+
 ## Planned phases
 
 ### Phase 1
