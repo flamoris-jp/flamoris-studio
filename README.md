@@ -6,6 +6,8 @@ FLAMORIS Studio is the web-based creative control plane for the FLAMORIS ecosyst
 
 It coordinates AI-facing workflows through stable MCP boundaries while deliberately avoiding ownership of GPU runtime state or large production files.
 
+Studio is **multi-user by design**. Authenticated users must be isolated from one another: prompts, execution references, results, and asset downloads are user-scoped even when an upstream MCP service is shared.
+
 ## Direction
 
 Studio starts small.
@@ -17,6 +19,7 @@ Phase 1 focuses on an AI Prompt Console for:
 - Music
 - shared job submission / status / result presentation
 - generated-result preview and user download
+- multi-user authentication/session boundary and per-user execution/asset isolation
 
 Speech and Video follow in later phases.
 
@@ -50,7 +53,9 @@ Generation workflows, generation jobs, and generated assets belong to `flamoris-
 
 Language/reasoning/coding execution belongs to `flamoris-intelligence-mcp`.
 
-Studio remains authoritative only for Studio-specific UI state, presentation, and orchestration.
+Studio remains authoritative only for Studio-specific UI state, presentation, orchestration, and Studio-side access control.
+
+Upstream MCP job/asset IDs are not authorization tokens. Studio must scope access to the authenticated user and must not expose another user's prompt, execution metadata, result, or asset merely because the upstream identifier is known.
 
 ## Jobs and results
 
@@ -102,6 +107,7 @@ Phase 1 architecture and implementation boundaries are defined in [docs/STUDIO_A
 - job submit / status / result flow
 - media-aware result preview
 - generated-asset download
+- multi-user isolation for executions and assets
 
 ### Phase 2
 
@@ -154,6 +160,8 @@ AI models, model weights, datasets, generated media, prompts supplied by third p
 ## 日本語
 
 FLAMORIS Studioは、FLAMORISのAI・生成系・制作ツールをつなぐWebベースのCreative Control Centerです。
+
+Studioは最初からマルチユーザー前提です。共有されたMCP/runtimeを利用する場合でも、prompt・execution・result・生成assetへのアクセスはユーザーごとに分離します。
 
 Studio自身はGPU runtimeのauthorityにも、大容量プロジェクトファイルの保管場所にもなりません。
 
