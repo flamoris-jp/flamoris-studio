@@ -1,6 +1,7 @@
 import hashlib
 import os
 import secrets
+import re
 import uuid
 from datetime import timedelta
 
@@ -44,7 +45,11 @@ def start_session(response, db: Session, user_id: uuid.UUID):
     response.set_cookie(COOKIE, token, httponly=True, secure=secure, samesite="strict", max_age=43200)
 
 
-def new_csrf(response):
+def new_csrf(response, existing: str | None = None):
+    # Tabs share a browser cookie jar. Reuse a well-formed token so one tab's
+    # session refresh does not invalidate another tab's cached header token.
+    if existing and re.fullmatch(r"[A-Za-z0-9_-]{43}", existing):
+        return existing
     value = secrets.token_urlsafe(32)
     response.set_cookie(CSRF_COOKIE, value, httponly=True,
                         secure=os.getenv("STUDIO_DEV_INSECURE_COOKIE") != "1", samesite="strict")
