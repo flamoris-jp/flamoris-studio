@@ -71,7 +71,7 @@ Phase 1 does not include:
 - a second Generation job/asset database;
 - a second Intelligence task authority.
 
-Phase 1 uses ASP.NET Core Identity with PostgreSQL-backed local accounts and secure cookie authentication as the initial implementation. Keep identity access behind standard ASP.NET Core authentication/authorization boundaries so OIDC or another provider can be added later without coupling generation/application logic to local-account internals. Anonymous cross-user access is not acceptable.
+Phase 1 uses Python FastAPI with PostgreSQL-backed local accounts and secure server-side cookie sessions. Keep authentication behind an application boundary so OIDC can be added later. Anonymous cross-user access is not acceptable.
 
 These may be introduced only by later design/Issues.
 
@@ -168,9 +168,8 @@ Do not introduce SSR, server components, or a schema-generated form framework un
 
 ### Backend
 
-- ASP.NET Core
-- .NET 10
-- Entity Framework Core
+- Python 3.12+ / FastAPI
+- SQLAlchemy 2 / Alembic migrations
 - PostgreSQL (shared infrastructure hosted on decopon, using a Studio-specific database or schema and least-privilege credentials)
 
 The backend owns:
@@ -187,17 +186,15 @@ The backend owns:
 
 ### MCP client implementation
 
-Use the official .NET MCP client SDK for outbound Studio-to-MCP connections.
+Use the official Python MCP client SDK for outbound Studio-to-MCP connections.
 
-`Flamoris.Mcp.Core` is currently focused on exposing authoritative FLAMORIS application sessions to MCP clients, including local host/bridge/permission infrastructure. Studio Phase 1 is primarily an MCP **client**, so it should not depend on MCP Core merely for package symmetry.
+`Flamoris.Mcp.Core` is a .NET package. Studio is a Python MCP **client** and does not depend on it.
 
 If a future stable client-side abstraction is added to a shared FLAMORIS package, Studio may adopt it through a separate Issue.
 
 ### Logging
 
-Use `Flamoris.Logging` when the .NET backend is initialized.
-
-Do not vendor the logging DLL/source into this repository.
+Use structured Python standard-library logging. Do not add the .NET-only `Flamoris.Logging` package.
 
 ## 7. Deployment model
 
@@ -213,7 +210,7 @@ Authenticated User B ----+--> Browser / Studio session
                                 | HTTPS
                                 v
 FLAMORIS Studio
-ASP.NET Core
+FastAPI
    |
    +-- authentication / authorization
    +-- PostgreSQL-backed per-user execution & asset catalog
@@ -235,7 +232,7 @@ Browser
    | HTTPS
    v
 FLAMORIS Studio
-ASP.NET Core
+FastAPI
    |
    +-- serves built React application
    |
@@ -250,7 +247,7 @@ ASP.NET Core
 
 The browser never connects directly to MCP services.
 
-In development, Vite may run separately and proxy `/api` to the ASP.NET backend.
+In development, Vite may run separately and proxy `/api` to the FastAPI backend.
 
 Production should be same-origin where practical.
 
@@ -282,42 +279,17 @@ Suggested structure:
 
 ```text
 flamoris-studio/
-  src/
-    Flamoris.Studio.Server/
-      Api/
-      Configuration/
-      Identity/
-      Access/
-      Data/
-      Catalog/
-      Intelligence/
-      Generation/
-      Executions/
-      Assets/
-      Mcp/
-      Program.cs
-
-  web/
-    src/
-      app/
-      api/
-      components/
-      editors/
-        intelligence/
-        image/
-        music/
-      executions/
-      results/
-      assets/
-
+  studio/
+    api/  auth/  access/  db/  catalog/
+    generation/  executions/  assets/
+    main.py
+  alembic/
+  web/src/
   tests/
-    Flamoris.Studio.Server.Tests/
-
-  docs/
-    STUDIO_ARCHITECTURE.md
+  docs/STUDIO_ARCHITECTURE.md
 ```
 
-One backend project is enough for Phase 1.
+One Python backend package is enough for Phase 1.
 
 Split projects only when dependency or testing boundaries become concrete.
 
@@ -329,28 +301,23 @@ Use Studio-owned interfaces.
 
 Initial conceptual boundary:
 
-```csharp
-public interface IGenerationGateway
-{
-    Task<GenerationHealth> GetHealthAsync(...);
-    Task<IReadOnlyList<GenerationCapability>> GetCapabilitiesAsync(...);
-    Task<IReadOnlyList<ModelSummary>> GetModelsAsync(...);
-    Task<WorkflowBuildResult> BuildWorkflowAsync(...);
-    Task<JobReference> SubmitAsync(...);
-    Task<JobStatusView> GetStatusAsync(...);
-    Task<JobResultView> GetResultAsync(...);
-    Task<IReadOnlyList<AssetReference>> ListAssetsAsync(...);
-    Task<AssetContent> GetAssetAsync(...);
-    Task<CancelResult> CancelAsync(...);
-}
+```python
+from typing import Protocol
+
+class GenerationGateway(Protocol):
+    async def health(self) -> GenerationHealth: ...
+    async def image_capability(self) -> GenerationCapability: ...
+    async def models(self, kind: str) -> list[ModelSummary]: ...
+    async def build_workflow(self, request: ImageRequest) -> WorkflowBuildResult: ...
+    async def submit(self, workflow_id: str) -> JobReference: ...
+    async def status(self, job_id: str) -> JobStatusView: ...
+    async def result(self, job_id: str) -> JobResultView: ...
+    async def list_assets(self, job_id: str) -> list[AssetReference]: ...
+    async def get_asset(self, asset_id: str) -> AssetContent: ...
+    async def cancel(self, job_id: str) -> CancelResult: ...
 ```
 
-```csharp
-public interface IIntelligenceGateway
-{
-    // Define only after Intelligence MCP publishes its real contract.
-}
-```
+Define the Intelligence gateway only after its real MCP contract exists.
 
 Names may change during implementation, but the boundary must remain.
 
@@ -502,7 +469,7 @@ Every Studio API request that can reveal or mutate user-specific state must run 
 
 Phase 1 needs a stable internal `StudioUserId` derived from the authenticated principal. It must not use display name or email address as the authorization key.
 
-Phase 1 implements local accounts with ASP.NET Core Identity backed by PostgreSQL and secure cookie authentication. Keep generation/application code dependent only on the authenticated principal / stable StudioUserId, so a future OIDC provider can replace or complement local accounts without rewriting Studio domain logic.
+Phase 1 implements PostgreSQL-backed local accounts with Argon2id password hashes and opaque server-side sessions. Store only hashed random session tokens in PostgreSQL. Use Secure, HttpOnly, SameSite cookies, CSRF protection for writes, login rate limiting and lockout, and registration disabled by default in production. Keep generation/application code dependent only on authenticated StudioUserId so OIDC can be added later.
 
 ### User-scoped persistent catalog
 
@@ -668,7 +635,7 @@ users
   updated_at
 ```
 
-Authentication credentials are managed by ASP.NET Core Identity in Phase 1. Do not create a second password/credential system in Studio catalog tables.
+Authentication credentials and hashed session tokens are stored in dedicated auth tables. Do not store plaintext passwords or tokens, or create a second credential system in catalog tables.
 
 ### Executions
 
@@ -1032,13 +999,13 @@ Phase 1 security requirements:
 - logs must not contain credentials or full sensitive payloads by default;
 - normal CI must use fake/mock MCP behavior.
 
-Phase 1 uses ASP.NET Core Identity local accounts with secure cookie authentication. The architectural requirement remains authenticated identity plus server-side authorization and user isolation; future external identity providers must preserve the same StudioUserId/access-control boundary.
+Phase 1 uses PostgreSQL-backed local accounts and secure server-side cookie sessions. Authenticated identity, server-side authorization and user isolation are required; future external identity providers must preserve the same StudioUserId/access-control boundary.
 
 Deployment must not expose Studio or unauthenticated MCP services beyond the intended trust boundary without an explicit access-control design.
 
 ## 28. Observability
 
-Use structured logging through `Flamoris.Logging`.
+Use structured Python logging.
 
 Useful fields may include:
 
@@ -1056,7 +1023,7 @@ Do not log entire prompts, generated binary content, secrets, or arbitrary attac
 
 ### Backend unit tests
 
-Cover:
+Use pytest and a disposable PostgreSQL instance in CI; fake the MCP gateway. Cover:
 
 - Studio DTO validation;
 - MCP-to-Studio normalization;
@@ -1122,9 +1089,9 @@ Live LIME/ComfyUI verification is a manual/integration environment check, not a 
 ### Foundation
 
 - React/TypeScript/Vite frontend exists.
-- EF Core/PostgreSQL persistence is configured for Studio-owned catalog metadata.
+- SQLAlchemy/PostgreSQL persistence is configured for Studio-owned catalog metadata.
 - migrations/create/update flow is deterministic and documented.
-- ASP.NET Core .NET 10 backend exists.
+- FastAPI Python FastAPI backend exists.
 - production backend can serve the built frontend.
 - structured logging is enabled.
 - normal build/test/CI is reproducible.
@@ -1180,17 +1147,17 @@ The Phase 1 design should be implemented as several reviewable Issues.
 
 Scope:
 
-- .NET 10 backend;
+- Python FastAPI backend;
 - React/TypeScript/Vite frontend;
 - production static serving;
 - development proxy;
-- `Flamoris.Logging`;
+- Python structured logging;
 - basic health/status;
-- ASP.NET Core authentication/authorization foundation;
+- PostgreSQL-backed local account, server-side session and authorization foundation;
 - stable internal Studio user identity;
 - authenticated session endpoint;
-- EF Core + PostgreSQL foundation;
-- initial users/executions/assets schema and migrations;
+- SQLAlchemy + Alembic + PostgreSQL foundation;
+- initial users/sessions/executions/assets schema and Alembic migrations;
 - Studio-specific least-privilege database configuration;
 - CI.
 
@@ -1198,7 +1165,7 @@ Scope:
 
 Scope:
 
-- official .NET MCP client;
+- official Python MCP client;
 - configuration;
 - Generation MCP connection;
 - gateway interfaces;
@@ -1277,7 +1244,7 @@ Commit meaningful units frequently.
 Suggested commit boundaries for the initial Work task:
 
 1. solution/frontend foundation;
-2. identity + EF Core/PostgreSQL foundation and migrations;
+2. identity + SQLAlchemy/PostgreSQL foundation and migrations;
 3. backend/application/catalog contracts;
 4. MCP gateway foundation;
 5. Image vertical slice;
