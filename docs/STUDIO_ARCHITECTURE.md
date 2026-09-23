@@ -15,6 +15,8 @@ The central architectural rule is:
 
 Studio coordinates existing authorities. It does not replace them.
 
+Studio is **multi-user by design**. Authentication and authorization are part of the Phase 1 architecture, not a later retrofit. User isolation applies even when multiple users share one Generation MCP, Intelligence MCP, or GPU runtime.
+
 ## 2. Phase 1 goals
 
 Phase 1 establishes the new Studio architecture and the first complete AI execution paths.
@@ -35,6 +37,8 @@ Video and Speech are not required to execute in Phase 1.
 Phase 1 must provide:
 
 - a new web Studio shell;
+- authenticated multi-user sessions;
+- per-user authorization for Studio executions, results, cancellation, previews, and downloads;
 - dedicated editors per creative category;
 - a backend MCP client boundary;
 - capability/availability discovery;
@@ -67,6 +71,8 @@ Phase 1 does not include:
 - Studio-owned provider routing;
 - a second Generation job/asset database;
 - a second Intelligence task authority.
+
+Phase 1 also does not require a particular external identity provider. The authentication mechanism must be replaceable behind ASP.NET Core authentication/authorization boundaries. Local accounts, OIDC, or another deployment-appropriate mechanism may be selected by the implementation Issue, but anonymous cross-user access is not acceptable.
 
 These may be introduced only by later design/Issues.
 
@@ -196,6 +202,30 @@ Phase 1 uses one Studio backend process and one built frontend.
 Production shape:
 
 ```text
+Authenticated User A ----+
+                          |
+Authenticated User B ----+--> Browser / Studio session
+                                |
+                                | HTTPS
+                                v
+FLAMORIS Studio
+ASP.NET Core
+   |
+   +-- authentication / authorization
+   +-- per-user execution & asset handle registry
+   +-- serves built React application
+   +-- Studio HTTP API
+   +-- MCP client connections
+          |
+          +-- shared flamoris-generation-mcp
+          +-- shared flamoris-intelligence-mcp
+```
+
+The upstream MCP services may be shared by many Studio users. Sharing an MCP connection/service does not imply sharing user-visible executions or assets.
+
+The original service topology is therefore:
+
+```text
 Browser
    |
    | HTTPS
@@ -226,6 +256,8 @@ Production should be same-origin where practical.
 | --- | --- |
 | Studio UI state | Studio |
 | Studio presentation/orchestration | Studio |
+| Authentication/session boundary | Studio / configured identity provider |
+| Authorization for Studio-visible executions/assets | Studio |
 | GPU runtime activation/shutdown/exclusivity | `flamoris-lime-manager` |
 | Generation workflows | `flamoris-generation-mcp` |
 | Generation jobs | `flamoris-generation-mcp` |
@@ -249,6 +281,8 @@ flamoris-studio/
     Flamoris.Studio.Server/
       Api/
       Configuration/
+      Identity/
+      Access/
       Intelligence/
       Generation/
       Executions/
@@ -455,7 +489,51 @@ Suggested page composition:
 +-------------+------------------------------------+
 ```
 
-## 14. Execution presentation model
+## 14. Multi-user identity and access boundary
+
+Every Studio API request that can reveal or mutate user-specific state must run with an authenticated principal.
+
+Phase 1 needs a stable internal `StudioUserId` derived from the authenticated principal. It must not use display name or email address as the authorization key.
+
+Authentication implementation is intentionally replaceable. Use standard ASP.NET Core authentication/authorization primitives so a deployment can use an appropriate provider without changing generation/application code.
+
+### User-scoped registry
+
+Generation MCP currently owns shared process-level job IDs and does not provide a Studio-user authorization layer.
+
+Studio therefore needs a small user-scoped reference registry:
+
+```text
+StudioExecutionHandle
+  -> StudioUserId
+  -> source
+  -> upstream execution/job ID
+
+StudioAssetHandle
+  -> StudioUserId
+  -> StudioExecutionHandle
+  -> upstream asset ID
+```
+
+These mappings are **access-control references**, not second execution/asset authorities.
+
+The owning MCP still decides job state and asset content.
+
+Phase 1 may keep the registry in memory. Losing the registry on Studio restart is acceptable: old transient handles become inaccessible rather than falling back to raw upstream IDs.
+
+Do not accept an arbitrary upstream `job_id` or `asset_id` from the browser as sufficient authorization.
+
+### Shared busy state
+
+Generation MCP currently permits one active generation per server process.
+
+In a multi-user Studio this is a shared capacity constraint.
+
+If User A is generating and User B submits generation, User B may receive a generic busy state. Studio must not reveal User A's identity, prompt, parameters, upstream job ID, result name, or other private metadata.
+
+A Studio-side waiting queue is not part of Phase 1.
+
+## 15. Execution presentation model
 
 Do not force every domain into a fake Generation-style job model.
 
@@ -465,6 +543,7 @@ Conceptual view:
 
 ```text
 StudioExecutionView
+  handle              # opaque Studio handle, not raw upstream job_id
   category
   operation
   source
@@ -481,18 +560,18 @@ For Generation jobs:
 
 ```text
 source = generation
-external_id = Generation MCP job_id
+external_id = Generation MCP job_id   # server-side only
 ```
 
 Current state is resolved from `jobs.status`.
 
 If a future Intelligence MCP call is synchronous, Studio may present it as a direct execution that transitions to a terminal result without inventing a persistent Intelligence job.
 
-## 15. Generation execution flow
+## 16. Generation execution flow
 
 The Image vertical slice follows the existing Generation MCP contract.
 
-### 15.1 Discover
+### 16.1 Discover
 
 Backend calls:
 
@@ -505,7 +584,7 @@ workflows.list
 
 The backend normalizes this into Studio DTOs for the Image editor.
 
-### 15.2 Build
+### 16.2 Build
 
 On submit:
 
@@ -519,19 +598,21 @@ Image editor
 
 The browser never constructs a raw provider graph.
 
-### 15.3 Submit
+### 16.3 Submit
 
 ```text
 workflow_id
   -> jobs.submit
-  -> job_id
+  -> upstream job_id
+  -> register (StudioUserId, upstream job_id)
+  -> opaque StudioExecutionHandle
 ```
 
 Submission is non-idempotent.
 
 Studio must not automatically retry an ambiguous submit failure.
 
-### 15.4 Status
+### 16.4 Status
 
 Phase 1 uses bounded HTTP polling from browser to Studio backend.
 
@@ -546,7 +627,7 @@ Suggested active polling behavior:
 
 SSE/WebSocket is not required for Phase 1.
 
-### 15.5 Result
+### 16.5 Result
 
 After completion:
 
@@ -559,7 +640,7 @@ assets.list
 
 The Result panel displays normalized metadata and asset actions.
 
-## 16. Asset representation
+## 17. Asset representation
 
 Core invariant:
 
@@ -570,7 +651,7 @@ Studio-facing conceptual DTO:
 ```text
 AssetReference
   source
-  id
+  handle              # opaque Studio asset handle
   media_kind
   mime_type
   display_name
@@ -582,14 +663,15 @@ For Phase 1 Generation assets:
 
 ```text
 source = generation
-id = Generation MCP asset_id
+handle = Studio-generated opaque handle
+# Generation MCP asset_id remains server-side in the user-scoped registry
 ```
 
 Do not expose Generation MCP local output paths to the browser.
 
 Do not derive local filesystem access from provider-supplied names.
 
-## 17. Result preview and download
+## 18. Result preview and download
 
 Generated file retrieval is a first-class Phase 1 feature.
 
@@ -616,22 +698,24 @@ Future renderers:
 Conceptual browser request:
 
 ```text
-GET /api/assets/{source}/{assetId}/content
-GET /api/assets/{source}/{assetId}/download
+GET /api/executions/{executionHandle}/assets/{assetHandle}/content
+GET /api/executions/{executionHandle}/assets/{assetHandle}/download
 ```
 
 Exact route naming may change during implementation.
 
 Backend behavior:
 
-1. validate `source`;
-2. resolve the matching gateway;
-3. request the asset from the owning MCP;
-4. validate returned media metadata and configured size limits;
-5. choose/sanitize a safe download filename;
-6. return content with an explicit MIME type;
-7. for download, set safe `Content-Disposition: attachment`;
-8. do not persist the asset permanently on the Studio server.
+1. require an authenticated Studio user;
+2. resolve the opaque execution/asset handles in that user's scope;
+3. reject missing or foreign handles without revealing whether another user owns them;
+4. resolve the matching gateway and server-side upstream asset ID;
+5. request the asset from the owning MCP;
+6. validate returned media metadata and configured size limits;
+7. choose/sanitize a safe download filename;
+8. return content with an explicit MIME type;
+9. for download, set safe `Content-Disposition: attachment`;
+10. do not persist the asset permanently on the Studio server.
 
 The backend may buffer bounded content when required by the MCP SDK, but it should not create a durable Studio asset store.
 
@@ -653,13 +737,14 @@ Use validated upstream media metadata plus a Studio allowlist appropriate to the
 
 Unknown media can be downloadable only if explicitly supported by the governing Issue; do not render arbitrary active content inline.
 
-## 18. Studio HTTP API
+## 19. Studio HTTP API
 
 Exact resource names may evolve, but Phase 1 should expose a small typed API.
 
 Conceptual surface:
 
 ```text
+GET  /api/session
 GET  /api/system/status
 
 GET  /api/generation/capabilities
@@ -667,36 +752,39 @@ GET  /api/generation/models
 GET  /api/generation/workflows
 
 POST /api/generation/image/jobs
-GET  /api/generation/jobs/{jobId}
-GET  /api/generation/jobs/{jobId}/result
-POST /api/generation/jobs/{jobId}/cancel
+GET  /api/executions/{executionHandle}
+GET  /api/executions/{executionHandle}/result
+POST /api/executions/{executionHandle}/cancel
 
-GET  /api/assets/{source}/{assetId}/content
-GET  /api/assets/{source}/{assetId}/download
+GET  /api/executions/{executionHandle}/assets/{assetHandle}/content
+GET  /api/executions/{executionHandle}/assets/{assetHandle}/download
 ```
 
 The public Studio API is not required to mirror MCP tool names one-for-one.
 
 Prefer task-oriented Studio DTOs.
 
-## 19. Persistence
+## 20. Persistence
 
-Phase 1 uses no application database.
+Phase 1 does not require an application content database for jobs/history/assets.
 
 Do not add SQLite/PostgreSQL solely to preserve MCP-owned job state.
+
+Multi-user authentication may require an identity store depending on the selected authentication implementation. A minimal identity store is allowed when required for accounts/credentials; it must remain separate in purpose from execution/history/asset authority. Deployments using an external identity provider may not need a local identity database.
 
 Phase 1 persistence is limited to:
 
 - normal application configuration;
 - no durable prompt history;
 - no durable Studio job database;
-- no durable Studio asset cache.
+- no durable Studio asset cache;
+- an in-memory per-user execution/asset handle registry is allowed and expected for Phase 1.
 
 Browser draft state may be transient.
 
 Persistent history/presets belong to a later phase with an explicit ownership/retention design.
 
-## 20. Configuration
+## 21. Configuration
 
 Backend configuration may include:
 
@@ -711,7 +799,7 @@ Secrets must come from deployment configuration/secret storage, not committed co
 
 Do not expose backend MCP endpoints, credentials, internal hostnames, or private tunnel identifiers through frontend configuration.
 
-## 21. Error model
+## 22. Error model
 
 Normalize MCP/provider failures into bounded Studio errors.
 
@@ -737,7 +825,7 @@ User-facing messages should be useful without exposing:
 
 Preserve diagnostic correlation/log information server-side.
 
-## 22. Cancellation
+## 23. Cancellation
 
 For Generation:
 
@@ -752,7 +840,7 @@ Do not report a job as cancelled merely because the browser requested cancellati
 
 Continue resolving state until the owning MCP reports a terminal state or the request itself returns an authoritative terminal result.
 
-## 23. Runtime authority
+## 24. Runtime authority
 
 Studio does not call LIME Manager merely to activate JANKU/YuE2/LLM before each request.
 
@@ -775,7 +863,7 @@ LIME Manager
 
 This prevents GPU topology from leaking into the product UI/backend architecture.
 
-## 24. Frontend availability behavior
+## 25. Frontend availability behavior
 
 Each category/editor must handle:
 
@@ -798,10 +886,15 @@ Music generation is not available from the configured Generation MCP.
 
 Do not expose provider connection secrets in that message.
 
-## 25. Security
+## 26. Security
 
 Phase 1 security requirements:
 
+- user-specific APIs require authentication;
+- authorization is checked server-side for every execution/result/cancel/preview/download operation;
+- opaque Studio execution/asset handles are scoped to the authenticated Studio user;
+- raw upstream job/asset IDs are never treated as authorization tokens;
+- foreign/missing handles fail closed without cross-user metadata leakage;
 - browser never receives MCP credentials;
 - browser never receives provider-local file paths;
 - backend validates all IDs and media metadata;
@@ -812,11 +905,11 @@ Phase 1 security requirements:
 - logs must not contain credentials or full sensitive payloads by default;
 - normal CI must use fake/mock MCP behavior.
 
-Application-level user authentication is not defined by this Phase 1 document.
+The exact authentication provider is configurable and may be selected by a dedicated implementation Issue. The architectural requirement is authenticated identity plus server-side authorization and user isolation.
 
 Deployment must not expose Studio or unauthenticated MCP services beyond the intended trust boundary without an explicit access-control design.
 
-## 26. Observability
+## 27. Observability
 
 Use structured logging through `Flamoris.Logging`.
 
@@ -832,7 +925,7 @@ Useful fields may include:
 
 Do not log entire prompts, generated binary content, secrets, or arbitrary attachments by default.
 
-## 27. Testing strategy
+## 28. Testing strategy
 
 ### Backend unit tests
 
@@ -847,7 +940,11 @@ Cover:
 - filename sanitization;
 - MIME validation;
 - asset size limits;
-- unknown asset/source rejection.
+- unknown asset/source rejection;
+- cross-user execution access rejection;
+- cross-user result/cancel rejection;
+- cross-user asset preview/download rejection;
+- busy responses that do not leak another user's metadata.
 
 ### Gateway integration tests
 
@@ -886,7 +983,7 @@ A local fake backend/upstream fixture may verify the Browser -> Studio -> fake M
 
 Live LIME/ComfyUI verification is a manual/integration environment check, not a normal CI requirement.
 
-## 28. Phase 1 acceptance criteria
+## 29. Phase 1 acceptance criteria
 
 ### Foundation
 
@@ -898,6 +995,9 @@ Live LIME/ComfyUI verification is a manual/integration environment check, not a 
 
 ### Architecture
 
+- Studio supports multiple authenticated users;
+- one user cannot read, cancel, preview, or download another user's Studio execution/assets;
+- raw upstream job/asset IDs are not sufficient to access Studio resources;
 - browser has no direct MCP dependency.
 - outbound MCP access is behind Studio gateway interfaces.
 - Studio does not own GPU runtime state.
@@ -936,11 +1036,11 @@ When no Music generation capability is available:
 
 When the Generation MCP music capability becomes available, the Music editor maps to that real contract.
 
-## 29. Recommended implementation Issues
+## 30. Recommended implementation Issues
 
 The Phase 1 design should be implemented as several reviewable Issues.
 
-### Issue A — Bootstrap Studio shell and build
+### Issue A — Bootstrap Studio shell, identity boundary, and build
 
 Scope:
 
@@ -950,6 +1050,9 @@ Scope:
 - development proxy;
 - `Flamoris.Logging`;
 - basic health/status;
+- ASP.NET Core authentication/authorization foundation;
+- stable internal Studio user identity;
+- authenticated session endpoint;
 - CI.
 
 ### Issue B — Add outbound MCP gateway foundation
@@ -960,6 +1063,7 @@ Scope:
 - configuration;
 - Generation MCP connection;
 - gateway interfaces;
+- per-user opaque execution/asset handle registry;
 - normalized error model;
 - fake MCP test infrastructure.
 
@@ -996,7 +1100,7 @@ Blocked until Intelligence MCP has a concrete public contract.
 
 Blocked until Generation MCP has a concrete Music capability/workflow contract.
 
-## 30. Work handoff guidance
+## 31. Work handoff guidance
 
 For initial architecture/foundation implementation:
 
@@ -1009,7 +1113,8 @@ Reasoning is intentionally high for the first implementation because it establis
 - MCP client isolation;
 - job/asset semantics;
 - security-sensitive download behavior;
-- future Intelligence/Music extension points.
+- future Intelligence/Music extension points;
+- multi-user authentication/authorization and cross-user isolation.
 
 After the foundation is stable, isolated UI editors, tests, and small fixes can use a lighter reasoning level.
 
