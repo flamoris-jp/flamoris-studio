@@ -1,11 +1,9 @@
-# .NET
-**/bin/
-**/obj/
-.vs/
-TestResults/
-artifacts/
-*.user
-*.suo
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.egg-info/
 
 # Node / frontend
 node_modules/
@@ -18,7 +16,6 @@ coverage/
 .env
 .env.*
 !.env.example
-appsettings.*.Local.json
 
 # IDE / OS
 .idea/
