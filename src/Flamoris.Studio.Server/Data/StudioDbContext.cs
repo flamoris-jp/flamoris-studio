@@ -65,6 +65,8 @@ public sealed class StudioDbContext(DbContextOptions<StudioDbContext> options) :
             entity.ToTable("executions");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.UserId).IsRequired();
+            entity.HasOne<StudioUser>().WithMany().HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
             entity.Property(x => x.RequestSnapshot).HasColumnType("jsonb");
             entity.HasIndex(x => new { x.UserId, x.CreatedAt });
             entity.HasIndex(x => x.UpstreamJobId);
@@ -74,6 +76,8 @@ public sealed class StudioDbContext(DbContextOptions<StudioDbContext> options) :
             entity.ToTable("assets");
             entity.HasKey(x => x.Id);
             entity.Property(x => x.Metadata).HasColumnType("jsonb");
+            entity.HasOne<StudioUser>().WithMany().HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(x => x.Execution).WithMany(x => x.Assets)
                 .HasForeignKey(x => x.ExecutionId).OnDelete(DeleteBehavior.Cascade);
             entity.HasIndex(x => new { x.UserId, x.ExecutionId });
