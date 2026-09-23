@@ -18,6 +18,7 @@ from .auth import COOKIE, clear_session, current_user, database, digest, hasher,
 from .db import Asset, Execution, LoginSession, User, make_session_factory, now
 from .gateway import GatewayError, GenerationGateway
 from .media import Thumbnails, filename, inspect_image
+from .logging_setup import configure_logging
 
 
 class Credentials(BaseModel):
@@ -320,4 +321,5 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
 
 def production_app():
+    configure_logging().info("Studio process starting")
     return create_app()
