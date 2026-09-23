@@ -830,8 +830,11 @@ Preserve diagnostic correlation/log information server-side.
 For Generation:
 
 ```text
-Studio cancel
-  -> jobs.cancel(job_id)
+Studio cancel(executionHandle)
+  -> authenticate user
+  -> resolve user-owned executionHandle
+  -> upstream job_id
+  -> jobs.cancel(upstream job_id)
 ```
 
 Studio must preserve the upstream cancellation semantics.
@@ -975,7 +978,9 @@ Cover:
 - active polling lifecycle;
 - completed preview;
 - failed result;
-- asset Download action.
+- asset Download action;
+- authenticated session handling;
+- UI behavior when a session is missing/expired.
 
 ### End-to-end smoke
 
@@ -1001,7 +1006,7 @@ Live LIME/ComfyUI verification is a manual/integration environment check, not a 
 - browser has no direct MCP dependency.
 - outbound MCP access is behind Studio gateway interfaces.
 - Studio does not own GPU runtime state.
-- Studio has no database in Phase 1.
+- Studio has no Phase 1 content database for job/history/asset authority; a minimal identity store is permitted when required by the selected authentication implementation.
 - Studio asset representation contains no provider-local filesystem path.
 
 ### Image vertical slice
