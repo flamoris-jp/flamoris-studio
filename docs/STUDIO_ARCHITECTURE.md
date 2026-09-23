@@ -71,7 +71,7 @@ Phase 1 does not include:
 - a second Generation job/asset database;
 - a second Intelligence task authority.
 
-Phase 1 also does not require a particular external identity provider. The authentication mechanism must be replaceable behind ASP.NET Core authentication/authorization boundaries. Local accounts, OIDC, or another deployment-appropriate mechanism may be selected by the implementation Issue, but anonymous cross-user access is not acceptable.
+Phase 1 uses ASP.NET Core Identity with PostgreSQL-backed local accounts and secure cookie authentication as the initial implementation. Keep identity access behind standard ASP.NET Core authentication/authorization boundaries so OIDC or another provider can be added later without coupling generation/application logic to local-account internals. Anonymous cross-user access is not acceptable.
 
 These may be introduced only by later design/Issues.
 
@@ -502,7 +502,7 @@ Every Studio API request that can reveal or mutate user-specific state must run 
 
 Phase 1 needs a stable internal `StudioUserId` derived from the authenticated principal. It must not use display name or email address as the authorization key.
 
-Authentication implementation is intentionally replaceable. Use standard ASP.NET Core authentication/authorization primitives so a deployment can use an appropriate provider without changing generation/application code.
+Phase 1 implements local accounts with ASP.NET Core Identity backed by PostgreSQL and secure cookie authentication. Keep generation/application code dependent only on the authenticated principal / stable StudioUserId, so a future OIDC provider can replace or complement local accounts without rewriting Studio domain logic.
 
 ### User-scoped persistent catalog
 
@@ -668,7 +668,7 @@ users
   updated_at
 ```
 
-Authentication credentials should remain with the selected identity mechanism. Do not invent a second password system merely because Studio has a users table.
+Authentication credentials are managed by ASP.NET Core Identity in Phase 1. Do not create a second password/credential system in Studio catalog tables.
 
 ### Executions
 
@@ -1032,7 +1032,7 @@ Phase 1 security requirements:
 - logs must not contain credentials or full sensitive payloads by default;
 - normal CI must use fake/mock MCP behavior.
 
-The exact authentication provider is configurable and may be selected by a dedicated implementation Issue. The architectural requirement is authenticated identity plus server-side authorization and user isolation.
+Phase 1 uses ASP.NET Core Identity local accounts with secure cookie authentication. The architectural requirement remains authenticated identity plus server-side authorization and user isolation; future external identity providers must preserve the same StudioUserId/access-control boundary.
 
 Deployment must not expose Studio or unauthenticated MCP services beyond the intended trust boundary without an explicit access-control design.
 
