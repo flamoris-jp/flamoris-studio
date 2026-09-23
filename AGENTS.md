@@ -14,7 +14,7 @@ Phase 1 focuses on the AI Prompt Console and the smallest complete vertical slic
 
 Studio is multi-user from the beginning. Every user-visible execution, result, prompt, attachment, and asset access path must be scoped to the authenticated Studio user/session.
 
-Phase 1 uses ASP.NET Core Identity with PostgreSQL-backed local accounts and secure cookie authentication. Keep domain logic dependent on stable Studio user identity/authorization rather than Identity implementation details so external identity providers can be added later.
+Phase 1 uses a Python FastAPI backend with PostgreSQL-backed local accounts and secure, server-side sessions. Keep domain logic dependent on stable Studio user identity/authorization rather than authentication implementation details so external identity providers can be added later.
 
 Do not revive assumptions from the old Studio architecture that required the Studio server to directly own or permanently store large production projects.
 
@@ -69,7 +69,7 @@ Studio must not become a competing authority for:
    - Transfer full payloads only when needed; prefer metadata, previews, ranges, or references when sufficient.
 
 7. **Do not duplicate shared foundations**
-   - Reuse FLAMORIS shared logging, MCP, diagnostics, and security components when appropriate.
+   - Reuse compatible FLAMORIS shared logging, MCP, diagnostics, and security components when appropriate. Python services use Python-native libraries; do not add .NET-only packages for symmetry.
    - Do not copy shared library source into this repository merely for convenience.
 
 8. **Multi-user isolation is an architectural boundary**
