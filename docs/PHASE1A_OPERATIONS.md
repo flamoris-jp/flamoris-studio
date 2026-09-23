@@ -38,8 +38,10 @@ dotnet ef database update --project src/Flamoris.Studio.Server --startup-project
 
 The initial migration creates Identity, execution and asset tables; it stores
 no generated media binary. The application account needs only ordinary
-table/data permissions after migration. The initial migration was hand-authored;
-before adding another migration, generate and review the EF model snapshot.
+table/data permissions after migration. The initial migration was hand-authored,
+so the EF pending-model warning is temporarily suppressed. Before the next
+schema change, generate and review the EF model snapshot, then remove that
+suppression; a missing snapshot otherwise blocks EF Core 10 migration commands.
 
 In Development, self-registration is enabled. In production it is disabled by
 default. Provision accounts through a controlled HTTPS registration window or a

@@ -18,6 +18,7 @@ public sealed record GenerationContent(byte[] Bytes, string MimeType);
 
 public interface IGenerationGateway
 {
+    Task<bool> IsHealthy(CancellationToken ct);
     Task<GenerationCapability> GetImageCapability(CancellationToken ct);
     Task<IReadOnlyList<GenerationModel>> GetModels(string kind, CancellationToken ct);
     Task<string> BuildWorkflow(string template, object parameters, CancellationToken ct);
@@ -75,6 +76,12 @@ public sealed class McpGenerationGateway(IConfiguration configuration) : IGenera
         throw new GatewayException(GatewayError.UpstreamFailure);
     private static Dictionary<string, object?> Args(string key, object value) => new() { [key] = value };
 
+    public async Task<bool> IsHealthy(CancellationToken ct)
+    {
+        var response = Structured(await Call("system.health", new(), ct));
+        return response.TryGetProperty("healthy", out var value) && value.ValueKind == JsonValueKind.True;
+    }
+
     public async Task<GenerationCapability> GetImageCapability(CancellationToken ct)
     {
         var response = Structured(await Call("capabilities.list", new(), ct));
@@ -124,7 +131,7 @@ public sealed class McpGenerationGateway(IConfiguration configuration) : IGenera
         // The SDK has already decoded this MCP image block. The upstream caps
         // images at 64 MiB; Studio enforces its own stricter configured cap.
         var max = configuration.GetValue<long>("Assets:MaxBytes", 67108864);
-        if (image.Data.Length > max)
+        if (image.Data.Length > 4 * ((max + 2) / 3) + 4)
             throw new GatewayException(GatewayError.Validation);
         return new(image.DecodedData.ToArray(), image.MimeType);
     }

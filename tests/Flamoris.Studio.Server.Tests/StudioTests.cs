@@ -9,8 +9,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
+using SkiaSharp;
 using Xunit;
 
 namespace Flamoris.Studio.Server.Tests;
@@ -26,11 +25,12 @@ public sealed class FakeGeneration : IGenerationGateway
     public byte[] Image { get; set; } = SamplePng();
     private static byte[] SamplePng()
     {
-        using var image = new Image<Rgba32>(2, 2);
-        using var stream = new MemoryStream();
-        image.SaveAsPng(stream);
-        return stream.ToArray();
+        using var bitmap = new SKBitmap(2, 2);
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+        return data.ToArray();
     }
+    public Task<bool> IsHealthy(CancellationToken ct) => Task.FromResult(true);
     public Task<GenerationCapability> GetImageCapability(CancellationToken ct) =>
         Task.FromResult(new GenerationCapability(true, ["text-to-image", "text-to-image-lora"]));
     public Task<IReadOnlyList<GenerationModel>> GetModels(string kind, CancellationToken ct) =>
@@ -63,7 +63,7 @@ public sealed class StudioFactory(long maxAssetBytes = 67108864) : WebApplicatio
     {
         builder.UseEnvironment("Development");
         builder.UseContentRoot(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,
-            "../../../../src/Flamoris.Studio.Server")));
+            "../../../../../src/Flamoris.Studio.Server")));
         builder.UseSetting("Identity:AllowRegistration", "true");
         builder.UseSetting("Assets:MaxBytes", maxAssetBytes.ToString());
         builder.UseSetting("Assets:ThumbnailDirectory", Path.Combine(Path.GetTempPath(), "studio-test-" + Guid.NewGuid().ToString("N")));
