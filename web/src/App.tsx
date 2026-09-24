@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api, type Session, type Discovery, type Execution } from './api'
+import Gallery from './Gallery'
 
-const sections = ['Intelligence', 'Image', 'Video', 'Music', 'Speech'] as const
+const sections = ['Image', 'Generated', 'Intelligence', 'Video', 'Music', 'Speech'] as const
 type ImageForm = { positivePrompt: string; negativePrompt: string; width: number; height: number; steps: number; cfg: number; seed: number; checkpoint: string; loras: { name: string; strengthModel: number; strengthClip: number }[] }
 
 export default function App() {
@@ -35,7 +36,7 @@ export default function App() {
     <nav aria-label="Creative domains">{sections.map(name => <button key={name} aria-current={section === name ? 'page' : undefined} onClick={() => setSection(name)}>{name}</button>)}</nav>
     <div className="account-footer"><span>{session.userName}</span><button onClick={async () => { try { await api.logout(session.csrfToken); setSession(await api.session()); setExecution(null) } catch { setError('Could not sign out.') } }}>Sign out</button></div></aside>
     <main><header><div><span className="eyebrow">CREATIVE CONTROL PLANE</span><h1>{section}</h1></div><span className="badge">PHASE 1A</span></header>
-    {section === 'Image' ? <><p>Turn a prompt into something you can keep.</p>
+    {section === 'Generated' ? <Gallery csrf={session.csrfToken} /> : section === 'Image' ? <><p>Turn a prompt into something you can keep.</p>
       {discovery?.available ? <ImageEditor discovery={discovery} busy={busy} onSubmit={async form => {
         setBusy(true); setError(''); setExecution(null)
         try { const created = await api.submit(form, session.csrfToken); setExecution(created); window.location.hash = `execution/${created.id}` }

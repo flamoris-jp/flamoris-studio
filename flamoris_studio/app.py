@@ -6,7 +6,7 @@ from collections import defaultdict, deque
 from datetime import timedelta
 
 from argon2.exceptions import VerificationError
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -24,6 +24,10 @@ from .logging_setup import configure_logging
 class Credentials(BaseModel):
     email: str = Field(min_length=3, max_length=256)
     password: str = Field(min_length=12, max_length=256)
+
+
+class DeleteAssetsRequest(BaseModel):
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=32)
 
 
 class Lora(BaseModel):
@@ -51,16 +55,25 @@ class ImageRequest(BaseModel):
                            "strength_clip": item.strengthClip} for item in self.loras]}
 
 
+def asset_view(asset: Asset) -> dict:
+    prefix = f"/api/executions/{asset.execution_id}/assets/{asset.id}"
+    return {"id": str(asset.id), "executionId": str(asset.execution_id),
+            "displayName": asset.display_name, "mimeType": asset.mime_type,
+            "mediaKind": asset.media_kind, "sizeBytes": asset.size_bytes,
+            "width": asset.width, "height": asset.height,
+            "createdAt": asset.created_at.isoformat(),
+            "hasThumbnail": asset.thumbnail_locator is not None,
+            "previewUrl": f"{prefix}/content", "thumbnailUrl": f"{prefix}/thumbnail",
+            "downloadUrl": f"{prefix}/download"}
+
+
 def view(execution: Execution, db: Session):
     assets = db.scalars(select(Asset).where(Asset.execution_id == execution.id,
-                                            Asset.user_id == execution.user_id).order_by(Asset.created_at)).all()
-    prefix = f"/api/executions/{execution.id}/assets"
+                                            Asset.user_id == execution.user_id,
+                                            Asset.availability != "deleted").order_by(Asset.created_at)).all()
     return {"id": str(execution.id), "state": execution.last_known_status,
-            "submittedAt": execution.submitted_at.isoformat(), "assets": [
-                {"id": str(a.id), "displayName": a.display_name, "mimeType": a.mime_type,
-                 "sizeBytes": a.size_bytes, "hasThumbnail": a.thumbnail_locator is not None,
-                 "previewUrl": f"{prefix}/{a.id}/content", "thumbnailUrl": f"{prefix}/{a.id}/thumbnail",
-                 "downloadUrl": f"{prefix}/{a.id}/download"} for a in assets]}
+            "submittedAt": execution.submitted_at.isoformat(),
+            "assets": [asset_view(asset) for asset in assets]}
 
 
 def owned(db: Session, execution_id: uuid.UUID, user_id: uuid.UUID) -> Execution:
@@ -73,7 +86,7 @@ def owned(db: Session, execution_id: uuid.UUID, user_id: uuid.UUID) -> Execution
 def owned_asset(db: Session, execution_id: uuid.UUID, asset_id: uuid.UUID, user_id: uuid.UUID) -> Asset:
     owned(db, execution_id, user_id)
     asset = db.scalar(select(Asset).where(Asset.id == asset_id, Asset.execution_id == execution_id,
-                                         Asset.user_id == user_id))
+                                         Asset.user_id == user_id, Asset.availability != "deleted"))
     if asset is None:
         raise HTTPException(404)
     return asset
@@ -214,6 +227,79 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             raise
         return view(execution, db)
 
+    @app.get("/api/assets")
+    def list_generated_assets(limit: int = Query(default=24, ge=1, le=48),
+                              offset: int = Query(default=0, ge=0, le=100000),
+                              db: Session = Depends(database),
+                              user_id: uuid.UUID = Depends(current_user)):
+        rows = db.execute(select(Asset, Execution).join(Execution, Asset.execution_id == Execution.id)
+                          .where(Asset.user_id == user_id, Execution.user_id == user_id,
+                                 Asset.availability != "deleted")
+                          .order_by(Asset.created_at.desc(), Asset.id.desc())
+                          .offset(offset).limit(limit + 1)).all()
+        return {"items": [asset_view(asset) for asset, _ in rows[:limit]],
+                "nextOffset": offset + limit if len(rows) > limit else None}
+
+    @app.get("/api/assets/{asset_id}")
+    def generated_asset_detail(asset_id: uuid.UUID, db: Session = Depends(database),
+                               user_id: uuid.UUID = Depends(current_user)):
+        row = db.execute(select(Asset, Execution).join(Execution, Asset.execution_id == Execution.id)
+                         .where(Asset.id == asset_id, Asset.user_id == user_id,
+                                Execution.user_id == user_id, Asset.availability != "deleted")).first()
+        if row is None:
+            raise HTTPException(404)
+        asset, execution = row
+        request = execution.request_snapshot if isinstance(execution.request_snapshot, dict) else {}
+        settings = {key: request[key] for key in ("positivePrompt", "negativePrompt", "checkpoint",
+                    "seed", "steps", "cfg", "width", "height") if key in request}
+        return {**asset_view(asset), "state": execution.last_known_status,
+                "submittedAt": execution.submitted_at.isoformat(), "settings": settings}
+
+    @app.post("/api/assets/delete")
+    async def delete_generated_assets(input: DeleteAssetsRequest, db: Session = Depends(database),
+                                      user_id: uuid.UUID = Depends(current_user)):
+        def cleanup_thumbnail(asset: Asset) -> None:
+            # Preserve the locator until cleanup succeeds so a retry can finish it.
+            if asset.thumbnail_locator is None:
+                return
+            try:
+                app.state.thumbnails.delete(asset.thumbnail_locator)
+            except OSError:
+                return
+            asset.thumbnail_locator = None
+            db.commit()
+
+        results = []
+        for asset_id in dict.fromkeys(input.ids):
+            # Serialize with result catalog updates, including a stale assets.list response.
+            row = db.execute(select(Asset, Execution).join(Execution, Asset.execution_id == Execution.id)
+                             .where(Asset.id == asset_id, Asset.user_id == user_id,
+                                    Execution.user_id == user_id)
+                             .with_for_update(of=Execution)).first()
+            if row is None:
+                results.append({"id": str(asset_id), "deleted": False, "error": "not_found"})
+                db.rollback()
+                continue
+            asset, _ = row
+            if asset.availability == "deleted":
+                cleanup_thumbnail(asset)
+                results.append({"id": str(asset_id), "deleted": True})
+                db.rollback()
+                continue
+            try:
+                upstream = await app.state.gateway.delete_asset(asset.upstream_asset_id)
+                if upstream.get("deleted") is not True:
+                    raise GatewayError("upstream_failure")
+                asset.availability = "deleted"
+                asset.updated_at = now()
+                db.commit()
+                cleanup_thumbnail(asset)
+                results.append({"id": str(asset_id), "deleted": True})
+            except GatewayError as exc:
+                db.rollback()
+                results.append({"id": str(asset_id), "deleted": False, "error": exc.code})
+        return {"results": results}
+
     @app.get("/api/executions/{execution_id}")
     async def execution_status(execution_id: uuid.UUID, db: Session = Depends(database),
                                user_id: uuid.UUID = Depends(current_user)):
@@ -274,6 +360,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             known[upstream] = asset
         db.commit()
         for asset in db.scalars(select(Asset).where(Asset.execution_id == execution.id,
+                                                   Asset.availability != "deleted",
                                                    Asset.thumbnail_locator.is_(None)).limit(8)):
             try:
                 data, mime = await get_content(asset, db)
@@ -310,6 +397,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     @app.get("/api/executions/{execution_id}/assets/{asset_id}/thumbnail")
     async def thumbnail(execution_id: uuid.UUID, asset_id: uuid.UUID, db: Session = Depends(database),
                         user_id: uuid.UUID = Depends(current_user)):
+        owned(db, execution_id, user_id)
+        db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution_id})
         asset = owned_asset(db, execution_id, asset_id, user_id)
         if asset.thumbnail_locator is None:
             data, _ = await get_content(asset, db)
@@ -325,6 +414,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     @app.get("/api/executions/{execution_id}/assets/{asset_id}/download")
     async def asset_content(execution_id: uuid.UUID, asset_id: uuid.UUID, request: Request,
                             db: Session = Depends(database), user_id: uuid.UUID = Depends(current_user)):
+        owned(db, execution_id, user_id)
+        db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution_id})
         asset = owned_asset(db, execution_id, asset_id, user_id)
         data, mime = await get_content(asset, db)
         headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",

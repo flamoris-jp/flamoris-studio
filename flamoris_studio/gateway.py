@@ -83,6 +83,9 @@ class GenerationGateway:
     async def assets(self, job_id: str):
         return (await self._json("assets.list", {"job_id": job_id}))["assets"]
 
+    async def delete_asset(self, asset_id: str):
+        return await self._json("assets.delete", {"asset_id": asset_id})
+
     async def content(self, asset_id: str, max_bytes: int):
         result = await self._call("assets.get", {"asset_id": asset_id})
         images = [item for item in result.content if item.type == "image"]
