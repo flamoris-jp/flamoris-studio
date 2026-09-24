@@ -79,6 +79,8 @@ Result presentation is media-aware:
 - audio -> audio player
 - video -> video player
 
+The Generated results page lists each signed-in user's stored output references, offers metadata/details and download, and supports confirmed individual or selected-item deletion. Deletion calls Generation MCP `assets.delete` and then hides the Studio catalog entry; failure leaves it visible for retry. The operation removes the Generation MCP-managed copy, not necessarily the original provider output. Because the current upstream job authority is process-local, deletion of older outputs can fail after a Generation MCP restart until the upstream supports persistent asset identity.
+
 Generated media must also be retrievable by the user from the Studio UI. Studio should expose a safe download path backed by the owning asset authority rather than leaking provider-local filesystem paths.
 
 ## Assets
