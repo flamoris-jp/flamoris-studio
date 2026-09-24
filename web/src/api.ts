@@ -1,7 +1,10 @@
 export type Session = { authenticated: boolean; userName: string | null; csrfToken: string; allowRegistration: boolean }
 export type Model = { id: string; name: string }
 export type Discovery = { available: boolean; templates: string[]; checkpoints: Model[]; loras: Model[] }
-export type Asset = { id: string; displayName: string; mimeType: string; sizeBytes: number | null; hasThumbnail: boolean; previewUrl: string; downloadUrl: string; thumbnailUrl: string }
+export type Asset = { id: string; executionId: string; displayName: string; mimeType: string; mediaKind: string; sizeBytes: number | null; width: number | null; height: number | null; createdAt: string; hasThumbnail: boolean; previewUrl: string; downloadUrl: string; thumbnailUrl: string }
+export type AssetDetail = Asset & { state: string; submittedAt: string; settings: Record<string, string | number> }
+export type AssetPage = { items: Asset[]; nextOffset: number | null }
+export type Deletion = { results: { id: string; deleted: boolean; error?: string }[] }
 export type Execution = { id: string; state: string; submittedAt: string; assets: Asset[] }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -26,4 +29,7 @@ export const api = {
   execution: (id: string) => request<Execution>(`/api/executions/${encodeURIComponent(id)}`),
   result: (id: string) => request<Execution>(`/api/executions/${encodeURIComponent(id)}/result`),
   cancel: (id: string, csrf: string) => post<Execution>(`/api/executions/${encodeURIComponent(id)}/cancel`, {}, csrf),
+  assets: (offset = 0) => request<AssetPage>(`/api/assets?offset=${offset}`),
+  asset: (id: string) => request<AssetDetail>(`/api/assets/${encodeURIComponent(id)}`),
+  deleteAssets: (ids: string[], csrf: string) => post<Deletion>('/api/assets/delete', { ids }, csrf),
 }
