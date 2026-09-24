@@ -258,6 +258,17 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     @app.post("/api/assets/delete")
     async def delete_generated_assets(input: DeleteAssetsRequest, db: Session = Depends(database),
                                       user_id: uuid.UUID = Depends(current_user)):
+        def cleanup_thumbnail(asset: Asset) -> None:
+            # Preserve the locator until cleanup succeeds so a retry can finish it.
+            if asset.thumbnail_locator is None:
+                return
+            try:
+                app.state.thumbnails.delete(asset.thumbnail_locator)
+            except OSError:
+                return
+            asset.thumbnail_locator = None
+            db.commit()
+
         results = []
         for asset_id in dict.fromkeys(input.ids):
             # Serialize with result catalog updates, including a stale assets.list response.
@@ -271,6 +282,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 continue
             asset, _ = row
             if asset.availability == "deleted":
+                cleanup_thumbnail(asset)
                 results.append({"id": str(asset_id), "deleted": True})
                 db.rollback()
                 continue
@@ -280,10 +292,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                     raise GatewayError("upstream_failure")
                 asset.availability = "deleted"
                 asset.updated_at = now()
-                locator = asset.thumbnail_locator
-                asset.thumbnail_locator = None
                 db.commit()
-                app.state.thumbnails.delete(locator)
+                cleanup_thumbnail(asset)
                 results.append({"id": str(asset_id), "deleted": True})
             except GatewayError as exc:
                 db.rollback()
