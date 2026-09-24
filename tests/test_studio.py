@@ -302,3 +302,36 @@ def test_bulk_delete_mixed_ownership_is_individual(clients):
                         {"id": asset_b, "deleted": False, "error": "not_found"}]
     assert b.get(f"/api/assets/{asset_b}").status_code == 200
     assert a.get("/api/assets").json()["items"] == []
+
+
+def test_thumbnail_cleanup_error_is_retryable_after_upstream_delete(clients, monkeypatch):
+    a, _, gateway, factory = clients
+    csrf = register(a, "cleanup@example.test")
+    execution_id = a.post("/api/generation/image/jobs", json=image_request(),
+                          headers={"X-CSRF-TOKEN": csrf}).json()["id"]
+    asset_id = a.get(f"/api/executions/{execution_id}/result").json()["assets"][0]["id"]
+    thumbnails = a.app.state.thumbnails
+    original = thumbnails.delete
+    attempts = []
+
+    def fail_once(locator):
+        attempts.append(locator)
+        if len(attempts) == 1:
+            raise OSError("thumbnail directory unavailable")
+        return original(locator)
+
+    monkeypatch.setattr(thumbnails, "delete", fail_once)
+    response = a.post("/api/assets/delete", json={"ids": [asset_id]},
+                      headers={"X-CSRF-TOKEN": csrf})
+    assert response.json()["results"] == [{"id": asset_id, "deleted": True}]
+    with factory() as db:
+        assert db.get(Asset, uuid.UUID(asset_id)).thumbnail_locator is not None
+    assert gateway.deleted == ["private-asset"]
+    retry = a.post("/api/assets/delete", json={"ids": [asset_id]},
+                   headers={"X-CSRF-TOKEN": csrf})
+    assert retry.json()["results"] == [{"id": asset_id, "deleted": True}]
+    assert gateway.deleted == ["private-asset"]
+    assert len(attempts) == 2
+    with factory() as db:
+        record = db.get(Asset, uuid.UUID(asset_id))
+        assert record.availability == "deleted" and record.thumbnail_locator is None
