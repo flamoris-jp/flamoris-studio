@@ -26,7 +26,8 @@ export default function Gallery({ csrf }: { csrf: string }) {
         const batch = ids.slice(start, start + 32)
         try {
           const response = await api.deleteAssets(batch, csrf)
-          for (const item of response.results) (item.deleted ? removed : failed).push(item.id)
+          const outcomes = new Map(response.results.map(item => [item.id, item.deleted]))
+          for (const id of batch) (outcomes.get(id) === true ? removed : failed).push(id)
         } catch { failed.push(...batch) }
       }
       setItems(old => old.filter(x => !removed.includes(x.id)))
