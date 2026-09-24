@@ -26,6 +26,8 @@ class FakeGateway:
         image.save(buffer, "PNG")
         self.image = buffer.getvalue()
         self.busy = False
+        self.deleted = []
+        self.fail_delete = False
 
     async def discover(self):
         return {"available": True, "templates": ["text-to-image", "text-to-image-lora"],
@@ -54,6 +56,12 @@ class FakeGateway:
         return [{"asset_id": "private-asset", "filename": "../../photo.png",
                  "mime_type": "image/png", "media_kind": "image", "size_bytes": len(self.image),
                  "output_index": 0}]
+
+    async def delete_asset(self, asset):
+        if self.fail_delete:
+            raise GatewayError("unavailable")
+        self.deleted.append(asset)
+        return {"deleted": True}
 
     async def content(self, asset, max_bytes):
         return self.image, "image/png"
@@ -241,3 +249,56 @@ async def test_gateway_normalizes_sdk_v2_result(monkeypatch):
     monkeypatch.setattr(gateway, "_call", call)
     data, mime = await gateway.content("internal-only", 1024)
     assert data == b"hello" and mime == "image/png"
+
+
+def test_gallery_detail_and_deletion_are_private_and_do_not_reimport(clients):
+    a, b, gateway, factory = clients
+    csrf_a = register(a, "gallery-a@example.test")
+    csrf_b = register(b, "gallery-b@example.test")
+    made = a.post("/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf_a})
+    execution_id = made.json()["id"]
+    asset_id = a.get(f"/api/executions/{execution_id}/result").json()["assets"][0]["id"]
+    listed = a.get("/api/assets").json()
+    assert listed["items"][0]["id"] == asset_id
+    assert listed["items"][0]["hasThumbnail"] is True
+    assert a.get(f"/api/assets/{asset_id}").json()["settings"]["positivePrompt"] == "a quiet stage"
+    assert b.get("/api/assets").json()["items"] == []
+    assert b.get(f"/api/assets/{asset_id}").status_code == 404
+    assert a.post("/api/assets/delete", json={"ids": [asset_id]}).status_code == 403
+    foreign = b.post("/api/assets/delete", json={"ids": [asset_id]}, headers={"X-CSRF-TOKEN": csrf_b})
+    assert foreign.json()["results"] == [{"id": asset_id, "deleted": False, "error": "not_found"}]
+    assert gateway.deleted == []
+
+    gateway.fail_delete = True
+    failed = a.post("/api/assets/delete", json={"ids": [asset_id]}, headers={"X-CSRF-TOKEN": csrf_a})
+    assert failed.json()["results"][0]["deleted"] is False
+    assert a.get("/api/assets").json()["items"][0]["id"] == asset_id
+    gateway.fail_delete = False
+    deleted = a.post("/api/assets/delete", json={"ids": [asset_id]}, headers={"X-CSRF-TOKEN": csrf_a})
+    assert deleted.json()["results"] == [{"id": asset_id, "deleted": True}]
+    assert gateway.deleted == ["private-asset"]
+    assert a.get("/api/assets").json()["items"] == []
+    assert a.get(f"/api/assets/{asset_id}").status_code == 404
+    assert a.get(f"/api/executions/{execution_id}/assets/{asset_id}/download").status_code == 404
+    assert a.get(f"/api/executions/{execution_id}/result").json()["assets"] == []
+    assert a.post("/api/assets/delete", json={"ids": [asset_id]}, headers={"X-CSRF-TOKEN": csrf_a}).json()["results"][0]["deleted"]
+    assert gateway.deleted == ["private-asset"]
+    with factory() as db:
+        record = db.get(Asset, uuid.UUID(asset_id))
+        assert record.availability == "deleted" and record.thumbnail_locator is None
+
+
+def test_bulk_delete_mixed_ownership_is_individual(clients):
+    a, b, gateway, _ = clients
+    csrf_a = register(a, "bulk-a@example.test")
+    csrf_b = register(b, "bulk-b@example.test")
+    made_a = a.post("/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf_a}).json()
+    made_b = b.post("/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf_b}).json()
+    asset_a = a.get(f"/api/executions/{made_a['id']}/result").json()["assets"][0]["id"]
+    asset_b = b.get(f"/api/executions/{made_b['id']}/result").json()["assets"][0]["id"]
+    response = a.post("/api/assets/delete", json={"ids": [asset_a, asset_b]},
+                      headers={"X-CSRF-TOKEN": csrf_a}).json()["results"]
+    assert response == [{"id": asset_a, "deleted": True},
+                        {"id": asset_b, "deleted": False, "error": "not_found"}]
+    assert b.get(f"/api/assets/{asset_b}").status_code == 200
+    assert a.get("/api/assets").json()["items"] == []
