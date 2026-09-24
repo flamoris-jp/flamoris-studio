@@ -350,6 +350,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             known[upstream] = asset
         db.commit()
         for asset in db.scalars(select(Asset).where(Asset.execution_id == execution.id,
+                                                   Asset.availability != "deleted",
                                                    Asset.thumbnail_locator.is_(None)).limit(8)):
             try:
                 data, mime = await get_content(asset, db)
