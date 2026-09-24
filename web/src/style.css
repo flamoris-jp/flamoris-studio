@@ -55,3 +55,13 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .login .text-button { margin-top: 22px; }
 @media(max-width:750px) { .layout { grid-template-columns: 1fr; } aside { padding: 14px; } aside .eyebrow, .account-footer { display: none; } nav { display: flex; overflow-x: auto; margin-top: 12px; } nav button { flex: 0 0 auto; } main { padding-top: 25px; } .fields.four { grid-template-columns: repeat(2,minmax(0,1fr)); } .lora { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media(max-width:480px) { .fields { grid-template-columns: 1fr; } .actions { align-items: flex-start; flex-direction: column; } }
+
+.gallery-preview { width: 100%; aspect-ratio: 1; background: #121019; display: grid; place-items: center; color: #b9aeba; }
+.gallery-preview img { width: 100%; height: 100%; object-fit: contain; }
+.gallery article label { display: flex; align-items: center; gap: 8px; }
+.gallery-detail { margin-top: 22px; }
+.gallery-detail > img { display: block; max-width: 100%; max-height: 65vh; margin: 16px auto; object-fit: contain; }
+.gallery-detail dl { display: grid; gap: 8px; overflow-wrap: anywhere; }
+.gallery-detail dl div { display: grid; grid-template-columns: minmax(100px, 20%) 1fr; gap: 12px; }
+.gallery-detail dt { color: #b9aeba; }
+.gallery-detail dd { margin: 0; white-space: pre-wrap; }

@@ -19,3 +19,14 @@ test('busy response is surfaced without guessing another execution', async () =>
   }))
   await expect(api.submit({}, 'token')).rejects.toThrow('Generation service is busy.')
 })
+
+
+test('bulk delete uses CSRF and only opaque asset handles', async () => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify({ results: [] }) })
+  vi.stubGlobal('fetch', fetch)
+  await api.deleteAssets(['asset-handle'], 'token-123')
+  expect(fetch).toHaveBeenCalledWith('/api/assets/delete', expect.objectContaining({
+    credentials: 'same-origin', method: 'POST', body: JSON.stringify({ ids: ['asset-handle'] }),
+    headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'token-123' }),
+  }))
+})

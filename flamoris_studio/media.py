@@ -59,6 +59,14 @@ class Thumbnails:
             temp.unlink(missing_ok=True)
         return asset_id.hex
 
+    def delete(self, locator: str | None) -> None:
+        if self.root is None or not locator or not re.fullmatch(r"[a-f0-9]{32}", locator):
+            return
+        path = self.root / f"{locator}.webp"
+        if path.is_symlink():
+            return
+        path.unlink(missing_ok=True)
+
     def load(self, locator: str) -> bytes | None:
         if self.root is None or not re.fullmatch(r"[a-f0-9]{32}", locator):
             return None
