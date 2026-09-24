@@ -386,6 +386,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     @app.get("/api/executions/{execution_id}/assets/{asset_id}/thumbnail")
     async def thumbnail(execution_id: uuid.UUID, asset_id: uuid.UUID, db: Session = Depends(database),
                         user_id: uuid.UUID = Depends(current_user)):
+        owned(db, execution_id, user_id)
+        db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution_id})
         asset = owned_asset(db, execution_id, asset_id, user_id)
         if asset.thumbnail_locator is None:
             data, _ = await get_content(asset, db)
@@ -401,6 +403,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     @app.get("/api/executions/{execution_id}/assets/{asset_id}/download")
     async def asset_content(execution_id: uuid.UUID, asset_id: uuid.UUID, request: Request,
                             db: Session = Depends(database), user_id: uuid.UUID = Depends(current_user)):
+        owned(db, execution_id, user_id)
+        db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution_id})
         asset = owned_asset(db, execution_id, asset_id, user_id)
         data, mime = await get_content(asset, db)
         headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
