@@ -177,7 +177,7 @@ Phase 1では、Intelligence / Image / Musicの専用Prompt Editorと、共通�
 
 生成結果は単なる画面表示で終わらせず、asset authorityを経由して安全にユーザーが取得できることを最初から要件に含めます。
 
-将来は `flamoris-studio-client` を通じてMangoなどのローカル環境にある大容量project / media / production toolsへ接続します。Studio側は可能な限りファイルパスではなくasset referenceを扱います。
+将来は `flamoris-studio-client` を通じてローカル環境にある大容量project / media / production toolsへ接続します。Studio側は可能な限りファイルパスではなくasset referenceを扱います。
 
 勝手に使ってください。  
 改造しても、組み込んでも、面白いものや変なものを作ってもOKです。
