@@ -99,7 +99,7 @@ Later, `flamoris-studio-client` will make large desktop-local projects and media
 
 ## Deployment
 
-For the decopon Docker/Compose and nginx setup, see [docs/DECOPON_DEPLOYMENT.md](docs/DECOPON_DEPLOYMENT.md). Deployment configuration and database credentials stay outside the repository.
+For a generic Docker/Compose deployment, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). The public setup does not assume a particular FLAMORIS host. PostgreSQL, thumbnail storage, bind address/port, Generation MCP, reverse proxy, and secrets are supplied by the deployment environment.
 
 ## Architecture
 
