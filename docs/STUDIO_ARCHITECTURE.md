@@ -170,7 +170,7 @@ Do not introduce SSR, server components, or a schema-generated form framework un
 
 - Python 3.12+ / FastAPI
 - SQLAlchemy 2 / Alembic migrations
-- PostgreSQL (shared infrastructure hosted on decopon, using a Studio-specific database or schema and least-privilege credentials)
+- PostgreSQL (operator-provided service, using a Studio-specific database or schema and least-privilege credentials)
 
 The backend owns:
 
@@ -620,7 +620,7 @@ PostgreSQL is introduced in Phase 1.
 
 Its purpose is to persist **Studio-owned metadata**, not to duplicate MCP execution authority or store large generated binaries.
 
-Use a dedicated Studio database or schema and a least-privilege Studio database user on decopon PostgreSQL.
+Use a dedicated Studio database or schema and a least-privilege Studio database user on the configured PostgreSQL service.
 
 ### Users
 
@@ -844,7 +844,7 @@ Prefer task-oriented Studio DTOs.
 
 Phase 1 uses PostgreSQL for Studio-owned identity/catalog metadata.
 
-The initial deployment target is the existing PostgreSQL infrastructure on decopon, using a Studio-specific database or schema and least-privilege credentials.
+The deployment requires a PostgreSQL service configured with a Studio-specific database or schema and least-privilege credentials.
 
 Persist:
 
@@ -1082,7 +1082,7 @@ Cover:
 
 A local fake backend/upstream fixture may verify the Browser -> Studio -> fake MCP shape.
 
-Live LIME/ComfyUI verification is a manual/integration environment check, not a normal CI requirement.
+Live provider/runtime verification is a manual/integration environment check, not a normal CI requirement.
 
 ## 30. Phase 1 acceptance criteria
 
