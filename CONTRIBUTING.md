@@ -6,7 +6,7 @@ Studio is the creative control center for FLAMORIS. Contributions should preserv
 
 ## Before contributing
 
-For small fixes, feel free to open a pull request directly.
+Issues are welcome from everyone. Pull requests are accepted only from repository collaborators. Please open an Issue to propose fixes, features, or documentation changes.
 
 For new architecture, MCP contracts, job/asset behavior, new prompt editors, persistence, or cross-repository integration, please open an Issue first.
 
@@ -47,7 +47,7 @@ FLAMORIS does not provide guaranteed individual support. Use repository document
 
 # FLAMORIS Studio へのコントリビューション
 
-小さな修正は直接Pull Requestでも構いません。
+Issueはどなたでも歓迎します。Pull Requestはリポジトリのcollaboratorのみ受け付けています。修正、機能、ドキュメント変更などの提案はIssueからお願いします。
 
 アーキテクチャ、MCP境界、job/asset、Prompt Editor、永続化、複数Repositoryにまたがる変更は、先にIssueで役割とauthorityを確認してください。
 
