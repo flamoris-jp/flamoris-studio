@@ -15,7 +15,7 @@ host, database, reverse proxy, storage, and network policy before applying it.
 
 Create a dedicated database owned by a migration role and a separate runtime
 role. Use the PostgreSQL administrative connection appropriate to your
-installation. Enter passwords interactively with `\\password`, and keep them
+installation. Enter passwords interactively with `\password`, and keep them
 out of command history and repository files. The example assumes the default
 `public` schema is dedicated to Studio:
 
