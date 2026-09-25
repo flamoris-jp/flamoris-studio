@@ -155,6 +155,24 @@ metadata alone cannot restore those outputs. Plan durable asset retention at
 the owning service. Do not point Studio directly at a provider-local output
 directory.
 
+## Upgrading an existing deployment
+
+Earlier FLAMORIS deployments may have used fixed env-file and thumbnail paths in
+`compose.yaml`. Before updating such a deployment, record those current paths.
+Either move the private files to the new generic defaults or export the Compose
+interpolation variables so the existing locations remain in use:
+
+```sh
+export STUDIO_ENV_FILE=/path/to/existing/studio.env
+export STUDIO_MIGRATE_ENV_FILE=/path/to/existing/migrate.env
+export STUDIO_THUMBNAILS_DIR=/path/to/existing/thumbnails
+export STUDIO_BIND_HOST=127.0.0.1
+export STUDIO_BIND_PORT=5087
+```
+
+Run `docker compose config` and verify the resolved paths and published bind
+before recreating a live service.
+
 ## Updating and rollback
 
 Review the desired commit, build the image, run migrations, then recreate the
