@@ -30,4 +30,4 @@ temp/
 
 # Private deployment runtime files
 deploy/*.env
-data/
+/data/
