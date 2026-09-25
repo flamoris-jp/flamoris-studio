@@ -1,4 +1,4 @@
-# Decopon deployment. Keep both env files outside the checkout.
+# Generic deployment template. Keep runtime env files outside version control.
 x-studio-common: &studio-common
   build: .
   image: flamoris-studio:local
@@ -17,12 +17,12 @@ services:
     <<: *studio-common
     restart: unless-stopped
     env_file:
-      - /etc/flamoris-studio/studio.env
+      - ${STUDIO_ENV_FILE:-./deploy/studio.env}
     ports:
-      - "127.0.0.1:5087:5087"
+      - "${STUDIO_BIND_HOST:-127.0.0.1}:${STUDIO_BIND_PORT:-5087}:5087"
     volumes:
       - type: bind
-        source: /srv/disk1/flamoris-studio/thumbnails
+        source: ${STUDIO_THUMBNAILS_DIR:-./data/thumbnails}
         target: /data/thumbnails
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5087/api/system/status', timeout=3).close()"]
@@ -35,5 +35,5 @@ services:
     <<: *studio-common
     profiles: ["migrate"]
     env_file:
-      - /etc/flamoris-studio/migrate.env
+      - ${STUDIO_MIGRATE_ENV_FILE:-./deploy/migrate.env}
     command: ["alembic", "upgrade", "head"]
