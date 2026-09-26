@@ -85,6 +85,22 @@ Generated media must also be retrievable by the user from the Studio UI. Studio 
 
 ## Assets
 
+Result synchronization stores metadata before any binary retrieval. Gallery
+thumbnails are generated lazily through their own endpoint; a slow/failed preview
+does not remove the row. Completed executions can retry metadata synchronization
+after a Studio restart. If an upstream listing is temporarily unavailable, already
+cataloged results remain visible with `catalogSync: unavailable` on the result
+response. Tombstones prevent deleted entries from being reimported.
+
+The current inline download limit remains at most 64 MiB (or the lower configured
+Studio limit). Oversized downloads return HTTP 413 / `asset_too_large` while the
+catalog entry is retained. Larger transfer support is tracked in
+[Generation MCP #27](https://github.com/flamoris-jp/flamoris-generation-mcp/issues/27);
+this change does not claim that large binary transport is already implemented.
+Deploy the companion durable metadata change there before relying on metadata-only
+asset discovery after a Generation MCP restart. Unmaterialized provider outputs
+still cannot be downloaded after their live execution mapping is lost.
+
 Studio treats generated outputs and future client-side media as asset references, not raw filesystem paths.
 
 This distinction is intentional:

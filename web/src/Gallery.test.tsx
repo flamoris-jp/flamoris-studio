@@ -81,3 +81,14 @@ test('missing per-item response is treated as failure', async () => {
   expect(view.querySelectorAll('article')).toHaveLength(1)
   expect(view.querySelector('[role="alert"]')?.textContent).toContain('Could not delete 1')
 })
+
+test('thumbnail generation is lazy and failure preserves the catalog entry', async () => {
+  const view = await show(['a'])
+  const image = view.querySelector('article img')!
+  expect(image.getAttribute('src')).toBe('/thumbnail/a')
+  expect(image.getAttribute('loading')).toBe('lazy')
+  await act(async () => { image.dispatchEvent(new Event('error')) })
+  expect(view.querySelector('article')?.textContent).toContain('Preview unavailable')
+  expect(view.querySelector('article strong')?.textContent).toBe('a.png')
+  expect(view.querySelectorAll('article')).toHaveLength(1)
+})
