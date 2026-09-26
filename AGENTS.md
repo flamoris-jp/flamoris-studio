@@ -10,7 +10,7 @@ This repository contains FLAMORIS Studio, the creative control center for FLAMOR
 
 Studio is a creative control plane.
 
-Phase 1 focuses on the AI Prompt Console and the smallest complete vertical slices needed to submit work, observe jobs, preview results, and retrieve generated assets.
+Phase 1 advances through the smallest complete vertical slices needed to submit work, observe jobs, preview results, and retrieve generated assets. The authenticated multi-user shell and Image vertical slice already exist in current main; do not describe them as future scaffolding.
 
 Studio is multi-user from the beginning. Every user-visible execution, result, prompt, attachment, and asset access path must be scoped to the authenticated Studio user/session.
 
@@ -36,7 +36,7 @@ Studio must not become a competing authority for:
 - project/document state owned by FLAMORIS production applications;
 - arbitrary workstation filesystem state that belongs behind `flamoris-studio-client`.
 
-`flamoris-lime-manager` is the runtime authority. Studio should not directly encode GPU/VRAM switching logic.
+`flamoris-gpu-node-manager` is the provider-neutral local runtime/GPU authority. Studio should not directly encode GPU/VRAM switching logic or make a particular node name part of its architecture.
 
 ## Architecture principles
 

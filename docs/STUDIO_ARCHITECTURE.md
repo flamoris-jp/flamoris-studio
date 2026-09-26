@@ -1,6 +1,6 @@
 # FLAMORIS Studio Architecture
 
-Status: Phase 1 design  
+Status: Phase 1 architecture + current implementation baseline  
 Repository: `flamoris-jp/flamoris-studio`
 
 ## 1. Purpose
@@ -107,9 +107,9 @@ Generation MCP remains the authority for generation workflow identity, generatio
 
 ### `flamoris-intelligence-mcp`
 
-The repository and architectural boundary exist, but its runtime/tool contract is not yet implemented.
+The Phase 1 runtime/tool contract is implemented and mock/CI validated. Live provider/deployment acceptance remains a separate upstream check.
 
-Studio must not invent a private Intelligence contract and later force Intelligence MCP to match it.
+Studio integration must use that public contract and must not invent a private Intelligence API or call llama.cpp/provider APIs directly.
 
 ### Music
 
@@ -123,7 +123,7 @@ Phase 1 is delivered as several vertical slices sharing the same architecture.
 
 ### Phase 1A: Studio foundation + Image vertical slice
 
-This is the first executable path and should be implemented first.
+This was the first executable path and is implemented in current main.
 
 It proves:
 
@@ -138,13 +138,13 @@ Browser
   -> download
 ```
 
-Phase 1A is the architecture validation slice.
+Phase 1A established the architecture validation slice and remains tracked for any outstanding acceptance/follow-up scope.
 
 ### Phase 1B: Intelligence
 
-Add executable Intelligence behavior only after `flamoris-intelligence-mcp` defines its public request/result contract.
+The public Intelligence MCP request/result contract now exists. Studio #2 may implement executable Intelligence behavior against that contract.
 
-The Studio shell/editor may exist before then, but it must render an explicit unavailable/not-configured state rather than a fake backend.
+When the configured Intelligence MCP/provider is unavailable, Studio must render an explicit unavailable/not-configured state rather than a fake backend or a direct provider fallback.
 
 ### Phase 1C: Music
 
@@ -260,7 +260,7 @@ Production should be same-origin where practical.
 | Authentication/session boundary | Studio / configured identity provider |
 | Authorization for Studio-visible executions/assets | Studio |
 | Studio user/execution/asset catalog metadata | Studio PostgreSQL |
-| GPU runtime activation/shutdown/exclusivity | `flamoris-lime-manager` |
+| GPU runtime activation/shutdown/exclusivity | `flamoris-gpu-node-manager` |
 | Generation workflows | `flamoris-generation-mcp` |
 | Generation jobs | `flamoris-generation-mcp` |
 | Generated assets | `flamoris-generation-mcp` |
@@ -317,7 +317,7 @@ class GenerationGateway(Protocol):
     async def cancel(self, job_id: str) -> CancelResult: ...
 ```
 
-Define the Intelligence gateway only after its real MCP contract exists.
+Define the Intelligence gateway against the current public Intelligence MCP contract. Do not bypass that boundary with provider-specific calls.
 
 Names may change during implementation, but the boundary must remain.
 
@@ -393,7 +393,7 @@ Planned UI fields:
 - Max tokens
 - text/code attachments
 
-Final request semantics follow Intelligence MCP once implemented.
+Executable request semantics must follow the current public Intelligence MCP contract. Planned UI fields that are not supported by that contract remain unavailable until the contract intentionally expands.
 
 ### Image editor
 
@@ -539,7 +539,7 @@ external_id = Generation MCP job_id   # server-side only
 
 Current state is resolved from `jobs.status`.
 
-If a future Intelligence MCP call is synchronous, Studio may present it as a direct execution that transitions to a terminal result without inventing a persistent Intelligence job.
+The current Intelligence MCP `inference.execute` call is synchronous. Studio #2 may present it as a direct execution that transitions to a terminal result without inventing a persistent Intelligence job.
 
 ## 16. Generation execution flow
 
@@ -940,7 +940,7 @@ Continue resolving state until the owning MCP reports a terminal state or the re
 
 ## 25. Runtime authority
 
-Studio does not call LIME Manager merely to activate JANKU/YuE2/LLM before each request.
+Studio does not call GPU Node Manager merely to activate JANKU/YuE2/LLM before each request.
 
 The owning MCP/provider integration is responsible for satisfying its runtime requirements through the appropriate runtime authority.
 
@@ -955,8 +955,8 @@ Studio
 Generation MCP / runtime integration
   -> runtime requirement
 
-LIME Manager
-  -> GPU/runtime authority
+GPU Node Manager
+  -> provider-neutral local GPU/runtime authority
 ```
 
 This prevents GPU topology from leaking into the product UI/backend architecture.
@@ -1211,21 +1211,26 @@ This may be merged with Issue C if the resulting change remains reviewable, but 
 
 ### Issue E — Add Intelligence editor/integration
 
-Blocked until Intelligence MCP has a concrete public contract.
+The Intelligence MCP Phase 1 public contract now exists. Integration remains tracked
+in Studio #2 and must use that contract rather than calling llama.cpp/provider APIs
+directly. Live provider acceptance remains an upstream deployment concern.
 
 ### Issue F — Add Music editor/integration
 
-Blocked until Generation MCP has a concrete Music capability/workflow contract.
+Still blocked until Generation MCP exposes the reviewed Music capability/workflow
+contract. Current provider-contract work begins with Generation MCP #31.
 
 ## 32. Implementation tracking
 
-Current Phase 1 Issues:
+Current Phase 1 tracking:
 
-- [#1 Phase 1A: bootstrap multi-user Studio and complete Image generation vertical slice](https://github.com/flamoris-jp/flamoris-studio/issues/1) — implementation-ready
-- [#2 Phase 1B: integrate Intelligence editor after Intelligence MCP contract exists](https://github.com/flamoris-jp/flamoris-studio/issues/2) — blocked by Intelligence MCP contract
-- [#3 Phase 1C: integrate Music editor after Generation MCP music capability exists](https://github.com/flamoris-jp/flamoris-studio/issues/3) — blocked by Generation MCP Music capability
+- [#1 Phase 1A: bootstrap multi-user Studio and complete Image generation vertical slice](https://github.com/flamoris-jp/flamoris-studio/issues/1) — core shell/Image/catalog implementation exists in current main; keep open for remaining acceptance and follow-up scope.
+- [#2 Phase 1B: integrate Intelligence editor after Intelligence MCP contract exists](https://github.com/flamoris-jp/flamoris-studio/issues/2) — the public Intelligence contract exists; integration work can target it without bypassing MCP.
+- [#3 Phase 1C: integrate Music editor after Generation MCP music capability exists](https://github.com/flamoris-jp/flamoris-studio/issues/3) — still gated by the reviewed Generation music contract.
+- [#20 bounded asset transfer adoption](https://github.com/flamoris-jp/flamoris-studio/issues/20) and [#21 managed-input authorization](https://github.com/flamoris-jp/flamoris-studio/issues/21) define the current cross-repository asset/input boundary work.
 
-Phase 1A is the only implementation-ready Phase 1 slice at the time of this design revision.
+This document is both the architecture baseline and a description of current Phase 1
+boundaries. Fast-changing task status belongs in Issues rather than being copied here.
 
 ## 33. Work handoff guidance
 
