@@ -107,9 +107,9 @@ Generation MCP remains the authority for generation workflow identity, generatio
 
 ### `flamoris-intelligence-mcp`
 
-The repository and architectural boundary exist, but its runtime/tool contract is not yet implemented.
+The Phase 1 runtime/tool contract is implemented and mock/CI validated. Live provider/deployment acceptance remains a separate upstream check.
 
-Studio must not invent a private Intelligence contract and later force Intelligence MCP to match it.
+Studio integration must use that public contract and must not invent a private Intelligence API or call llama.cpp/provider APIs directly.
 
 ### Music
 
@@ -123,7 +123,7 @@ Phase 1 is delivered as several vertical slices sharing the same architecture.
 
 ### Phase 1A: Studio foundation + Image vertical slice
 
-This is the first executable path and should be implemented first.
+This was the first executable path and is implemented in current main.
 
 It proves:
 
@@ -138,13 +138,13 @@ Browser
   -> download
 ```
 
-Phase 1A is the architecture validation slice.
+Phase 1A established the architecture validation slice and remains tracked for any outstanding acceptance/follow-up scope.
 
 ### Phase 1B: Intelligence
 
-Add executable Intelligence behavior only after `flamoris-intelligence-mcp` defines its public request/result contract.
+The public Intelligence MCP request/result contract now exists. Studio #2 may implement executable Intelligence behavior against that contract.
 
-The Studio shell/editor may exist before then, but it must render an explicit unavailable/not-configured state rather than a fake backend.
+When the configured Intelligence MCP/provider is unavailable, Studio must render an explicit unavailable/not-configured state rather than a fake backend or a direct provider fallback.
 
 ### Phase 1C: Music
 
@@ -317,7 +317,7 @@ class GenerationGateway(Protocol):
     async def cancel(self, job_id: str) -> CancelResult: ...
 ```
 
-Define the Intelligence gateway only after its real MCP contract exists.
+Define the Intelligence gateway against the current public Intelligence MCP contract. Do not bypass that boundary with provider-specific calls.
 
 Names may change during implementation, but the boundary must remain.
 
@@ -393,7 +393,7 @@ Planned UI fields:
 - Max tokens
 - text/code attachments
 
-Final request semantics follow Intelligence MCP once implemented.
+Executable request semantics must follow the current public Intelligence MCP contract. Planned UI fields that are not supported by that contract remain unavailable until the contract intentionally expands.
 
 ### Image editor
 
@@ -539,7 +539,7 @@ external_id = Generation MCP job_id   # server-side only
 
 Current state is resolved from `jobs.status`.
 
-If a future Intelligence MCP call is synchronous, Studio may present it as a direct execution that transitions to a terminal result without inventing a persistent Intelligence job.
+The current Intelligence MCP `inference.execute` call is synchronous. Studio #2 may present it as a direct execution that transitions to a terminal result without inventing a persistent Intelligence job.
 
 ## 16. Generation execution flow
 
