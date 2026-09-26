@@ -111,13 +111,14 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.exception_handler(GatewayError)
     async def gateway_error(_, exc: GatewayError):
-        code = exc.code if exc.code in {"busy", "unavailable", "validation", "upstream_failure"} else "upstream_failure"
+        code = exc.code if exc.code in {"busy", "unavailable", "validation", "upstream_failure", "asset_too_large"} else "upstream_failure"
         return JSONResponse(status_code={"busy": 409, "unavailable": 503, "validation": 422,
-                                         "upstream_failure": 502}[code],
+                                         "upstream_failure": 502, "asset_too_large": 413}[code],
                             content={"error": code, "message": {"busy": "Generation service is busy.",
                                 "unavailable": "Generation service is unavailable.",
                                 "validation": "Invalid generation result.",
-                                "upstream_failure": "Generation service failed."}[code]})
+                                "upstream_failure": "Generation service failed.",
+                                "asset_too_large": "This asset exceeds the current download limit. Its gallery entry is preserved."}[code]})
 
     @app.middleware("http")
     async def csrf_guard(request: Request, call_next):
@@ -304,7 +305,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     async def execution_status(execution_id: uuid.UUID, db: Session = Depends(database),
                                user_id: uuid.UUID = Depends(current_user)):
         execution = owned(db, execution_id, user_id)
-        if execution.upstream_job_id:
+        if execution.upstream_job_id and execution.last_known_status not in {"completed", "failed", "cancelled"}:
             job = await app.state.gateway.status(execution.upstream_job_id)
             set_status(db, execution, job["status"])
         return view(execution, db)
@@ -315,59 +316,50 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         execution = owned(db, execution_id, user_id)
         if not execution.upstream_job_id:
             return view(execution, db)
-        job = await app.state.gateway.status(execution.upstream_job_id)
-        set_status(db, execution, job["status"])
-        if job["status"] != "completed":
-            return view(execution, db)
-        final = await app.state.gateway.result(execution.upstream_job_id)
-        set_status(db, execution, final["status"])
-        if final["status"] != "completed":
-            return view(execution, db)
-        listing = await app.state.gateway.assets(execution.upstream_job_id)
-        # jobs.result files and assets.list output_index both follow the
-        # snapshot's output order. Never derive a path from the asset ID or
-        # use a stored path to serve content; assets.get remains authoritative.
-        files = final.get("files", [])
-        output_paths = {}
-        if isinstance(files, list):
-            for index, file in enumerate(files[:64]):
-                if isinstance(file, dict) and isinstance(file.get("file"), str):
-                    path = file["file"]
-                    if 0 < len(path) <= 4096 and os.path.isabs(path):
-                        output_paths[index] = path
+        if execution.last_known_status != "completed":
+            job = await app.state.gateway.status(execution.upstream_job_id)
+            set_status(db, execution, job["status"])
+            if job["status"] != "completed":
+                return view(execution, db)
+        # Catalog metadata is independent of full materialization and thumbnails.
+        # Completed status is already persisted, so retry listing after a timeout
+        # (or Studio restart) without requiring the old live provider job mapping.
+        try:
+            listing = await app.state.gateway.assets(execution.upstream_job_id)
+        except GatewayError:
+            cached = view(execution, db)
+            if cached["assets"]:
+                return {**cached, "catalogSync": "unavailable"}
+            raise
+        if not isinstance(listing, list) or len(listing) > 64:
+            raise GatewayError("upstream_failure")
         # Lock the parent row to serialize concurrent catalog updates across processes.
         db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution.id})
         known = {asset.upstream_asset_id: asset for asset in db.scalars(
             select(Asset).where(Asset.execution_id == execution.id, Asset.user_id == user_id))}
-        for item in listing[:64]:
+        for item in listing:
+            if not isinstance(item, dict):
+                raise GatewayError("upstream_failure")
             if item.get("media_kind") != "image" or item.get("mime_type") not in {"image/png", "image/jpeg", "image/webp"}:
                 continue
             upstream = item.get("asset_id")
             if not isinstance(upstream, str) or not 0 < len(upstream) <= 256:
                 continue
-            output_index = item.get("output_index")
-            storage_path = output_paths.get(output_index) if type(output_index) is int else None
+            size = item.get("size_bytes")
+            size = size if type(size) is int and 0 <= size <= 2**63 - 1 else None
             if upstream in known:
-                if storage_path is not None:
-                    known[upstream].storage_path = storage_path
+                if size is not None and known[upstream].availability != "deleted":
+                    known[upstream].size_bytes = size
                 continue
             original = item.get("filename") if isinstance(item.get("filename"), str) else None
+            original = filename(original)
             asset = Asset(user_id=user_id, execution_id=execution.id, upstream_asset_id=upstream,
-                         storage_locator=upstream, storage_path=storage_path, original_filename=original,
+                         storage_locator=upstream, original_filename=original,
                          display_name=filename(original), media_kind="image", mime_type=item["mime_type"],
-                         size_bytes=item.get("size_bytes") if isinstance(item.get("size_bytes"), int) else None)
+                         size_bytes=size)
             db.add(asset)
             known[upstream] = asset
         db.commit()
-        for asset in db.scalars(select(Asset).where(Asset.execution_id == execution.id,
-                                                   Asset.availability != "deleted",
-                                                   Asset.thumbnail_locator.is_(None)).limit(8)):
-            try:
-                data, mime = await get_content(asset, db)
-                asset.thumbnail_locator = app.state.thumbnails.save(asset.id, data)
-                db.commit()
-            except (GatewayError, ValueError):
-                pass
         return view(execution, db)
 
     @app.post("/api/executions/{execution_id}/cancel")
@@ -382,7 +374,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     async def get_content(asset: Asset, db: Session):
         max_bytes = min(max(int(os.getenv("STUDIO_MAX_ASSET_BYTES", "67108864")), 1), 67108864)
         if asset.size_bytes and asset.size_bytes > max_bytes:
-            raise GatewayError("validation")
+            raise GatewayError("asset_too_large")
         data, mime = await app.state.gateway.content(asset.upstream_asset_id, max_bytes)
         if mime != asset.mime_type or len(data) > max_bytes:
             raise GatewayError("validation")
@@ -402,8 +394,11 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         asset = owned_asset(db, execution_id, asset_id, user_id)
         if asset.thumbnail_locator is None:
             data, _ = await get_content(asset, db)
-            asset.thumbnail_locator = app.state.thumbnails.save(asset.id, data)
-            db.commit()
+            try:
+                asset.thumbnail_locator = app.state.thumbnails.save(asset.id, data)
+                db.commit()
+            except (OSError, ValueError):
+                raise HTTPException(503, "Thumbnail is temporarily unavailable") from None
         data = app.state.thumbnails.load(asset.thumbnail_locator) if asset.thumbnail_locator else None
         if data is None:
             raise HTTPException(404)

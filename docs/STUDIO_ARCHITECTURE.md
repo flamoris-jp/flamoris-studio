@@ -606,13 +606,20 @@ SSE/WebSocket is not required for Phase 1.
 After completion:
 
 ```text
-jobs.result
-  -> result metadata
+jobs.status
+  -> completed status
 assets.list
-  -> asset references
+  -> persist asset references without binary transfer
+preview / thumbnail / download request
+  -> assets.get for the selected asset
 ```
 
 The Result panel displays normalized metadata and asset actions.
+
+Catalog synchronization must not call `jobs.result`, which can materialize all
+outputs. Thumbnail generation is lazy and a failed/oversized preview does not
+remove the durable catalog entry. Existing optional `storage_path` values remain
+internal metadata; new rows need only the upstream asset reference.
 
 ## 17. PostgreSQL catalog model
 

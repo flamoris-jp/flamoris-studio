@@ -35,6 +35,10 @@ class GenerationGateway:
                 # Upstream error strings are never forwarded to browser.
                 message = " ".join(getattr(item, "text", "") for item in result.content)
                 code = "busy" if "busy" in message.lower() else "upstream_failure"
+                if name == "assets.get" and any(
+                    marker in message.lower() for marker in ("retrieval limit", "download limit")
+                ):
+                    code = "asset_too_large"
                 raise GatewayError(code)
             return result
         except GatewayError:
@@ -93,12 +97,12 @@ class GenerationGateway:
             raise GatewayError("upstream_failure")
         image = images[0]
         if len(image.data) > 4 * ((max_bytes + 2) // 3) + 4:
-            raise GatewayError("validation")
+            raise GatewayError("asset_too_large")
         import base64
         try:
             data = base64.b64decode(image.data, validate=True)
         except Exception as exc:
             raise GatewayError("upstream_failure") from exc
         if len(data) > max_bytes:
-            raise GatewayError("validation")
+            raise GatewayError("asset_too_large")
         return data, image.mime_type

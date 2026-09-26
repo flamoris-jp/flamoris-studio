@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react'
 import { api, type Asset, type AssetDetail } from './api'
 
+function Thumbnail({ item }: { item: Asset }) {
+  const [failed, setFailed] = useState(false)
+  if (failed || (item.sizeBytes !== null && item.sizeBytes > 64 * 1024 * 1024)) return <span>Preview unavailable</span>
+  return <img src={item.thumbnailUrl} alt="" loading="lazy" onError={() => setFailed(true)} />
+}
+
 export default function Gallery({ csrf }: { csrf: string }) {
   const [items, setItems] = useState<Asset[]>([])
   const [nextOffset, setNextOffset] = useState<number | null>(null)
@@ -42,7 +48,7 @@ export default function Gallery({ csrf }: { csrf: string }) {
     <p>Generated files saved to this gallery are private to your account. Deletion removes the Generation MCP managed copy; provider originals may remain.</p>
     {error && <p role="alert" className="error">{error}</p>}
     {loading ? <p>Loading results…</p> : !items.length ? <p>No generated results yet.</p> : <div className="assets gallery">{items.map(item =>
-      <article key={item.id}><div className="gallery-preview">{item.hasThumbnail ? <img src={item.thumbnailUrl} alt="" loading="lazy" /> : <span>Preview unavailable</span>}</div>
+      <article key={item.id}><div className="gallery-preview"><Thumbnail item={item} /></div>
         <div><label><input type="checkbox" checked={selected.includes(item.id)} disabled={working} onChange={() => toggle(item.id)} /> Select</label>
           <strong>{item.displayName}</strong><small>{new Date(item.createdAt).toLocaleString()} · {item.mediaKind} · {item.sizeBytes === null ? 'Size unknown' : `${(item.sizeBytes / 1024 / 1024).toFixed(1)} MB`}</small>
           <button onClick={() => { setError(''); api.asset(item.id).then(setDetail).catch(() => setError('Could not load result details.')) }}>View details</button>

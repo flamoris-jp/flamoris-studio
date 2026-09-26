@@ -117,7 +117,7 @@ def test_multi_user_generation_and_private_assets(clients):
     assert "/private/generation" not in result.text
     with factory() as db:
         saved = db.scalar(select(Asset))
-        assert saved.storage_path == "/private/generation/output/000.png"
+        assert saved.storage_path is None
     for route in ("thumbnail", "content", "download"):
         path = f"/api/executions/{execution_id}/assets/{asset_id}/{route}"
         assert b.get(path).status_code == 404
@@ -167,7 +167,7 @@ def test_csrf_remains_valid_across_tabs(clients):
     assert gateway.submit_count == 2
 
 
-def test_file_paths_use_output_index_not_asset_list_position(clients):
+def test_metadata_listing_does_not_fetch_provider_paths(clients):
     client, _, gateway, factory = clients
     csrf = register(client, "order@example.test")
 
@@ -193,8 +193,7 @@ def test_file_paths_use_output_index_not_asset_list_position(clients):
     assert "/private/outputs/" not in response.text
     with factory() as db:
         records = {asset.upstream_asset_id: asset.storage_path for asset in db.scalars(select(Asset))}
-    assert records == {"output-first": "/private/outputs/first.png",
-                       "output-second": "/private/outputs/second.png"}
+    assert records == {"output-first": None, "output-second": None}
 
 
 def test_fresh_migration_chain_is_independent_of_live_metadata(clients):
@@ -260,7 +259,8 @@ def test_gallery_detail_and_deletion_are_private_and_do_not_reimport(clients):
     asset_id = a.get(f"/api/executions/{execution_id}/result").json()["assets"][0]["id"]
     listed = a.get("/api/assets").json()
     assert listed["items"][0]["id"] == asset_id
-    assert listed["items"][0]["hasThumbnail"] is True
+    assert listed["items"][0]["hasThumbnail"] is False
+    assert a.get(listed["items"][0]["thumbnailUrl"]).status_code == 200
     assert a.get(f"/api/assets/{asset_id}").json()["settings"]["positivePrompt"] == "a quiet stage"
     assert b.get("/api/assets").json()["items"] == []
     assert b.get(f"/api/assets/{asset_id}").status_code == 404
@@ -310,6 +310,7 @@ def test_thumbnail_cleanup_error_is_retryable_after_upstream_delete(clients, mon
     execution_id = a.post("/api/generation/image/jobs", json=image_request(),
                           headers={"X-CSRF-TOKEN": csrf}).json()["id"]
     asset_id = a.get(f"/api/executions/{execution_id}/result").json()["assets"][0]["id"]
+    assert a.get(f"/api/executions/{execution_id}/assets/{asset_id}/thumbnail").status_code == 200
     thumbnails = a.app.state.thumbnails
     original = thumbnails.delete
     attempts = []
@@ -335,3 +336,80 @@ def test_thumbnail_cleanup_error_is_retryable_after_upstream_delete(clients, mon
     with factory() as db:
         record = db.get(Asset, uuid.UUID(asset_id))
         assert record.availability == "deleted" and record.thumbnail_locator is None
+
+
+def test_large_asset_catalog_is_independent_of_binary_and_survives_restart(clients):
+    a, b, gateway, factory = clients
+    csrf = register(a, 'large@example.test')
+    register(b, 'other@example.test')
+    async def forbidden(*args, **kwargs):
+        raise AssertionError('metadata sync attempted binary materialization')
+    async def large_assets(job):
+        return [{'asset_id': 'large-asset', 'filename': 'large.png', 'mime_type': 'image/png',
+                 'media_kind': 'image', 'size_bytes': 80 * 1024 * 1024}]
+    gateway.result = forbidden
+    gateway.content = forbidden
+    gateway.assets = large_assets
+    created = a.post('/api/generation/image/jobs', json=image_request(), headers={'X-CSRF-TOKEN': csrf})
+    execution_id = created.json()['id']
+    result = a.get(f'/api/executions/{execution_id}/result')
+    assert result.status_code == 200
+    asset = result.json()['assets'][0]
+    assert asset['sizeBytes'] == 80 * 1024 * 1024
+    assert not asset['hasThumbnail']
+    assert a.get('/api/assets').json()['items'][0]['id'] == asset['id']
+    assert b.get(asset['downloadUrl']).status_code == 404
+    rejected = a.get(asset['downloadUrl'])
+    assert rejected.status_code == 413
+    assert rejected.json()['error'] == 'asset_too_large'
+    assert a.get(asset['thumbnailUrl']).status_code == 413
+    gateway.status = forbidden
+    again = create_app(factory, gateway, a.app.state.thumbnails)
+    with TestClient(again) as restarted:
+        restarted.cookies.update(a.cookies)
+        assert restarted.get(f'/api/executions/{execution_id}/result').status_code == 200
+        assert restarted.get('/api/assets').json()['items'][0]['id'] == asset['id']
+    with factory() as db:
+        assert len(list(db.scalars(select(Asset)))) == 1
+
+
+def test_catalog_sync_retries_after_timeout_and_thumbnail_disk_failure(clients):
+    a, _, gateway, _ = clients
+    csrf = register(a, 'retry@example.test')
+    created = a.post('/api/generation/image/jobs', json=image_request(), headers={'X-CSRF-TOKEN': csrf})
+    endpoint = f"/api/executions/{created.json()['id']}/result"
+    original = gateway.assets
+    async def unavailable(*args):
+        raise GatewayError('unavailable')
+    gateway.assets = unavailable
+    assert a.get(endpoint).status_code == 503
+    gateway.assets = original
+    result = a.get(endpoint)
+    assert result.status_code == 200
+    asset = result.json()['assets'][0]
+    with patch.object(a.app.state.thumbnails, 'save', side_effect=OSError('disk full')):
+        assert a.get(asset['thumbnailUrl']).status_code == 503
+    gateway.assets = unavailable
+    cached = a.get(endpoint)
+    assert cached.status_code == 200
+    assert cached.json()['catalogSync'] == 'unavailable'
+    assert a.get('/api/assets').json()['items'][0]['id'] == asset['id']
+
+
+@pytest.mark.asyncio
+async def test_gateway_translates_upstream_size_limit_without_leaking_details():
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    gateway = GenerationGateway()
+    class Session:
+        async def call_tool(self, *args, **kwargs):
+            return SimpleNamespace(is_error=True, content=[SimpleNamespace(
+                text='ComfyUI output exceeds the 64 MiB download limit /private/path')])
+    @asynccontextmanager
+    async def connection():
+        yield Session()
+    gateway._connection = connection
+    with pytest.raises(GatewayError) as error:
+        await gateway.content('asset', 64 * 1024 * 1024)
+    assert error.value.code == 'asset_too_large'
+    assert '/private' not in str(error.value)
