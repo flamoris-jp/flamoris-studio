@@ -10,11 +10,13 @@ Studio is **multi-user by design**. Authenticated users must be isolated from on
 
 Phase 1 uses a Python FastAPI backend with PostgreSQL-backed local accounts and secure, server-side cookie sessions. React, TypeScript, and Vite provide the browser UI. Studio-owned user/execution/asset catalog metadata is stored in PostgreSQL; generated media binaries remain outside the database.
 
+**Current main already contains the authenticated multi-user shell, the Image generation vertical slice, and the per-user Generated results catalog with metadata/details, download, and confirmed deletion.** Phase 1 remains open while large-asset transfer, managed inputs, account/session hardening, and the next capability integrations are completed.
+
 ## Direction
 
-Studio starts small.
+Studio grows through complete vertical slices rather than broad placeholder scaffolding.
 
-Phase 1 focuses on an AI Prompt Console for:
+Phase 1 covers:
 
 - Intelligence
 - Image
@@ -49,7 +51,7 @@ FLAMORIS Studio
 
 Studio does not directly manage GPU-heavy runtimes.
 
-Runtime activation, shutdown, switching, and GPU exclusivity belong to `flamoris-lime-manager`.
+Runtime activation, shutdown, switching, and GPU exclusivity belong to `flamoris-gpu-node-manager`.
 
 Generation workflows, generation jobs, and generated assets belong to `flamoris-generation-mcp`.
 
@@ -94,12 +96,11 @@ response. Tombstones prevent deleted entries from being reimported.
 
 The current inline download limit remains at most 64 MiB (or the lower configured
 Studio limit). Oversized downloads return HTTP 413 / `asset_too_large` while the
-catalog entry is retained. Larger transfer support is tracked in
-[Generation MCP #27](https://github.com/flamoris-jp/flamoris-generation-mcp/issues/27);
-this change does not claim that large binary transport is already implemented.
-Deploy the companion durable metadata change there before relying on metadata-only
-asset discovery after a Generation MCP restart. Unmaterialized provider outputs
-still cannot be downloaded after their live execution mapping is lost.
+catalog entry is retained. Generation MCP #27 defined the bounded large-asset
+transfer contract; Studio adoption and per-user authorization remain tracked in
+[Studio #20](https://github.com/flamoris-jp/flamoris-studio/issues/20).
+Unmaterialized provider outputs still cannot be downloaded after their live
+execution mapping is lost.
 
 Studio treats generated outputs and future client-side media as asset references, not raw filesystem paths.
 
@@ -121,17 +122,26 @@ For a generic Docker/Compose deployment, see [docs/DEPLOYMENT.md](docs/DEPLOYMEN
 
 Phase 1 architecture and implementation boundaries are defined in [docs/STUDIO_ARCHITECTURE.md](docs/STUDIO_ARCHITECTURE.md).
 
-## Planned phases
+## Current and next phases
 
 ### Phase 1
 
-- new Studio shell
-- Intelligence / Image / Music prompt editors
-- MCP gateway boundary
-- job submit / status / result flow
-- media-aware result preview
-- generated-asset download
-- multi-user isolation for executions and assets
+Implemented foundations in current main include:
+
+- authenticated multi-user Studio shell;
+- PostgreSQL-backed Studio ownership/catalog metadata;
+- MCP gateway boundary;
+- Image generation submit / status / result flow;
+- media-aware image preview and generated-result catalog;
+- per-user download and confirmed deletion;
+- cross-user execution/asset isolation.
+
+Still tracked in Phase 1:
+
+- Intelligence editor integration through the public Intelligence MCP contract;
+- Music editor integration after the Generation music contract is ready;
+- bounded large-asset transfer adoption and managed-input authorization;
+- account/session and login-boundary hardening.
 
 ### Phase 2
 
@@ -189,7 +199,7 @@ Studioは最初からマルチユーザー前提です。共有されたMCP/runt
 
 Studio自身はGPU runtimeのauthorityにも、大容量プロジェクトファイルの保管場所にもなりません。
 
-Phase 1では、Intelligence / Image / Musicの専用Prompt Editorと、共通のjob表示、生成結果preview、生成ファイルの取得を成立させます。
+Phase 1では、認証済みmulti-user shell、Image生成、job表示、生成結果preview、Generated一覧・取得・削除までcurrent mainで実装されています。Intelligence / Music連携やlarge asset / managed inputの境界は引き続きPhase 1で進めます。
 
 生成結果は単なる画面表示で終わらせず、asset authorityを経由して安全にユーザーが取得できることを最初から要件に含めます。
 
