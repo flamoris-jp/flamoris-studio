@@ -426,9 +426,12 @@ def test_large_asset_catalog_is_independent_of_binary_and_survives_restart(clien
     async def large_assets(job):
         return [{'asset_id': 'large-asset', 'filename': 'large.png', 'mime_type': 'image/png',
                  'media_kind': 'image', 'size_bytes': 80 * 1024 * 1024}]
+    async def transfer_limit(asset_id):
+        raise GatewayError("asset_too_large")
     gateway.result = forbidden
     gateway.content = forbidden
     gateway.assets = large_assets
+    gateway.prepare_asset = transfer_limit
     created = a.post('/api/generation/image/jobs', json=image_request(), headers={'X-CSRF-TOKEN': csrf})
     execution_id = created.json()['id']
     result = a.get(f'/api/executions/{execution_id}/result')

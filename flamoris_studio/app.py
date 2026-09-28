@@ -485,10 +485,10 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                     while True:
                         hasher.update(data)
                         offset += len(data)
+                        if offset == size and hasher.hexdigest() != digest:
+                            raise GatewayError("validation")
                         yield data
                         if offset == size:
-                            if hasher.hexdigest() != digest:
-                                raise GatewayError("validation")
                             break
                         data = await read_at(offset)
                 finally:
