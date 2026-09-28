@@ -4,7 +4,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, BigInteger, String, Text, create_engine
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, BigInteger, String, Text, UniqueConstraint, create_engine
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
@@ -48,6 +48,21 @@ class Execution(Base):
     submitted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
+class ImageStyle(Base):
+    __tablename__ = "image_styles"
+    __table_args__ = (UniqueConstraint("owner_user_id", "name", name="uq_image_styles_owner_name"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    positive_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    negative_prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    recommended_model: Mapped[str | None] = mapped_column(String(1024))
+    recommended_loras: Mapped[list | None] = mapped_column(JSONB)
+    recommended_parameters: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
