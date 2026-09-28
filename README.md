@@ -95,8 +95,11 @@ cataloged results remain visible with `catalogSync: unavailable` on the result
 response. Tombstones prevent deleted entries from being reimported.
 
 Inline preview remains limited to at most 64 MiB (or the lower configured Studio
-limit). Downloads above that limit use Generation MCP `assets.prepare` and
-`assets.read` when those tools are registered on the MCP Hub. Studio checks
+limit). Images with unknown size or above 512 KiB use Generation MCP
+`assets.prepare` and `assets.read` for preview, thumbnail and download, avoiding
+a single base64 MCP/SSE event above a typical 1 MiB transport limit. Smaller
+images retain native `assets.get`; downloads above the inline limit also use
+bounded transfer. The two tools must be registered on the MCP Hub. Studio checks
 ownership, reads at most 256 KiB per chunk, verifies chunk/final digests, and
 caps concurrent downloads at two per process. The aggregate transfer cap defaults
 to 1 GiB and may be lowered with `STUDIO_MAX_TRANSFER_BYTES`. Deploy the Generation

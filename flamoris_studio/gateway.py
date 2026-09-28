@@ -38,6 +38,10 @@ class GenerationGateway:
                 # Upstream error strings are never forwarded to browser.
                 message = " ".join(getattr(item, "text", "") for item in result.content)
                 code = "busy" if "busy" in message.lower() else "upstream_failure"
+                # The Hub uses this exact response for an unregistered tool. Do not
+                # classify arbitrary upstream text or transport failures as missing capability.
+                if name in {"assets.prepare", "assets.read"} and message.strip() == f"Unknown tool: {name}":
+                    code = "transfer_unavailable"
                 if name == "assets.get" and any(
                     marker in message.lower() for marker in ("retrieval limit", "download limit")
                 ):
