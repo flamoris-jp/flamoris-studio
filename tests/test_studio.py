@@ -230,6 +230,8 @@ def test_bounded_download_verifies_chunks_and_owner(clients, monkeypatch):
 
     async def read(asset_id, digest, offset, length):
         calls.append(("read", offset))
+        if offset == 32 and calls.count(("read", 32)) == 1:
+            raise GatewayError("unavailable")
         data = gateway.image[offset:offset + length]
         return {"asset_id": asset_id, "sha256": digest, "size_bytes": len(gateway.image),
                 "offset": offset, "data_base64": base64.b64encode(data).decode(),
@@ -243,6 +245,7 @@ def test_bounded_download_verifies_chunks_and_owner(clients, monkeypatch):
     response = a.get(asset["downloadUrl"])
     assert response.status_code == 200 and response.content == gateway.image
     assert len(calls) > 2
+    assert calls.count(("read", 32)) == 2
     assert response.headers["content-length"] == str(len(gateway.image))
 
 
