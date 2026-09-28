@@ -199,6 +199,36 @@ def test_email_change_preserves_identity_and_assets(clients):
     assert b.get(f"/api/executions/{execution_id}/assets/{asset_id}/download").status_code == 404
 
 
+def test_password_change_keeps_current_session_and_revokes_others(clients):
+    a, b, _, factory = clients
+    csrf_a = register(a, "password@example.test")
+    csrf_b = b.get("/api/session").json()["csrfToken"]
+    assert b.post("/api/auth/login", json={"email": "password@example.test",
+                  "password": "Secure-Password-123"}, headers={"X-CSRF-TOKEN": csrf_b}).status_code == 200
+    route = "/api/account/password"
+    valid = {"currentPassword": "Secure-Password-123", "newPassword": "New-Secure-Password-456",
+             "confirmPassword": "New-Secure-Password-456"}
+    assert a.post(route, json=valid).status_code == 403  # CSRF required
+    assert a.post(route, json={**valid, "currentPassword": "wrong"},
+                  headers={"X-CSRF-TOKEN": csrf_a}).status_code == 403
+    assert a.post(route, json={**valid, "confirmPassword": "different-password"},
+                  headers={"X-CSRF-TOKEN": csrf_a}).status_code == 422
+    assert a.post(route, json={**valid, "newPassword": "short", "confirmPassword": "short"},
+                  headers={"X-CSRF-TOKEN": csrf_a}).status_code == 422
+    assert b.get("/api/session").json()["authenticated"]
+    changed = a.post(route, json=valid, headers={"X-CSRF-TOKEN": csrf_a})
+    assert changed.status_code == 200, changed.text
+    assert a.get("/api/session").json()["authenticated"]
+    assert b.get("/api/session").json()["authenticated"] is False
+    with factory() as db:
+        user = db.scalar(select(User).where(User.email == "password@example.test"))
+        assert len(list(db.scalars(select(LoginSession).where(LoginSession.user_id == user.id)))) == 1
+    assert b.post("/api/auth/login", json={"email": "password@example.test",
+                  "password": "Secure-Password-123"}, headers={"X-CSRF-TOKEN": csrf_b}).status_code == 401
+    assert b.post("/api/auth/login", json={"email": "password@example.test",
+                  "password": valid["newPassword"]}, headers={"X-CSRF-TOKEN": csrf_b}).status_code == 200
+
+
 def test_persistent_cookie_and_server_session_expiry(clients):
     a, _, _, factory = clients
     register(a, "a@example.test")
