@@ -23,6 +23,10 @@ from .media import Thumbnails, filename, inspect_image
 from .logging_setup import configure_logging
 from .transfer import CHUNK_BYTES, MAX_TRANSFER_BYTES, chunk, metadata, read_with_retry
 
+# 512 KiB of raw image data stays below a 1 MiB SSE event even after base64
+# encoding and the MCP JSON envelope. Unknown sizes take the bounded route.
+NATIVE_IMAGE_BYTES = 512 * 1024
+
 
 class Credentials(BaseModel):
     email: str = Field(min_length=3, max_length=256)
@@ -127,14 +131,15 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.exception_handler(GatewayError)
     async def gateway_error(_, exc: GatewayError):
-        code = exc.code if exc.code in {"busy", "unavailable", "validation", "upstream_failure", "asset_too_large"} else "upstream_failure"
+        code = exc.code if exc.code in {"busy", "unavailable", "validation", "upstream_failure", "asset_too_large", "transfer_unavailable"} else "upstream_failure"
         return JSONResponse(status_code={"busy": 409, "unavailable": 503, "validation": 422,
-                                         "upstream_failure": 502, "asset_too_large": 413}[code],
+                                         "upstream_failure": 502, "asset_too_large": 413, "transfer_unavailable": 503}[code],
                             content={"error": code, "message": {"busy": "Generation service is busy.",
                                 "unavailable": "Generation service is unavailable.",
                                 "validation": "Invalid generation result.",
                                 "upstream_failure": "Generation service failed.",
-                                "asset_too_large": "This asset exceeds the current download limit. Its gallery entry is preserved."}[code]})
+                                "asset_too_large": "This asset exceeds the current download limit. Its gallery entry is preserved.",
+                                "transfer_unavailable": "Asset transfer is unavailable. The service deployment is incomplete."}[code]})
 
     @app.middleware("http")
     async def csrf_guard(request: Request, call_next):
@@ -408,11 +413,45 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             set_status(db, execution, job["status"])
         return view(execution, db)
 
-    async def get_content(asset: Asset, db: Session):
+    async def get_content(asset: Asset, db: Session, request: Request, user_id: uuid.UUID):
         max_bytes = min(max(int(os.getenv("STUDIO_MAX_ASSET_BYTES", "67108864")), 1), 67108864)
         if asset.size_bytes and asset.size_bytes > max_bytes:
             raise GatewayError("asset_too_large")
-        data, mime = await app.state.gateway.content(asset.upstream_asset_id, max_bytes)
+        if asset.size_bytes is not None and asset.size_bytes <= NATIVE_IMAGE_BYTES:
+            data, mime = await app.state.gateway.content(asset.upstream_asset_id, max_bytes)
+        else:
+            # Release the row lock before remote I/O. An owner/deletion check is
+            # repeated at every read, including retries.
+            db.rollback()
+            slots = app.state.download_slots
+            try:
+                await asyncio.wait_for(slots.acquire(), timeout=0.01)
+            except TimeoutError:
+                raise HTTPException(429, "Too many active transfers") from None
+            try:
+                owned_asset(db, asset.execution_id, asset.id, user_id)
+                prepared = await app.state.gateway.prepare_asset(asset.upstream_asset_id)
+                size, expected, limit = metadata(prepared, asset.upstream_asset_id, asset.mime_type, max_bytes)
+                parts = bytearray()
+                checksum = hashlib.sha256()
+                while len(parts) < size:
+                    offset = len(parts)
+                    async def attempt():
+                        if await request.is_disconnected():
+                            raise asyncio.CancelledError()
+                        if current_user(request, db) != user_id:
+                            raise HTTPException(401)
+                        owned_asset(db, asset.execution_id, asset.id, user_id)
+                        result = await app.state.gateway.read_asset(asset.upstream_asset_id, expected, offset, limit)
+                        return chunk(result, asset.upstream_asset_id, expected, offset, size, limit)
+                    part = await read_with_retry(attempt)
+                    checksum.update(part)
+                    parts.extend(part)
+                if checksum.hexdigest() != expected:
+                    raise GatewayError("validation")
+                data, mime = bytes(parts), asset.mime_type
+            finally:
+                slots.release()
         if mime != asset.mime_type or len(data) > max_bytes:
             raise GatewayError("validation")
         try:
@@ -424,13 +463,13 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         return data, mime
 
     @app.get("/api/executions/{execution_id}/assets/{asset_id}/thumbnail")
-    async def thumbnail(execution_id: uuid.UUID, asset_id: uuid.UUID, db: Session = Depends(database),
+    async def thumbnail(execution_id: uuid.UUID, asset_id: uuid.UUID, request: Request, db: Session = Depends(database),
                         user_id: uuid.UUID = Depends(current_user)):
         owned(db, execution_id, user_id)
         db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution_id})
         asset = owned_asset(db, execution_id, asset_id, user_id)
         if asset.thumbnail_locator is None:
-            data, _ = await get_content(asset, db)
+            data, _ = await get_content(asset, db, request, user_id)
             try:
                 asset.thumbnail_locator = app.state.thumbnails.save(asset.id, data)
                 db.commit()
@@ -450,7 +489,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution_id})
         asset = owned_asset(db, execution_id, asset_id, user_id)
         inline_limit = min(max(int(os.getenv("STUDIO_MAX_ASSET_BYTES", "67108864")), 1), 67108864)
-        if request.url.path.endswith("/download") and asset.size_bytes and asset.size_bytes > inline_limit:
+        if request.url.path.endswith("/download") and (asset.size_bytes is None or asset.size_bytes > min(inline_limit, NATIVE_IMAGE_BYTES)):
             # No row lock across remote I/O; every chunk checks ownership and deletion.
             db.rollback()
             cap = min(max(int(os.getenv("STUDIO_MAX_TRANSFER_BYTES", str(MAX_TRANSFER_BYTES))), 1),
@@ -500,7 +539,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 "X-Content-Type-Options": "nosniff",
                 "Content-Security-Policy": "default-src 'none'; sandbox",
                 "Content-Disposition": f'attachment; filename="{filename(asset.display_name)}"'})
-        data, mime = await get_content(asset, db)
+        data, mime = await get_content(asset, db, request, user_id)
         headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
                    "Content-Security-Policy": "default-src 'none'; sandbox"}
         if request.url.path.endswith("/download"):

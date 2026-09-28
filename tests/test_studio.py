@@ -249,6 +249,48 @@ def test_bounded_download_verifies_chunks_and_owner(clients, monkeypatch):
     assert response.headers["content-length"] == str(len(gateway.image))
 
 
+def test_medium_image_uses_bounded_transfer_for_all_routes(clients):
+    a, b, gateway, _ = clients
+    csrf = register(a, "medium@example.test")
+    register(b, "other-medium@example.test")
+    image = Image.frombytes("RGB", (500, 500), os.urandom(500 * 500 * 3))
+    output = io.BytesIO()
+    image.save(output, "PNG")
+    gateway.image = output.getvalue()
+    assert 512 * 1024 < len(gateway.image) < 1024 * 1024
+    calls = []
+
+    async def native(*args):
+        raise AssertionError("image must not enter one large SSE event")
+
+    async def prepare(asset_id):
+        calls.append("prepare")
+        return {"asset_id": asset_id, "mime_type": "image/png", "size_bytes": len(gateway.image),
+                "sha256": hashlib.sha256(gateway.image).hexdigest(),
+                "chunk_bytes": 256 * 1024, "transfer_version": 1}
+
+    async def read(asset_id, digest, offset, length):
+        calls.append(offset)
+        data = gateway.image[offset:offset + length]
+        return {"asset_id": asset_id, "sha256": digest, "size_bytes": len(gateway.image),
+                "offset": offset, "data_base64": base64.b64encode(data).decode(),
+                "chunk_sha256": hashlib.sha256(data).hexdigest(),
+                "next_offset": offset + len(data), "eof": offset + len(data) == len(gateway.image)}
+
+    gateway.content = native
+    gateway.prepare_asset = prepare
+    gateway.read_asset = read
+    made = a.post("/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf})
+    asset = a.get(f"/api/executions/{made.json()['id']}/result").json()["assets"][0]
+    for route in ("previewUrl", "thumbnailUrl", "downloadUrl"):
+        assert b.get(asset[route]).status_code == 404
+        response = a.get(asset[route])
+        assert response.status_code == 200, response.text[:200] if response.status_code != 200 else ""
+        if route != "thumbnailUrl":
+            assert response.content == gateway.image
+    assert calls.count("prepare") == 3
+
+
 def test_metadata_listing_does_not_fetch_provider_paths(clients):
     client, _, gateway, factory = clients
     csrf = register(client, "order@example.test")
@@ -498,3 +540,83 @@ async def test_gateway_translates_upstream_size_limit_without_leaking_details():
         await gateway.content('asset', 64 * 1024 * 1024)
     assert error.value.code == 'asset_too_large'
     assert '/private' not in str(error.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["assets.prepare", "assets.read"])
+async def test_gateway_identifies_only_exact_hub_missing_transfer_tool(name):
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+
+    gateway = GenerationGateway()
+
+    class Session:
+        async def call_tool(self, called, args, **kwargs):
+            assert called == name
+            return SimpleNamespace(is_error=True, content=[
+                SimpleNamespace(text=f"Unknown tool: {called}")])
+
+    @asynccontextmanager
+    async def connection():
+        yield Session()
+
+    gateway._connection = connection
+    with pytest.raises(GatewayError) as error:
+        await gateway._call(name)
+    assert error.value.code == "transfer_unavailable"
+
+    class OtherSession:
+        async def call_tool(self, called, args, **kwargs):
+            return SimpleNamespace(is_error=True, content=[
+                SimpleNamespace(text=f"Unknown tool: {called} /private/path")])
+
+    @asynccontextmanager
+    async def other_connection():
+        yield OtherSession()
+
+    gateway._connection = other_connection
+    with pytest.raises(GatewayError) as other_error:
+        await gateway._call(name)
+    assert other_error.value.code == "upstream_failure"
+
+
+@pytest.mark.parametrize("missing", ["assets.prepare", "assets.read"])
+def test_missing_transfer_capability_has_safe_error_on_asset_routes(clients, missing):
+    a, b, gateway, _ = clients
+    csrf = register(a, "transfer-missing@example.test")
+    register(b, "transfer-other@example.test")
+
+    async def assets(job):
+        return [{"asset_id": "private-asset", "filename": "photo.png",
+                 "mime_type": "image/png", "media_kind": "image",
+                 "size_bytes": None, "output_index": 0}]
+
+    calls = []
+
+    async def prepare(asset_id):
+        calls.append("assets.prepare")
+        if missing == "assets.prepare":
+            raise GatewayError("transfer_unavailable")
+        return {"asset_id": asset_id, "mime_type": "image/png", "size_bytes": len(gateway.image),
+                "sha256": hashlib.sha256(gateway.image).hexdigest(),
+                "chunk_bytes": 256 * 1024, "transfer_version": 1}
+
+    async def read(asset_id, digest, offset, length):
+        calls.append("assets.read")
+        raise GatewayError("transfer_unavailable")
+
+    gateway.assets = assets
+    gateway.prepare_asset = prepare
+    gateway.read_asset = read
+    made = a.post("/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf})
+    asset = a.get(f"/api/executions/{made.json()['id']}/result").json()["assets"][0]
+    for route in ("previewUrl", "thumbnailUrl", "downloadUrl"):
+        before = len(calls)
+        assert b.get(asset[route]).status_code == 404
+        assert len(calls) == before
+        response = a.get(asset[route])
+        assert response.status_code == 503
+        assert response.json() == {"error": "transfer_unavailable",
+                                   "message": "Asset transfer is unavailable. The service deployment is incomplete."}
+        assert "private-asset" not in response.text
+    assert calls.count(missing) == 3
