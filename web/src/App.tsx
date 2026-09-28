@@ -78,7 +78,7 @@ export default function App() {
   if (!session.authenticated) return <Account allowRegistration={session.allowRegistration} onReady={setSession} />
   return <div className="layout"><aside><div className="brand">✦ <strong>FLAMORIS</strong><small>STUDIO</small></div><p className="eyebrow">WORKSPACE</p>
     <nav aria-label="Creative domains">{sections.map(name => <button key={name} aria-current={section === name ? 'page' : undefined} onClick={() => setSection(name)}>{name}</button>)}</nav>
-    <div className="account-footer"><span>{session.userName}</span><button onClick={() => setSection('Account')}>Account settings</button><button onClick={async () => { try { await api.logout(session.csrfToken); setSession(await api.session()); setExecution(null) } catch { setError('Could not sign out.') } }}>Sign out</button></div></aside>
+    <div className="account-footer"><span>{session.userName}</span><button onClick={() => setSection('Account')}>Account settings</button><button onClick={async () => { try { await api.logout(session.csrfToken); setForm(initialImageDraft()); setExecution(null); setResultSettings(null); setDiscovery(null); window.location.hash = ''; setSession(await api.session()) } catch { setError('Could not sign out.') } }}>Sign out</button></div></aside>
     <main><header><div><span className="eyebrow">CREATIVE CONTROL PLANE</span><h1>{section}</h1></div><span className="badge">PHASE 1A</span></header>
     {section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Generated' ? <Gallery csrf={session.csrfToken} onUseSettings={useSettings} /> : section === 'Image' ? <><p>Turn a prompt into something you can keep.</p>
       {discovery?.available ? <ImageEditor discovery={discovery} busy={busy} form={form} setForm={setForm} csrf={session.csrfToken} onSubmit={async form => {
@@ -182,7 +182,7 @@ function ImageEditor({ discovery, onSubmit, busy, form, setForm, csrf }: { disco
         const name = styleName.trim()
         if (!name) { setStyleError('Enter a Style name.'); return }
         const values = { name, positivePrompt: form.positivePrompt, negativePrompt: form.negativePrompt }
-        if (!values.positivePrompt.trim()) { setStyleError('Enter a Positive prompt first.'); return }
+        if (action !== 'duplicate' && !values.positivePrompt.trim()) { setStyleError('Enter a Positive prompt first.'); return }
         const saved = action === 'update' && style ? await api.updateStyle(style.id, values, csrf) :
           action === 'duplicate' && style ? await api.duplicateStyle(style.id, name, csrf) : await api.createStyle(values, csrf)
         setStyles(old => [...old.filter(item => item.id !== saved.id), saved].sort((a, b) => a.name.localeCompare(b.name)))
