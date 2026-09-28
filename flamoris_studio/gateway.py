@@ -1,5 +1,7 @@
 """The only module allowed to see upstream MCP payloads and SDK objects."""
 import os
+import logging
+import time
 from contextlib import asynccontextmanager
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
@@ -27,10 +29,11 @@ class GenerationGateway:
         except Exception as exc:
             raise GatewayError("unavailable") from exc
 
-    async def _call(self, name: str, args: dict | None = None):
+    async def _call(self, name: str, args: dict | None = None, timeout: int = 45):
+        started = time.monotonic()
         try:
             async with self._connection() as session:
-                result = await session.call_tool(name, args or {}, read_timeout_seconds=45)
+                result = await session.call_tool(name, args or {}, read_timeout_seconds=timeout)
             if result.is_error:
                 # Upstream error strings are never forwarded to browser.
                 message = " ".join(getattr(item, "text", "") for item in result.content)
@@ -41,10 +44,16 @@ class GenerationGateway:
                     code = "asset_too_large"
                 raise GatewayError(code)
             return result
-        except GatewayError:
+        except GatewayError as exc:
+            if name in {"assets.get", "assets.prepare", "assets.read"}:
+                logging.getLogger(__name__).warning("Generation %s failed: code=%s elapsed=%.1fs",
+                                                     name, exc.code, time.monotonic() - started)
             raise
         except Exception as exc:
             # This includes ambiguous jobs.submit failures. Never retry automatically.
+            if name in {"assets.get", "assets.prepare", "assets.read"}:
+                logging.getLogger(__name__).warning("Generation %s transport failed: type=%s elapsed=%.1fs",
+                                                     name, type(exc).__name__, time.monotonic() - started)
             raise GatewayError("unavailable") from exc
 
     async def _json(self, name: str, args: dict | None = None) -> dict:
@@ -91,7 +100,7 @@ class GenerationGateway:
         return await self._json("assets.delete", {"asset_id": asset_id})
 
     async def content(self, asset_id: str, max_bytes: int):
-        result = await self._call("assets.get", {"asset_id": asset_id})
+        result = await self._call("assets.get", {"asset_id": asset_id}, timeout=300)
         images = [item for item in result.content if item.type == "image"]
         if len(images) != 1:
             raise GatewayError("upstream_failure")
@@ -106,3 +115,16 @@ class GenerationGateway:
         if len(data) > max_bytes:
             raise GatewayError("asset_too_large")
         return data, image.mime_type
+
+    async def prepare_asset(self, asset_id: str):
+        return await self._json_transfer("assets.prepare", {"asset_id": asset_id}, timeout=330)
+
+    async def read_asset(self, asset_id: str, sha256: str, offset: int, length: int):
+        return await self._json_transfer("assets.read", {
+            "asset_id": asset_id, "sha256": sha256, "offset": offset, "length": length}, timeout=45)
+
+    async def _json_transfer(self, name: str, args: dict, timeout: int):
+        result = await self._call(name, args, timeout=timeout)
+        if not isinstance(result.structured_content, dict):
+            raise GatewayError("upstream_failure")
+        return result.structured_content

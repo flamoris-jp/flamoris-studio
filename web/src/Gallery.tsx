@@ -7,6 +7,13 @@ function Thumbnail({ item }: { item: Asset }) {
   return <img src={item.thumbnailUrl} alt="" loading="lazy" onError={() => setFailed(true)} />
 }
 
+export function ImagePreview({ item }: { item: Asset }) {
+  const [failed, setFailed] = useState(false)
+  if (failed || (item.sizeBytes !== null && item.sizeBytes > 64 * 1024 * 1024)) return <span>Preview unavailable; download may still work.</span>
+  return <img src={item.hasThumbnail ? item.thumbnailUrl : item.previewUrl}
+    alt={item.displayName} onError={() => setFailed(true)} />
+}
+
 export default function Gallery({ csrf }: { csrf: string }) {
   const [items, setItems] = useState<Asset[]>([])
   const [nextOffset, setNextOffset] = useState<number | null>(null)
@@ -58,7 +65,7 @@ export default function Gallery({ csrf }: { csrf: string }) {
       catch { setError('Could not load more results.') }
     }}>Load more</button>}
     {detail && <div className="panel gallery-detail"><div className="row"><h3>{detail.displayName}</h3><button onClick={() => setDetail(null)}>Close</button></div>
-      {detail.mediaKind === 'image' && <img src={detail.previewUrl} alt={detail.displayName} />}
+      {detail.mediaKind === 'image' && <ImagePreview key={detail.id} item={detail} />}
       <p>{new Date(detail.createdAt).toLocaleString()} · {detail.mimeType} · {detail.sizeBytes === null ? 'Size unknown' : `${(detail.sizeBytes / 1024 / 1024).toFixed(1)} MB`}{detail.width && detail.height ? ` · ${detail.width} × ${detail.height}` : ''}</p>
       <dl>{Object.entries(detail.settings).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value)}</dd></div>)}</dl>
       <div className="row"><a href={detail.downloadUrl}>Download ↓</a><button disabled={working} onClick={() => remove([detail.id])}>Delete this result</button></div>

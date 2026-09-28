@@ -1,4 +1,6 @@
 import io
+import base64
+import hashlib
 import os
 import time
 import uuid
@@ -211,6 +213,39 @@ def test_persistent_cookie_and_server_session_expiry(clients):
     assert a.get("/api/generation/image/discovery").status_code == 401
 
 
+def test_bounded_download_verifies_chunks_and_owner(clients, monkeypatch):
+    a, b, gateway, _ = clients
+    csrf = register(a, "a@example.test")
+    register(b, "b@example.test")
+    monkeypatch.setenv("STUDIO_MAX_ASSET_BYTES", "1")
+    made = a.post("/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf})
+    asset = a.get(f"/api/executions/{made.json()['id']}/result").json()["assets"][0]
+    calls = []
+
+    async def prepare(asset_id):
+        calls.append(("prepare", asset_id))
+        return {"asset_id": asset_id, "mime_type": "image/png", "size_bytes": len(gateway.image),
+                "sha256": hashlib.sha256(gateway.image).hexdigest(),
+                "chunk_bytes": 32, "transfer_version": 1}
+
+    async def read(asset_id, digest, offset, length):
+        calls.append(("read", offset))
+        data = gateway.image[offset:offset + length]
+        return {"asset_id": asset_id, "sha256": digest, "size_bytes": len(gateway.image),
+                "offset": offset, "data_base64": base64.b64encode(data).decode(),
+                "chunk_sha256": hashlib.sha256(data).hexdigest(),
+                "next_offset": offset + len(data), "eof": offset + len(data) == len(gateway.image)}
+
+    gateway.prepare_asset = prepare
+    gateway.read_asset = read
+    assert b.get(asset["downloadUrl"]).status_code == 404
+    assert calls == []
+    response = a.get(asset["downloadUrl"])
+    assert response.status_code == 200 and response.content == gateway.image
+    assert len(calls) > 2
+    assert response.headers["content-length"] == str(len(gateway.image))
+
+
 def test_metadata_listing_does_not_fetch_provider_paths(clients):
     client, _, gateway, factory = clients
     csrf = register(client, "order@example.test")
@@ -285,7 +320,7 @@ async def test_gateway_normalizes_sdk_v2_result(monkeypatch):
     from mcp.types import CallToolResult, ImageContent
     gateway = GenerationGateway()
 
-    async def call(name, args=None):
+    async def call(name, args=None, timeout=45):
         assert name == "assets.get" and args == {"asset_id": "internal-only"}
         return CallToolResult(content=[ImageContent(type="image", data="aGVsbG8=", mimeType="image/png")])
 

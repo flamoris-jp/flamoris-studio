@@ -1,5 +1,7 @@
 """Studio HTTP boundary: all user-owned lookups include the authenticated owner."""
 import os
+import asyncio
+import hashlib
 import uuid
 import time
 from collections import defaultdict, deque
@@ -7,7 +9,7 @@ from datetime import timedelta
 
 from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import select, text
@@ -19,6 +21,7 @@ from .db import Asset, Execution, LoginSession, User, make_session_factory, now
 from .gateway import GatewayError, GenerationGateway
 from .media import Thumbnails, filename, inspect_image
 from .logging_setup import configure_logging
+from .transfer import CHUNK_BYTES, MAX_TRANSFER_BYTES, chunk, metadata
 
 
 class Credentials(BaseModel):
@@ -119,6 +122,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     app.state.session_factory = session_factory or make_session_factory()
     app.state.gateway = gateway or GenerationGateway()
     app.state.thumbnails = thumbnails or Thumbnails(os.getenv("STUDIO_THUMBNAIL_DIR", ""))
+    app.state.download_slots = asyncio.Semaphore(2)
     login_attempts = defaultdict(deque)
 
     @app.exception_handler(GatewayError)
@@ -445,6 +449,55 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         owned(db, execution_id, user_id)
         db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution_id})
         asset = owned_asset(db, execution_id, asset_id, user_id)
+        inline_limit = min(max(int(os.getenv("STUDIO_MAX_ASSET_BYTES", "67108864")), 1), 67108864)
+        if request.url.path.endswith("/download") and asset.size_bytes and asset.size_bytes > inline_limit:
+            # No row lock across remote I/O; every chunk checks ownership and deletion.
+            db.rollback()
+            cap = min(max(int(os.getenv("STUDIO_MAX_TRANSFER_BYTES", str(MAX_TRANSFER_BYTES))), 1),
+                      MAX_TRANSFER_BYTES)
+            slots = app.state.download_slots
+            try:
+                await asyncio.wait_for(slots.acquire(), timeout=0.01)
+            except TimeoutError:
+                raise HTTPException(429, "Too many active downloads") from None
+            try:
+                owned_asset(db, execution_id, asset_id, user_id)
+                prepared = await app.state.gateway.prepare_asset(asset.upstream_asset_id)
+                size, digest, limit = metadata(prepared, asset.upstream_asset_id, asset.mime_type, cap)
+                async def read_at(offset):
+                    if await request.is_disconnected():
+                        raise asyncio.CancelledError()
+                    if current_user(request, db) != user_id:
+                        raise HTTPException(401)
+                    owned_asset(db, execution_id, asset_id, user_id)
+                    result = await app.state.gateway.read_asset(asset.upstream_asset_id, digest, offset, limit)
+                    return chunk(result, asset.upstream_asset_id, digest, offset, size, limit)
+                first = await read_at(0)
+            except BaseException:
+                slots.release()
+                raise
+
+            async def stream():
+                hasher = hashlib.sha256()
+                offset = 0
+                data = first
+                try:
+                    while True:
+                        hasher.update(data)
+                        offset += len(data)
+                        yield data
+                        if offset == size:
+                            if hasher.hexdigest() != digest:
+                                raise GatewayError("validation")
+                            break
+                        data = await read_at(offset)
+                finally:
+                    slots.release()
+            return StreamingResponse(stream(), media_type=asset.mime_type, headers={
+                "Content-Length": str(size), "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": "default-src 'none'; sandbox",
+                "Content-Disposition": f'attachment; filename="{filename(asset.display_name)}"'})
         data, mime = await get_content(asset, db)
         headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
                    "Content-Security-Policy": "default-src 'none'; sandbox"}

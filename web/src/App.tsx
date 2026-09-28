@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type Session, type Discovery, type Execution } from './api'
-import Gallery from './Gallery'
+import Gallery, { ImagePreview } from './Gallery'
 
 const sections = ['Image', 'Generated', 'Intelligence', 'Video', 'Music', 'Speech'] as const
 type ImageForm = { positivePrompt: string; negativePrompt: string; width: number; height: number; steps: number; cfg: number; seed: number; checkpoint: string; loras: { name: string; strengthModel: number; strengthClip: number }[] }
@@ -69,7 +69,7 @@ export default function App() {
         {['queued', 'running', 'submitting', 'cancel_requested'].includes(execution.state) && <button onClick={async () => { try { setExecution(await api.cancel(execution.id, session.csrfToken)) } catch (e) { setError(e instanceof Error ? e.message : 'Cancellation failed.') } }}>Request cancellation</button>}
         {execution.state === 'submission_unknown' && <p>Submission could not be confirmed. No automatic retry was made.</p>}
         {execution.state === 'completed' && <div className="assets">{execution.assets.length ? execution.assets.map(asset => <article key={asset.id}>
-          <a href={asset.previewUrl} target="_blank" rel="noreferrer"><img src={asset.hasThumbnail ? asset.thumbnailUrl : asset.previewUrl} alt={asset.displayName} /></a>
+          <div><ImagePreview item={asset} /></div>
           <div><strong>{asset.displayName}</strong><small>{asset.mimeType} · {asset.sizeBytes === null ? 'Size pending' : `${(asset.sizeBytes / 1024 / 1024).toFixed(1)} MB`}</small>
             <a href={asset.downloadUrl}>Download ↓</a></div></article>) : <p>No images were returned.</p>}</div>}
       </section>}
