@@ -26,6 +26,8 @@ export const api = {
   logout: (csrf: string) => post('/api/auth/logout', {}, csrf),
   changeEmail: (email: string, currentPassword: string, csrf: string) =>
     post<{ userName: string }>('/api/account/email', { email, currentPassword }, csrf),
+  changePassword: (currentPassword: string, newPassword: string, confirmPassword: string, csrf: string) =>
+    post<{ ok: boolean }>('/api/account/password', { currentPassword, newPassword, confirmPassword }, csrf),
   discovery: () => request<Discovery>('/api/generation/image/discovery'),
   submit: (image: unknown, csrf: string) => post<Execution>('/api/generation/image/jobs', image, csrf),
   execution: (id: string) => request<Execution>(`/api/executions/${encodeURIComponent(id)}`),
