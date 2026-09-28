@@ -94,11 +94,15 @@ after a Studio restart. If an upstream listing is temporarily unavailable, alrea
 cataloged results remain visible with `catalogSync: unavailable` on the result
 response. Tombstones prevent deleted entries from being reimported.
 
-The current inline download limit remains at most 64 MiB (or the lower configured
-Studio limit). Oversized downloads return HTTP 413 / `asset_too_large` while the
-catalog entry is retained. Generation MCP #27 defined the bounded large-asset
-transfer contract; Studio adoption and per-user authorization remain tracked in
-[Studio #20](https://github.com/flamoris-jp/flamoris-studio/issues/20).
+Inline preview remains limited to at most 64 MiB (or the lower configured Studio
+limit). Downloads above that limit use Generation MCP `assets.prepare` and
+`assets.read` when those tools are registered on the MCP Hub. Studio checks
+ownership, reads at most 256 KiB per chunk, verifies chunk/final digests, and
+caps concurrent downloads at two per process. The aggregate transfer cap defaults
+to 1 GiB and may be lowered with `STUDIO_MAX_TRANSFER_BYTES`. Deploy the Generation
+bounded-transfer tools and register them on the Hub before large downloads can
+work. Small image retrieval retains a bounded 300-second MCP call timeout and
+logs tool name, failure class and elapsed time without exposing private paths.
 Unmaterialized provider outputs still cannot be downloaded after their live
 execution mapping is lost.
 

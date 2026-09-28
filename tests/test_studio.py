@@ -1,6 +1,10 @@
 import io
+import base64
+import hashlib
 import os
+import time
 import uuid
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,7 +16,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 
 from flamoris_studio.app import ImageRequest, create_app
-from flamoris_studio.db import Asset, Base, Execution, User
+from flamoris_studio.db import Asset, Base, Execution, LoginSession, User, now
+from flamoris_studio.auth import SESSION_SECONDS
 from flamoris_studio.gateway import GatewayError
 from flamoris_studio.gateway import GenerationGateway
 from flamoris_studio.media import Thumbnails, filename, inspect_image
@@ -167,6 +172,83 @@ def test_csrf_remains_valid_across_tabs(clients):
     assert gateway.submit_count == 2
 
 
+def test_email_change_preserves_identity_and_assets(clients):
+    a, b, _, factory = clients
+    csrf = register(a, "a@example.test")
+    register(b, "b@example.test")
+    made = a.post("/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf})
+    execution_id = made.json()["id"]
+    asset_id = a.get(f"/api/executions/{execution_id}/result").json()["assets"][0]["id"]
+    with factory() as db:
+        user_id = db.scalar(select(User).where(User.email == "a@example.test")).id
+    route = "/api/account/email"
+    assert a.post(route, json={"email": "New@example.test", "currentPassword": "wrong"},
+                  headers={"X-CSRF-TOKEN": csrf}).status_code == 403
+    assert a.post(route, json={"email": "b@example.test", "currentPassword": "Secure-Password-123"},
+                  headers={"X-CSRF-TOKEN": csrf}).status_code == 409
+    assert a.post(route, json={"email": "New@example.test", "currentPassword": "Secure-Password-123"}).status_code == 403
+    changed = a.post(route, json={"email": "  New@Example.Test  ", "currentPassword": "Secure-Password-123"},
+                     headers={"X-CSRF-TOKEN": csrf})
+    assert changed.status_code == 200, changed.text
+    assert a.get("/api/session").json()["userName"] == "new@example.test"
+    with factory() as db:
+        assert db.scalar(select(User).where(User.email == "new@example.test")).id == user_id
+        assert db.get(Execution, uuid.UUID(execution_id)).user_id == user_id
+        assert db.get(Asset, uuid.UUID(asset_id)).user_id == user_id
+    assert a.get(f"/api/executions/{execution_id}/assets/{asset_id}/download").status_code == 200
+    assert b.get(f"/api/executions/{execution_id}/assets/{asset_id}/download").status_code == 404
+
+
+def test_persistent_cookie_and_server_session_expiry(clients):
+    a, _, _, factory = clients
+    register(a, "a@example.test")
+    login_cookie = next(cookie for cookie in a.cookies.jar if cookie.name == "flamoris.studio")
+    assert login_cookie.expires is not None and login_cookie.expires - time.time() > SESSION_SECONDS - 60
+    with factory() as db:
+        login = db.scalar(select(LoginSession))
+        assert SESSION_SECONDS - 60 < (login.expires_at - now()).total_seconds() <= SESSION_SECONDS
+        login.expires_at = now() - timedelta(seconds=1)
+        db.commit()
+    assert not a.get("/api/session").json()["authenticated"]
+    assert a.get("/api/generation/image/discovery").status_code == 401
+
+
+def test_bounded_download_verifies_chunks_and_owner(clients, monkeypatch):
+    a, b, gateway, _ = clients
+    csrf = register(a, "a@example.test")
+    register(b, "b@example.test")
+    monkeypatch.setenv("STUDIO_MAX_ASSET_BYTES", "1")
+    made = a.post("/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf})
+    asset = a.get(f"/api/executions/{made.json()['id']}/result").json()["assets"][0]
+    calls = []
+
+    async def prepare(asset_id):
+        calls.append(("prepare", asset_id))
+        return {"asset_id": asset_id, "mime_type": "image/png", "size_bytes": len(gateway.image),
+                "sha256": hashlib.sha256(gateway.image).hexdigest(),
+                "chunk_bytes": 32, "transfer_version": 1}
+
+    async def read(asset_id, digest, offset, length):
+        calls.append(("read", offset))
+        if offset == 32 and calls.count(("read", 32)) == 1:
+            raise GatewayError("unavailable")
+        data = gateway.image[offset:offset + length]
+        return {"asset_id": asset_id, "sha256": digest, "size_bytes": len(gateway.image),
+                "offset": offset, "data_base64": base64.b64encode(data).decode(),
+                "chunk_sha256": hashlib.sha256(data).hexdigest(),
+                "next_offset": offset + len(data), "eof": offset + len(data) == len(gateway.image)}
+
+    gateway.prepare_asset = prepare
+    gateway.read_asset = read
+    assert b.get(asset["downloadUrl"]).status_code == 404
+    assert calls == []
+    response = a.get(asset["downloadUrl"])
+    assert response.status_code == 200 and response.content == gateway.image
+    assert len(calls) > 2
+    assert calls.count(("read", 32)) == 2
+    assert response.headers["content-length"] == str(len(gateway.image))
+
+
 def test_metadata_listing_does_not_fetch_provider_paths(clients):
     client, _, gateway, factory = clients
     csrf = register(client, "order@example.test")
@@ -241,7 +323,7 @@ async def test_gateway_normalizes_sdk_v2_result(monkeypatch):
     from mcp.types import CallToolResult, ImageContent
     gateway = GenerationGateway()
 
-    async def call(name, args=None):
+    async def call(name, args=None, timeout=45):
         assert name == "assets.get" and args == {"asset_id": "internal-only"}
         return CallToolResult(content=[ImageContent(type="image", data="aGVsbG8=", mimeType="image/png")])
 
@@ -347,9 +429,12 @@ def test_large_asset_catalog_is_independent_of_binary_and_survives_restart(clien
     async def large_assets(job):
         return [{'asset_id': 'large-asset', 'filename': 'large.png', 'mime_type': 'image/png',
                  'media_kind': 'image', 'size_bytes': 80 * 1024 * 1024}]
+    async def transfer_limit(asset_id):
+        raise GatewayError("asset_too_large")
     gateway.result = forbidden
     gateway.content = forbidden
     gateway.assets = large_assets
+    gateway.prepare_asset = transfer_limit
     created = a.post('/api/generation/image/jobs', json=image_request(), headers={'X-CSRF-TOKEN': csrf})
     execution_id = created.json()['id']
     result = a.get(f'/api/executions/{execution_id}/result')

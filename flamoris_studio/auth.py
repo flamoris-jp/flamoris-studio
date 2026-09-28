@@ -15,6 +15,7 @@ from .db import LoginSession, User, now
 
 COOKIE = "flamoris.studio"
 CSRF_COOKIE = "flamoris.studio.csrf"
+SESSION_SECONDS = 30 * 24 * 60 * 60
 hasher = PasswordHasher()
 
 
@@ -39,10 +40,10 @@ def current_user(request: Request, db: Session = Depends(database)) -> uuid.UUID
 
 def start_session(response, db: Session, user_id: uuid.UUID):
     token = secrets.token_urlsafe(48)
-    db.add(LoginSession(token_hash=digest(token), user_id=user_id, expires_at=now() + timedelta(hours=12)))
+    db.add(LoginSession(token_hash=digest(token), user_id=user_id, expires_at=now() + timedelta(seconds=SESSION_SECONDS)))
     db.commit()
     secure = os.getenv("STUDIO_DEV_INSECURE_COOKIE") != "1"
-    response.set_cookie(COOKIE, token, httponly=True, secure=secure, samesite="strict", max_age=43200)
+    response.set_cookie(COOKIE, token, httponly=True, secure=secure, samesite="strict", max_age=SESSION_SECONDS)
 
 
 def new_csrf(response, existing: str | None = None):
