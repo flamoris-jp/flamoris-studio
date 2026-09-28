@@ -12,8 +12,8 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import delete, select, text
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .auth import COOKIE, CSRF_COOKIE, clear_session, current_user, database, digest, hasher, new_csrf, require_csrf, start_session
@@ -36,6 +36,12 @@ class Credentials(BaseModel):
 class EmailChange(BaseModel):
     email: str = Field(min_length=3, max_length=256)
     currentPassword: str = Field(min_length=1, max_length=256)
+
+
+class PasswordChange(BaseModel):
+    currentPassword: str = Field(min_length=1, max_length=256)
+    newPassword: str = Field(min_length=12, max_length=256)
+    confirmPassword: str = Field(min_length=12, max_length=256)
 
 
 def normalized_email(value: str) -> str:
@@ -242,6 +248,38 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             db.rollback()
             raise HTTPException(409, "Email address is already in use") from None
         return {"userName": user.email}
+
+    @app.post("/api/account/password")
+    def change_password(input: PasswordChange, request: Request, db: Session = Depends(database),
+                        user_id: uuid.UUID = Depends(current_user)):
+        if input.newPassword != input.confirmPassword:
+            raise HTTPException(422, "New passwords do not match")
+        # Serialize account password changes and revoke other sessions in the
+        # same transaction. The current opaque session token remains unchanged.
+        user = db.scalar(select(User).where(User.id == user_id).with_for_update())
+        if user is None:
+            raise HTTPException(401)
+        try:
+            valid = hasher.verify(user.password_hash, input.currentPassword)
+        except VerificationError:
+            valid = False
+        if not valid:
+            raise HTTPException(403, "Current password is incorrect")
+        token_hash = digest(request.cookies.get(COOKIE, ""))
+        # current_user loaded this row earlier. Explicit SELECT still takes a
+        # database lock, so concurrent logout cannot remove it before commit.
+        active = db.scalar(select(LoginSession).where(LoginSession.token_hash == token_hash).with_for_update())
+        if active is None or active.user_id != user_id or active.expires_at <= now():
+            raise HTTPException(401)
+        try:
+            user.password_hash = hasher.hash(input.newPassword)
+            db.execute(delete(LoginSession).where(LoginSession.user_id == user_id,
+                                                 LoginSession.token_hash != token_hash))
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            raise HTTPException(503, "Password change could not be saved") from None
+        return {"ok": True}
 
     @app.get("/api/system/status")
     def status():
