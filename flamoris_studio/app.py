@@ -21,7 +21,7 @@ from .db import Asset, Execution, LoginSession, User, make_session_factory, now
 from .gateway import GatewayError, GenerationGateway
 from .media import Thumbnails, filename, inspect_image
 from .logging_setup import configure_logging
-from .transfer import CHUNK_BYTES, MAX_TRANSFER_BYTES, chunk, metadata
+from .transfer import CHUNK_BYTES, MAX_TRANSFER_BYTES, chunk, metadata, read_with_retry
 
 
 class Credentials(BaseModel):
@@ -465,13 +465,15 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 prepared = await app.state.gateway.prepare_asset(asset.upstream_asset_id)
                 size, digest, limit = metadata(prepared, asset.upstream_asset_id, asset.mime_type, cap)
                 async def read_at(offset):
-                    if await request.is_disconnected():
-                        raise asyncio.CancelledError()
-                    if current_user(request, db) != user_id:
-                        raise HTTPException(401)
-                    owned_asset(db, execution_id, asset_id, user_id)
-                    result = await app.state.gateway.read_asset(asset.upstream_asset_id, digest, offset, limit)
-                    return chunk(result, asset.upstream_asset_id, digest, offset, size, limit)
+                    async def attempt():
+                        if await request.is_disconnected():
+                            raise asyncio.CancelledError()
+                        if current_user(request, db) != user_id:
+                            raise HTTPException(401)
+                        owned_asset(db, execution_id, asset_id, user_id)
+                        result = await app.state.gateway.read_asset(asset.upstream_asset_id, digest, offset, limit)
+                        return chunk(result, asset.upstream_asset_id, digest, offset, size, limit)
+                    return await read_with_retry(attempt)
                 first = await read_at(0)
             except BaseException:
                 slots.release()
