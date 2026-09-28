@@ -131,14 +131,15 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.exception_handler(GatewayError)
     async def gateway_error(_, exc: GatewayError):
-        code = exc.code if exc.code in {"busy", "unavailable", "validation", "upstream_failure", "asset_too_large"} else "upstream_failure"
+        code = exc.code if exc.code in {"busy", "unavailable", "validation", "upstream_failure", "asset_too_large", "transfer_unavailable"} else "upstream_failure"
         return JSONResponse(status_code={"busy": 409, "unavailable": 503, "validation": 422,
-                                         "upstream_failure": 502, "asset_too_large": 413}[code],
+                                         "upstream_failure": 502, "asset_too_large": 413, "transfer_unavailable": 503}[code],
                             content={"error": code, "message": {"busy": "Generation service is busy.",
                                 "unavailable": "Generation service is unavailable.",
                                 "validation": "Invalid generation result.",
                                 "upstream_failure": "Generation service failed.",
-                                "asset_too_large": "This asset exceeds the current download limit. Its gallery entry is preserved."}[code]})
+                                "asset_too_large": "This asset exceeds the current download limit. Its gallery entry is preserved.",
+                                "transfer_unavailable": "Asset transfer is unavailable. The service deployment is incomplete."}[code]})
 
     @app.middleware("http")
     async def csrf_guard(request: Request, call_next):
