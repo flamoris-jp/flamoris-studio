@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .auth import COOKIE, CSRF_COOKIE, clear_session, current_user, database, digest, hasher, new_csrf, require_csrf, start_session
@@ -261,13 +261,19 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         if not valid:
             raise HTTPException(403, "Current password is incorrect")
         token_hash = digest(request.cookies.get(COOKIE, ""))
-        active = db.get(LoginSession, token_hash)
+        # current_user loaded this row earlier. Explicit SELECT still takes a
+        # database lock, so concurrent logout cannot remove it before commit.
+        active = db.scalar(select(LoginSession).where(LoginSession.token_hash == token_hash).with_for_update())
         if active is None or active.user_id != user_id or active.expires_at <= now():
             raise HTTPException(401)
-        user.password_hash = hasher.hash(input.newPassword)
-        db.execute(delete(LoginSession).where(LoginSession.user_id == user_id,
-                                             LoginSession.token_hash != token_hash))
-        db.commit()
+        try:
+            user.password_hash = hasher.hash(input.newPassword)
+            db.execute(delete(LoginSession).where(LoginSession.user_id == user_id,
+                                                 LoginSession.token_hash != token_hash))
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            raise HTTPException(503, "Password change could not be saved") from None
         return {"ok": True}
 
     @app.get("/api/system/status")

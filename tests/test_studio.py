@@ -14,10 +14,11 @@ from PIL import Image
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from flamoris_studio.app import ImageRequest, create_app
 from flamoris_studio.db import Asset, Base, Execution, LoginSession, User, now
-from flamoris_studio.auth import SESSION_SECONDS
+from flamoris_studio.auth import SESSION_SECONDS, hasher
 from flamoris_studio.gateway import GatewayError
 from flamoris_studio.gateway import GenerationGateway
 from flamoris_studio.media import Thumbnails, filename, inspect_image
@@ -228,6 +229,63 @@ def test_password_change_keeps_current_session_and_revokes_others(clients):
     assert b.post("/api/auth/login", json={"email": "password@example.test",
                   "password": valid["newPassword"]}, headers={"X-CSRF-TOKEN": csrf_b}).status_code == 200
 
+
+
+def test_password_change_db_failure_rolls_back_hash_and_session_revocation(clients):
+    a, b, _, factory = clients
+    csrf_a = register(a, "rollback@example.test")
+    csrf_b = b.get("/api/session").json()["csrfToken"]
+    credentials = {"email": "rollback@example.test", "password": "Secure-Password-123"}
+    assert b.post("/api/auth/login", json=credentials, headers={"X-CSRF-TOKEN": csrf_b}).status_code == 200
+    with factory() as db:
+        user = db.scalar(select(User).where(User.email == credentials["email"]))
+        old_hash = user.password_hash
+        old_sessions = set(db.scalars(select(LoginSession.token_hash).where(LoginSession.user_id == user.id)))
+
+    with patch.object(factory.class_, "commit", side_effect=SQLAlchemyError("injected database failure")):
+        response = a.post("/api/account/password", json={
+            "currentPassword": credentials["password"], "newPassword": "New-Secure-Password-456",
+            "confirmPassword": "New-Secure-Password-456"}, headers={"X-CSRF-TOKEN": csrf_a})
+    assert response.status_code == 503
+    assert "injected" not in response.text
+    with factory() as db:
+        user = db.scalar(select(User).where(User.email == credentials["email"]))
+        assert user.password_hash == old_hash
+        assert hasher.verify(user.password_hash, credentials["password"])
+        assert set(db.scalars(select(LoginSession.token_hash).where(LoginSession.user_id == user.id))) == old_sessions
+    assert a.get("/api/session").json()["authenticated"]
+    assert b.get("/api/session").json()["authenticated"]
+    with TestClient(a.app) as fresh:
+        csrf = fresh.get("/api/session").json()["csrfToken"]
+        assert fresh.post("/api/auth/login", json=credentials,
+                          headers={"X-CSRF-TOKEN": csrf}).status_code == 200
+        assert fresh.post("/api/auth/login", json={**credentials, "password": "New-Secure-Password-456"},
+                          headers={"X-CSRF-TOKEN": csrf}).status_code == 401
+
+
+def test_password_change_does_not_affect_another_user(clients):
+    a, b, _, factory = clients
+    csrf_a = register(a, "password-a@example.test")
+    register(b, "password-b@example.test")
+    made = a.post("/api/generation/image/jobs", json=image_request(),
+                  headers={"X-CSRF-TOKEN": csrf_a})
+    asset = a.get(f"/api/executions/{made.json()['id']}/result").json()["assets"][0]
+    with factory() as db:
+        other = db.scalar(select(User).where(User.email == "password-b@example.test"))
+        other_hash = other.password_hash
+        other_sessions = set(db.scalars(select(LoginSession.token_hash).where(LoginSession.user_id == other.id)))
+    response = a.post("/api/account/password", json={
+        "currentPassword": "Secure-Password-123", "newPassword": "New-Secure-Password-456",
+        "confirmPassword": "New-Secure-Password-456"}, headers={"X-CSRF-TOKEN": csrf_a})
+    assert response.status_code == 200, response.text
+    with factory() as db:
+        other = db.scalar(select(User).where(User.email == "password-b@example.test"))
+        assert other.password_hash == other_hash
+        assert set(db.scalars(select(LoginSession.token_hash).where(LoginSession.user_id == other.id))) == other_sessions
+    assert b.get("/api/session").json()["authenticated"]
+    assert b.get("/api/generation/image/discovery").status_code == 200
+    assert b.get(asset["downloadUrl"]).status_code == 404
+    assert a.get(asset["downloadUrl"]).status_code == 200
 
 def test_persistent_cookie_and_server_session_expiry(clients):
     a, _, _, factory = clients
