@@ -14,6 +14,7 @@ x-studio-common: &studio-common
 
 services:
   studio:
+    container_name: flamoris-studio
     <<: *studio-common
     restart: unless-stopped
     env_file:
