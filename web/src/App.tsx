@@ -55,9 +55,9 @@ export default function App() {
   if (!session.authenticated) return <Account allowRegistration={session.allowRegistration} onReady={setSession} />
   return <div className="layout"><aside><div className="brand">✦ <strong>FLAMORIS</strong><small>STUDIO</small></div><p className="eyebrow">WORKSPACE</p>
     <nav aria-label="Creative domains">{sections.map(name => <button key={name} aria-current={section === name ? 'page' : undefined} onClick={() => setSection(name)}>{name}</button>)}</nav>
-    <div className="account-footer"><span>{session.userName}</span><button onClick={async () => { try { await api.logout(session.csrfToken); setSession(await api.session()); setExecution(null) } catch { setError('Could not sign out.') } }}>Sign out</button></div></aside>
+    <div className="account-footer"><span>{session.userName}</span><button onClick={() => setSection('Account')}>Account settings</button><button onClick={async () => { try { await api.logout(session.csrfToken); setSession(await api.session()); setExecution(null) } catch { setError('Could not sign out.') } }}>Sign out</button></div></aside>
     <main><header><div><span className="eyebrow">CREATIVE CONTROL PLANE</span><h1>{section}</h1></div><span className="badge">PHASE 1A</span></header>
-    {section === 'Generated' ? <Gallery csrf={session.csrfToken} /> : section === 'Image' ? <><p>Turn a prompt into something you can keep.</p>
+    {section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Generated' ? <Gallery csrf={session.csrfToken} /> : section === 'Image' ? <><p>Turn a prompt into something you can keep.</p>
       {discovery?.available ? <ImageEditor discovery={discovery} busy={busy} onSubmit={async form => {
         setBusy(true); setError(''); setExecution(null)
         try { const created = await api.submit(form, session.csrfToken); setExecution(created); window.location.hash = `execution/${created.id}` }
@@ -74,6 +74,30 @@ export default function App() {
             <a href={asset.downloadUrl}>Download ↓</a></div></article>) : <p>No images were returned.</p>}</div>}
       </section>}
     </> : <section className="panel"><span className="eyebrow">COMING LATER</span><h2>{section} is unavailable</h2><p>This editor will connect when its MCP capability is ready.</p></section>}</main></div>
+}
+
+function AccountSettings({ session, onChanged }: { session: Session; onChanged: (session: Session) => void }) {
+  const [email, setEmail] = useState(session.userName ?? '')
+  const [password, setPassword] = useState('')
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  return <section className="panel"><h2>Login email</h2><p>Current email: {session.userName}</p>
+    <form onSubmit={async event => {
+      event.preventDefault(); setBusy(true); setMessage('')
+      try {
+        await api.changeEmail(email, password, session.csrfToken)
+        onChanged(await api.session())
+        setPassword('')
+        setMessage('Email updated.')
+      } catch (e) { setMessage(e instanceof Error ? e.message : 'Could not update email.') }
+      finally { setBusy(false) }
+    }}>
+      <label>New email<input type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} /></label>
+      <label>Current password<input type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
+      {message && <p role="status">{message}</p>}
+      <button className="primary" disabled={busy}>{busy ? 'Saving…' : 'Update email'}</button>
+    </form>
+  </section>
 }
 
 function Account({ allowRegistration, onReady }: { allowRegistration: boolean; onReady: (session: Session) => void }) {

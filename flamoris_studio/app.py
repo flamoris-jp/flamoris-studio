@@ -26,6 +26,18 @@ class Credentials(BaseModel):
     password: str = Field(min_length=12, max_length=256)
 
 
+class EmailChange(BaseModel):
+    email: str = Field(min_length=3, max_length=256)
+    currentPassword: str = Field(min_length=1, max_length=256)
+
+
+def normalized_email(value: str) -> str:
+    email = value.strip().lower()
+    if len(email) > 256 or "@" not in email or any(char.isspace() for char in email):
+        raise HTTPException(422, "Invalid email address")
+    return email
+
+
 class DeleteAssetsRequest(BaseModel):
     ids: list[uuid.UUID] = Field(min_length=1, max_length=32)
 
@@ -146,7 +158,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     def register(input: Credentials, response: Response, db: Session = Depends(database)):
         if os.getenv("STUDIO_ALLOW_REGISTRATION") != "1":
             raise HTTPException(404)
-        email = input.email.strip().lower()
+        email = normalized_email(input.email)
         user = User(email=email, password_hash=hasher.hash(input.password))
         db.add(user)
         try:
@@ -168,7 +180,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         attempts.append(time.monotonic())
         if len(login_attempts) > 10_000:
             login_attempts.clear()  # bounded memory, deployment should also rate-limit at the edge
-        user = db.scalar(select(User).where(User.email == input.email.strip().lower()))
+        user = db.scalar(select(User).where(User.email == normalized_email(input.email)))
         if user and user.locked_until and user.locked_until > now():
             raise HTTPException(401)
         try:
@@ -200,6 +212,27 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                _: uuid.UUID = Depends(current_user)):
         clear_session(response, db, request.cookies.get(COOKIE, ""))
         return {"ok": True}
+
+    @app.post("/api/account/email")
+    def change_email(input: EmailChange, db: Session = Depends(database),
+                     user_id: uuid.UUID = Depends(current_user)):
+        user = db.get(User, user_id)
+        try:
+            valid = hasher.verify(user.password_hash, input.currentPassword)
+        except VerificationError:
+            valid = False
+        if not valid:
+            raise HTTPException(403, "Current password is incorrect")
+        email = normalized_email(input.email)
+        if email == user.email:
+            return {"userName": user.email}
+        user.email = email
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(409, "Email address is already in use") from None
+        return {"userName": user.email}
 
     @app.get("/api/system/status")
     def status():

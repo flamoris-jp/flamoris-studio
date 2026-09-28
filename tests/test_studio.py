@@ -1,6 +1,8 @@
 import io
 import os
+import time
 import uuid
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,7 +14,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 
 from flamoris_studio.app import ImageRequest, create_app
-from flamoris_studio.db import Asset, Base, Execution, User
+from flamoris_studio.db import Asset, Base, Execution, LoginSession, User, now
+from flamoris_studio.auth import SESSION_SECONDS
 from flamoris_studio.gateway import GatewayError
 from flamoris_studio.gateway import GenerationGateway
 from flamoris_studio.media import Thumbnails, filename, inspect_image
@@ -165,6 +168,47 @@ def test_csrf_remains_valid_across_tabs(clients):
     assert second.post("/api/generation/image/jobs", json=image_request(),
                        headers={"X-CSRF-TOKEN": other_tab_token}).status_code == 201
     assert gateway.submit_count == 2
+
+
+def test_email_change_preserves_identity_and_assets(clients):
+    a, b, _, factory = clients
+    csrf = register(a, "a@example.test")
+    register(b, "b@example.test")
+    made = a.post("/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf})
+    execution_id = made.json()["id"]
+    asset_id = a.get(f"/api/executions/{execution_id}/result").json()["assets"][0]["id"]
+    with factory() as db:
+        user_id = db.scalar(select(User).where(User.email == "a@example.test")).id
+    route = "/api/account/email"
+    assert a.post(route, json={"email": "New@example.test", "currentPassword": "wrong"},
+                  headers={"X-CSRF-TOKEN": csrf}).status_code == 403
+    assert a.post(route, json={"email": "b@example.test", "currentPassword": "Secure-Password-123"},
+                  headers={"X-CSRF-TOKEN": csrf}).status_code == 409
+    assert a.post(route, json={"email": "New@example.test", "currentPassword": "Secure-Password-123"}).status_code == 403
+    changed = a.post(route, json={"email": "  New@Example.Test  ", "currentPassword": "Secure-Password-123"},
+                     headers={"X-CSRF-TOKEN": csrf})
+    assert changed.status_code == 200, changed.text
+    assert a.get("/api/session").json()["userName"] == "new@example.test"
+    with factory() as db:
+        assert db.scalar(select(User).where(User.email == "new@example.test")).id == user_id
+        assert db.get(Execution, uuid.UUID(execution_id)).user_id == user_id
+        assert db.get(Asset, uuid.UUID(asset_id)).user_id == user_id
+    assert a.get(f"/api/executions/{execution_id}/assets/{asset_id}/download").status_code == 200
+    assert b.get(f"/api/executions/{execution_id}/assets/{asset_id}/download").status_code == 404
+
+
+def test_persistent_cookie_and_server_session_expiry(clients):
+    a, _, _, factory = clients
+    register(a, "a@example.test")
+    login_cookie = next(cookie for cookie in a.cookies.jar if cookie.name == "flamoris.studio")
+    assert login_cookie.expires is not None and login_cookie.expires - time.time() > SESSION_SECONDS - 60
+    with factory() as db:
+        login = db.scalar(select(LoginSession))
+        assert SESSION_SECONDS - 60 < (login.expires_at - now()).total_seconds() <= SESSION_SECONDS
+        login.expires_at = now() - timedelta(seconds=1)
+        db.commit()
+    assert not a.get("/api/session").json()["authenticated"]
+    assert a.get("/api/generation/image/discovery").status_code == 401
 
 
 def test_metadata_listing_does_not_fetch_provider_paths(clients):
