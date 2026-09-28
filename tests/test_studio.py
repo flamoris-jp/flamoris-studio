@@ -249,6 +249,48 @@ def test_bounded_download_verifies_chunks_and_owner(clients, monkeypatch):
     assert response.headers["content-length"] == str(len(gateway.image))
 
 
+def test_medium_image_uses_bounded_transfer_for_all_routes(clients):
+    a, b, gateway, _ = clients
+    csrf = register(a, "medium@example.test")
+    register(b, "other-medium@example.test")
+    image = Image.frombytes("RGB", (500, 500), os.urandom(500 * 500 * 3))
+    output = io.BytesIO()
+    image.save(output, "PNG")
+    gateway.image = output.getvalue()
+    assert 512 * 1024 < len(gateway.image) < 1024 * 1024
+    calls = []
+
+    async def native(*args):
+        raise AssertionError("image must not enter one large SSE event")
+
+    async def prepare(asset_id):
+        calls.append("prepare")
+        return {"asset_id": asset_id, "mime_type": "image/png", "size_bytes": len(gateway.image),
+                "sha256": hashlib.sha256(gateway.image).hexdigest(),
+                "chunk_bytes": 256 * 1024, "transfer_version": 1}
+
+    async def read(asset_id, digest, offset, length):
+        calls.append(offset)
+        data = gateway.image[offset:offset + length]
+        return {"asset_id": asset_id, "sha256": digest, "size_bytes": len(gateway.image),
+                "offset": offset, "data_base64": base64.b64encode(data).decode(),
+                "chunk_sha256": hashlib.sha256(data).hexdigest(),
+                "next_offset": offset + len(data), "eof": offset + len(data) == len(gateway.image)}
+
+    gateway.content = native
+    gateway.prepare_asset = prepare
+    gateway.read_asset = read
+    made = a.post("/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf})
+    asset = a.get(f"/api/executions/{made.json()['id']}/result").json()["assets"][0]
+    for route in ("previewUrl", "thumbnailUrl", "downloadUrl"):
+        assert b.get(asset[route]).status_code == 404
+        response = a.get(asset[route])
+        assert response.status_code == 200, response.text[:200] if response.status_code != 200 else ""
+        if route != "thumbnailUrl":
+            assert response.content == gateway.image
+    assert calls.count("prepare") == 3
+
+
 def test_metadata_listing_does_not_fetch_provider_paths(clients):
     client, _, gateway, factory = clients
     csrf = register(client, "order@example.test")
