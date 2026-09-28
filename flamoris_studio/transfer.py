@@ -1,4 +1,5 @@
 """Verify bounded Generation MCP chunks without collecting the asset in memory."""
+import asyncio
 import base64
 import binascii
 import hashlib
@@ -41,3 +42,17 @@ def chunk(response: dict, asset_id: str, digest: str, offset: int, size: int, li
         response.get("eof") is not (end == size)):
         raise GatewayError("validation")
     return data
+
+
+async def read_with_retry(attempt):
+    """Retry a cursor-free read at its unchanged offset on transport failure only.
+
+    The caller's attempt must recheck authorization and validate the chunk every time.
+    """
+    for retry in range(3):
+        try:
+            return await attempt()
+        except GatewayError as exc:
+            if exc.code != "unavailable" or retry == 2:
+                raise
+            await asyncio.sleep(0.1 * (retry + 1))
