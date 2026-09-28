@@ -65,6 +65,10 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .gallery-detail dl div { display: grid; grid-template-columns: minmax(100px, 20%) 1fr; gap: 12px; }
 .gallery-detail dt { color: #b9aeba; }
 .gallery-detail dd { margin: 0; white-space: pre-wrap; }
+.settings-list { display: grid; gap: 8px; overflow-wrap: anywhere; }
+.settings-list div { display: grid; grid-template-columns: minmax(100px, 20%) 1fr; gap: 12px; }
+.settings-list dt { color: #b9aeba; }
+.settings-list dd { margin: 0; white-space: pre-wrap; }
 .style-box { padding: 16px; border: 1px solid #403947; border-radius: 10px; margin: 16px 0 24px; }
 .style-box small, .size-presets span { color: #b7afc2; font-size: 12px; }
 .style-actions, .size-presets { justify-content: flex-start; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 12px 0; }

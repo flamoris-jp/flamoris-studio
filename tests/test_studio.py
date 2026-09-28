@@ -122,6 +122,7 @@ def test_user_scoped_styles_and_request_snapshot(clients):
     assert b.post(f"{path}/{style_id}/duplicate", json={"name": "copy"}, headers={"X-CSRF-TOKEN": csrf_b}).status_code == 404
     assert b.delete(f"{path}/{style_id}", headers={"X-CSRF-TOKEN": csrf_b}).status_code == 404
     assert a.post(path, json=body, headers={"X-CSRF-TOKEN": csrf_a}).status_code == 409
+    assert a.post(path, json={**body, "name": "   "}, headers={"X-CSRF-TOKEN": csrf_a}).status_code == 422
     updated = {**body, "positivePrompt": "edited"}
     assert a.put(f"{path}/{style_id}", json=updated, headers={"X-CSRF-TOKEN": csrf_a}).json()["positivePrompt"] == "edited"
     duplicate = a.post(f"{path}/{style_id}/duplicate", json={"name": "copy"}, headers={"X-CSRF-TOKEN": csrf_a})

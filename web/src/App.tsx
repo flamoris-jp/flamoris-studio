@@ -50,6 +50,7 @@ export default function App() {
   const [section, setSection] = useState<string>('Image')
   const [discovery, setDiscovery] = useState<Discovery | null>(null)
   const [execution, setExecution] = useState<Execution | null>(null)
+  const [resultSettings, setResultSettings] = useState<Partial<ImageSettings> | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [form, setForm] = useState<ImageDraft>(() => initialImageDraft())
@@ -81,7 +82,7 @@ export default function App() {
     <main><header><div><span className="eyebrow">CREATIVE CONTROL PLANE</span><h1>{section}</h1></div><span className="badge">PHASE 1A</span></header>
     {section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Generated' ? <Gallery csrf={session.csrfToken} onUseSettings={useSettings} /> : section === 'Image' ? <><p>Turn a prompt into something you can keep.</p>
       {discovery?.available ? <ImageEditor discovery={discovery} busy={busy} form={form} setForm={setForm} csrf={session.csrfToken} onSubmit={async form => {
-        setBusy(true); setError(''); setExecution(null)
+        setBusy(true); setError(''); setExecution(null); setResultSettings(null)
         try { const created = await api.submit(form, session.csrfToken); setExecution(created); window.location.hash = `execution/${created.id}` }
         catch (e) { setError(e instanceof Error ? e.message : 'Generation failed.') }
         finally { setBusy(false) }
@@ -93,7 +94,8 @@ export default function App() {
         {execution.state === 'completed' && <div className="assets">{execution.assets.length ? execution.assets.map(asset => <article key={asset.id}>
           <div><ImagePreview item={asset} /></div>
           <div><strong>{asset.displayName}</strong><small>{asset.mimeType} · {asset.sizeBytes === null ? 'Size pending' : `${(asset.sizeBytes / 1024 / 1024).toFixed(1)} MB`}</small>
-            <a href={asset.downloadUrl}>Download ↓</a><button onClick={async () => { try { const detail = await api.asset(asset.id); useSettings(detail.settings) } catch { setError('Could not restore settings.') } }}>Use settings ↗</button></div></article>) : <p>No images were returned.</p>}</div>}
+            <a href={asset.downloadUrl}>Download ↓</a><button onClick={async () => { try { const detail = await api.asset(asset.id); setResultSettings(detail.settings) } catch { setError('Could not load settings.') } }}>View settings</button><button onClick={async () => { try { const detail = await api.asset(asset.id); useSettings(detail.settings) } catch { setError('Could not restore settings.') } }}>Use settings ↗</button></div></article>) : <p>No images were returned.</p>}</div>}
+        {resultSettings && <dl className="settings-list">{Object.entries(resultSettings).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{Array.isArray(value) ? value.map((lora, index) => `${index + 1}. ${lora.name} (model ${lora.strengthModel}, CLIP ${lora.strengthClip})`).join('\n') || 'None' : String(value)}</dd></div>)}</dl>}
       </section>}
     </> : <section className="panel"><span className="eyebrow">COMING LATER</span><h2>{section} is unavailable</h2><p>This editor will connect when its MCP capability is ready.</p></section>}</main></div>
 }

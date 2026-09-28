@@ -101,6 +101,9 @@ def style_view(style: ImageStyle):
 
 
 def save_style(db: Session, style: ImageStyle):
+    style.name = style.name.strip()
+    if not style.name:
+        raise HTTPException(422, "Style name is required")
     db.add(style)
     try:
         db.commit()
