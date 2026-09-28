@@ -105,6 +105,44 @@ def image_request():
             "height": 512, "steps": 20, "cfg": 7, "seed": 1, "checkpoint": "test"}
 
 
+def test_user_scoped_styles_and_request_snapshot(clients):
+    a, b, gateway, factory = clients
+    csrf_a = register(a, "style-a@example.test")
+    csrf_b = register(b, "style-b@example.test")
+    path = "/api/generation/image/styles"
+    body = {"name": "Soft light", "positivePrompt": "tag, " * 3000, "negativePrompt": "blur, " * 2000}
+    assert a.post(path, json=body).status_code == 403
+    created = a.post(path, json=body, headers={"X-CSRF-TOKEN": csrf_a})
+    assert created.status_code == 201, created.text
+    style_id = created.json()["id"]
+    assert a.get(path).json()["items"][0]["positivePrompt"] == body["positivePrompt"]
+    assert b.get(path).json()["items"] == []
+    assert b.get(f"{path}/{style_id}").status_code == 404
+    assert b.put(f"{path}/{style_id}", json=body, headers={"X-CSRF-TOKEN": csrf_b}).status_code == 404
+    assert b.post(f"{path}/{style_id}/duplicate", json={"name": "copy"}, headers={"X-CSRF-TOKEN": csrf_b}).status_code == 404
+    assert b.delete(f"{path}/{style_id}", headers={"X-CSRF-TOKEN": csrf_b}).status_code == 404
+    assert a.post(path, json=body, headers={"X-CSRF-TOKEN": csrf_a}).status_code == 409
+    updated = {**body, "positivePrompt": "edited"}
+    assert a.put(f"{path}/{style_id}", json=updated, headers={"X-CSRF-TOKEN": csrf_a}).json()["positivePrompt"] == "edited"
+    duplicate = a.post(f"{path}/{style_id}/duplicate", json={"name": "copy"}, headers={"X-CSRF-TOKEN": csrf_a})
+    assert duplicate.status_code == 201 and duplicate.json()["positivePrompt"] == "edited"
+    assert a.delete(f"{path}/{style_id}", headers={"X-CSRF-TOKEN": csrf_a}).status_code == 200
+    assert a.get(f"{path}/{style_id}").status_code == 404
+
+    request = {**image_request(), "sampler": "dpmpp_2m", "scheduler": "karras", "denoise": 0.75,
+               "loras": [{"name": "first", "strengthModel": 0.4, "strengthClip": 0.8},
+                         {"name": "second", "strengthModel": 1.2, "strengthClip": 1.0}]}
+    made = a.post("/api/generation/image/jobs", json=request, headers={"X-CSRF-TOKEN": csrf_a})
+    assert made.status_code == 201, made.text
+    result = a.get(f"/api/executions/{made.json()['id']}/result").json()
+    asset_id = result["assets"][0]["id"]
+    settings = a.get(f"/api/assets/{asset_id}").json()["settings"]
+    assert settings["loras"] == request["loras"]
+    assert settings["sampler"] == "dpmpp_2m" and settings["scheduler"] == "karras"
+    assert b.get(f"/api/assets/{asset_id}").status_code == 404
+    assert ImageRequest(**request).parameters()["denoise"] == 0.75
+
+
 def test_multi_user_generation_and_private_assets(clients):
     a, b, gateway, factory = clients
     csrf_a = register(a, "a@example.test")

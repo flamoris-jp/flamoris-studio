@@ -29,6 +29,14 @@ Speech and Video follow in later phases.
 
 The UI uses dedicated editors for each generation type rather than one universal prompt form.
 
+The Image editor includes user-owned Styles stored in PostgreSQL. A Style saves
+positive and negative prompts; applying it leaves an editable draft. The editor
+also exposes size presets, ordered optional LoRAs, sampler, scheduler, denoise,
+and a random seed action. Generated result details show Studio's original request
+snapshot and offer **Use settings** to return to the Image editor. Reference-image
+submission remains unavailable until Studio's managed-input authorization (#21)
+and the Generation workflow contract are ready.
+
 Examples include:
 
 - Intelligence: prompt, system instruction, temperature, max tokens, attachments
