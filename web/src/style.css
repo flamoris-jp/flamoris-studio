@@ -65,3 +65,13 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .gallery-detail dl div { display: grid; grid-template-columns: minmax(100px, 20%) 1fr; gap: 12px; }
 .gallery-detail dt { color: #b9aeba; }
 .gallery-detail dd { margin: 0; white-space: pre-wrap; }
+.style-box { padding: 16px; border: 1px solid #403947; border-radius: 10px; margin: 16px 0 24px; }
+.style-box small, .size-presets span { color: #b7afc2; font-size: 12px; }
+.style-actions, .size-presets { justify-content: flex-start; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.size-presets { margin-bottom: 18px; }
+.reference-note { padding: 12px; border: 1px solid #403947; border-radius: 9px; color: #b7afc2; font-size: 12px; margin-bottom: 24px; }
+.editor details { margin: 8px 0 22px; }
+.editor summary { cursor: pointer; margin-bottom: 16px; }
+.editor .fields > button { align-self: center; justify-self: start; }
+.lora { grid-template-columns: minmax(130px,2fr) 1fr 1fr auto auto; }
+@media(max-width:750px) { .lora { grid-template-columns: repeat(2,minmax(0,1fr)); } }
