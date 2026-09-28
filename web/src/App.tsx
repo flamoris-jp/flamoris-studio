@@ -79,7 +79,11 @@ export default function App() {
 function AccountSettings({ session, onChanged }: { session: Session; onChanged: (session: Session) => void }) {
   const [email, setEmail] = useState(session.userName ?? '')
   const [password, setPassword] = useState('')
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [message, setMessage] = useState('')
+  const [passwordMessage, setPasswordMessage] = useState('')
   const [busy, setBusy] = useState(false)
   return <section className="panel"><h2>Login email</h2><p>Current email: {session.userName}</p>
     <form onSubmit={async event => {
@@ -96,6 +100,22 @@ function AccountSettings({ session, onChanged }: { session: Session; onChanged: 
       <label>Current password<input type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} /></label>
       {message && <p role="status">{message}</p>}
       <button className="primary" disabled={busy}>{busy ? 'Saving…' : 'Update email'}</button>
+    </form>
+    <h2>Change password</h2><p>Other signed-in sessions will be signed out.</p>
+    <form onSubmit={async event => {
+      event.preventDefault(); setBusy(true); setPasswordMessage('')
+      try {
+        await api.changePassword(currentPassword, newPassword, confirmPassword, session.csrfToken)
+        setCurrentPassword(''); setNewPassword(''); setConfirmPassword('')
+        setPasswordMessage('Password updated. Other sessions have been signed out.')
+      } catch (e) { setPasswordMessage(e instanceof Error ? e.message : 'Could not update password.') }
+      finally { setBusy(false) }
+    }}>
+      <label>Current password<input type="password" autoComplete="current-password" required value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} /></label>
+      <label>New password<input type="password" autoComplete="new-password" required minLength={12} maxLength={256} value={newPassword} onChange={e => setNewPassword(e.target.value)} /></label>
+      <label>Confirm new password<input type="password" autoComplete="new-password" required minLength={12} maxLength={256} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} /></label>
+      {passwordMessage && <p role="status">{passwordMessage}</p>}
+      <button className="primary" disabled={busy || newPassword !== confirmPassword}>{busy ? 'Saving…' : 'Update password'}</button>
     </form>
   </section>
 }
