@@ -3,6 +3,7 @@ export type Model = { id: string; name: string }
 export type Discovery = { available: boolean; templates: string[]; checkpoints: Model[]; loras: Model[] }
 export type Asset = { id: string; executionId: string; displayName: string; mimeType: string; mediaKind: string; sizeBytes: number | null; width: number | null; height: number | null; createdAt: string; hasThumbnail: boolean; previewUrl: string; downloadUrl: string; thumbnailUrl: string }
 export type ImageSettings = { positivePrompt: string; negativePrompt: string; checkpoint: string; width: number; height: number; steps: number; cfg: number; seed: number; sampler?: string; scheduler?: string; denoise?: number; loras?: { name: string; strengthModel: number; strengthClip: number }[] }
+export type ImagePreferences = Pick<ImageSettings, 'width' | 'height' | 'steps' | 'cfg'>
 export type ImageStyle = { id: string; name: string; positivePrompt: string; negativePrompt: string; createdAt: string; updatedAt: string }
 export type AssetDetail = Asset & { state: string; submittedAt: string; settings: Partial<ImageSettings> }
 export type AssetPage = { items: Asset[]; nextOffset: number | null }
@@ -31,6 +32,8 @@ export const api = {
   changePassword: (currentPassword: string, newPassword: string, confirmPassword: string, csrf: string) =>
     post<{ ok: boolean }>('/api/account/password', { currentPassword, newPassword, confirmPassword }, csrf),
   discovery: () => request<Discovery>('/api/generation/image/discovery'),
+  imagePreferences: () => request<ImagePreferences>('/api/generation/image/preferences'),
+  saveImagePreferences: (preferences: ImagePreferences, csrf: string) => request<ImagePreferences>('/api/generation/image/preferences', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify(preferences) }),
   styles: () => request<{ items: ImageStyle[] }>('/api/generation/image/styles'),
   createStyle: (style: Pick<ImageStyle, 'name' | 'positivePrompt' | 'negativePrompt'>, csrf: string) => post<ImageStyle>('/api/generation/image/styles', style, csrf),
   updateStyle: (id: string, style: Pick<ImageStyle, 'name' | 'positivePrompt' | 'negativePrompt'>, csrf: string) => request<ImageStyle>(`/api/generation/image/styles/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify(style) }),

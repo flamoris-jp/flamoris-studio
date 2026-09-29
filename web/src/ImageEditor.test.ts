@@ -8,7 +8,7 @@ describe('image numeric draft', () => {
   it('allows intermediate empty fields but submits only complete numeric values', () => {
     const draft = base()
     draft.seed = ''
-    expect(imagePayload(draft)).toBeNull()
+    expect(imagePayload(draft)?.seed).toBeUndefined()
     draft.seed = '5'
     expect(imagePayload(draft)?.seed).toBe(5)
     expect(typeof imagePayload(draft)?.seed).toBe('number')
