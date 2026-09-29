@@ -26,6 +26,7 @@ from .transfer import CHUNK_BYTES, MAX_TRANSFER_BYTES, chunk, metadata, read_wit
 # 512 KiB of raw image data stays below a 1 MiB SSE event even after base64
 # encoding and the MCP JSON envelope. Unknown sizes take the bounded route.
 NATIVE_IMAGE_BYTES = 512 * 1024
+MAX_SAFE_IMAGE_SEED = 2**53 - 1
 
 
 class Credentials(BaseModel):
@@ -68,7 +69,7 @@ class ImageRequest(BaseModel):
     height: int = Field(ge=64, le=4096, multiple_of=8)
     steps: int = Field(ge=1, le=150)
     cfg: float = Field(ge=0, le=100, allow_inf_nan=False)
-    seed: int = Field(ge=0, le=2**64 - 1)
+    seed: int = Field(ge=0, le=MAX_SAFE_IMAGE_SEED)
     checkpoint: str = Field(min_length=1, max_length=1024)
     loras: list[Lora] = Field(default_factory=list, max_length=16)
     sampler: str = Field(default="euler", pattern=r"^[a-zA-Z0-9_]+$", max_length=80)
