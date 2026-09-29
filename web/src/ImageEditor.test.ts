@@ -58,6 +58,16 @@ describe('image numeric draft', () => {
     expect(draft.positivePrompt).toBe('stage')
   })
 
+  it('restores and resubmits the maximum Studio-safe seed without loss', () => {
+    const draft = base()
+    const maximum = Number.MAX_SAFE_INTEGER
+    const restored = restoreImageDraft(draft, { seed: maximum })
+    expect(restored.seed).toBe(String(maximum))
+    expect(imagePayload(restored)?.seed).toBe(maximum)
+    restored.seed = String(maximum + 1)
+    expect(imagePayload(restored)).toBeNull()
+  })
+
   it('randomizes only the seed', () => {
     const draft = base()
     const changed = withRandomSeed(draft, new Uint32Array([1, 2]))
