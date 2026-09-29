@@ -105,6 +105,23 @@ def image_request():
             "height": 512, "steps": 20, "cfg": 7, "seed": 1, "checkpoint": "test"}
 
 
+def test_image_seed_matches_browser_safe_integer_contract(clients):
+    a, _, _, _ = clients
+    csrf = register(a, "seed@example.test")
+    maximum = 2**53 - 1
+
+    accepted = a.post("/api/generation/image/jobs", json={**image_request(), "seed": maximum},
+                      headers={"X-CSRF-TOKEN": csrf})
+    assert accepted.status_code == 201, accepted.text
+    result = a.get(f"/api/executions/{accepted.json()['id']}/result").json()
+    asset_id = result["assets"][0]["id"]
+    assert a.get(f"/api/assets/{asset_id}").json()["settings"]["seed"] == maximum
+
+    rejected = a.post("/api/generation/image/jobs", json={**image_request(), "seed": maximum + 1},
+                      headers={"X-CSRF-TOKEN": csrf})
+    assert rejected.status_code == 422
+
+
 def test_user_scoped_styles_and_request_snapshot(clients):
     a, b, gateway, factory = clients
     csrf_a = register(a, "style-a@example.test")
