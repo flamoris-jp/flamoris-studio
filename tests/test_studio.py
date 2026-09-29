@@ -122,6 +122,38 @@ def test_image_seed_matches_browser_safe_integer_contract(clients):
     assert rejected.status_code == 422
 
 
+def test_auto_seed_is_saved_before_submission_and_explicit_zero_is_preserved(clients, monkeypatch):
+    a, _, _, factory = clients
+    csrf = register(a, "auto-seed@example.test")
+    monkeypatch.setattr("flamoris_studio.app.secrets.randbelow", lambda upper: 2345)
+    body = image_request()
+    body.pop("seed")
+    response = a.post("/api/generation/image/jobs", json=body, headers={"X-CSRF-TOKEN": csrf})
+    assert response.status_code == 201
+    with factory() as db:
+        execution = db.get(Execution, uuid.UUID(response.json()["id"]))
+        assert execution.request_snapshot["seed"] == 2345
+    fixed = a.post("/api/generation/image/jobs", json={**body, "seed": 0},
+                   headers={"X-CSRF-TOKEN": csrf})
+    assert fixed.status_code == 201
+    with factory() as db:
+        assert db.get(Execution, uuid.UUID(fixed.json()["id"])).request_snapshot["seed"] == 0
+
+
+def test_image_preferences_are_user_owned_and_validated(clients):
+    a, b, _, _ = clients
+    csrf_a = register(a, "preferences-a@example.test")
+    csrf_b = register(b, "preferences-b@example.test")
+    path = "/api/generation/image/preferences"
+    assert a.get(path).json() == {"width": 512, "height": 512, "steps": 20, "cfg": 7}
+    values = {"width": 768, "height": 1152, "steps": 28, "cfg": 6.5}
+    assert a.put(path, json=values, headers={"X-CSRF-TOKEN": csrf_a}).json() == values
+    assert a.get(path).json() == values
+    assert b.get(path).json() == {"width": 512, "height": 512, "steps": 20, "cfg": 7}
+    assert b.put(path, json={**values, "width": 513}, headers={"X-CSRF-TOKEN": csrf_b}).status_code == 422
+    assert b.get(path).json()["width"] == 512
+
+
 def test_user_scoped_styles_and_request_snapshot(clients):
     a, b, gateway, factory = clients
     csrf_a = register(a, "style-a@example.test")

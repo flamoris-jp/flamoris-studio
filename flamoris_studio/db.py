@@ -67,6 +67,16 @@ class ImageStyle(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
+class ImagePreference(Base):
+    __tablename__ = "image_preferences"
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    steps: Mapped[int] = mapped_column(Integer, nullable=False)
+    cfg: Mapped[float] = mapped_column(nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+
 class Asset(Base):
     __tablename__ = "assets"
     __table_args__ = (Index("ix_asset_execution_upstream", "execution_id", "upstream_asset_id", unique=True),)

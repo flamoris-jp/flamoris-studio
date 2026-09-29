@@ -1,5 +1,6 @@
 """Studio HTTP boundary: all user-owned lookups include the authenticated owner."""
 import os
+import secrets
 import asyncio
 import hashlib
 import uuid
@@ -17,7 +18,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .auth import COOKIE, CSRF_COOKIE, clear_session, current_user, database, digest, hasher, new_csrf, require_csrf, start_session
-from .db import Asset, Execution, ImageStyle, LoginSession, User, make_session_factory, now
+from .db import Asset, Execution, ImagePreference, ImageStyle, LoginSession, User, make_session_factory, now
 from .gateway import GatewayError, GenerationGateway
 from .media import Thumbnails, filename, inspect_image
 from .logging_setup import configure_logging
@@ -69,7 +70,7 @@ class ImageRequest(BaseModel):
     height: int = Field(ge=64, le=4096, multiple_of=8)
     steps: int = Field(ge=1, le=150)
     cfg: float = Field(ge=0, le=100, allow_inf_nan=False)
-    seed: int = Field(ge=0, le=MAX_SAFE_IMAGE_SEED)
+    seed: int | None = Field(default=None, ge=0, le=MAX_SAFE_IMAGE_SEED)
     checkpoint: str = Field(min_length=1, max_length=1024)
     loras: list[Lora] = Field(default_factory=list, max_length=16)
     sampler: str = Field(default="euler", pattern=r"^[a-zA-Z0-9_]+$", max_length=80)
@@ -93,6 +94,13 @@ class StyleInput(BaseModel):
 
 class StyleDuplicate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
+
+
+class ImagePreferencesInput(BaseModel):
+    width: int = Field(ge=64, le=4096, multiple_of=8)
+    height: int = Field(ge=64, le=4096, multiple_of=8)
+    steps: int = Field(ge=1, le=150)
+    cfg: float = Field(ge=0, le=100, allow_inf_nan=False)
 
 
 def style_view(style: ImageStyle):
@@ -323,6 +331,26 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     async def discovery(_: uuid.UUID = Depends(current_user)):
         return await app.state.gateway.discover()
 
+    @app.get("/api/generation/image/preferences")
+    def get_image_preferences(db: Session = Depends(database), user_id: uuid.UUID = Depends(current_user)):
+        preference = db.get(ImagePreference, user_id)
+        if preference is None:
+            return {"width": 512, "height": 512, "steps": 20, "cfg": 7}
+        return {key: getattr(preference, key) for key in ("width", "height", "steps", "cfg")}
+
+    @app.put("/api/generation/image/preferences")
+    def put_image_preferences(input: ImagePreferencesInput, db: Session = Depends(database),
+                              user_id: uuid.UUID = Depends(current_user)):
+        preference = db.get(ImagePreference, user_id)
+        if preference is None:
+            preference = ImagePreference(owner_user_id=user_id)
+        for key, value in input.model_dump().items():
+            setattr(preference, key, value)
+        preference.updated_at = now()
+        db.add(preference)
+        db.commit()
+        return input.model_dump()
+
     @app.get("/api/generation/image/styles")
     def list_styles(db: Session = Depends(database), user_id: uuid.UUID = Depends(current_user)):
         return {"items": [style_view(style) for style in db.scalars(select(ImageStyle)
@@ -377,6 +405,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         template = "text-to-image-lora" if input.loras else "text-to-image"
         if not capability["available"] or template not in capability["templates"]:
             raise GatewayError("unavailable")
+        if input.seed is None:
+            input.seed = secrets.randbelow(MAX_SAFE_IMAGE_SEED + 1)
         workflow = await app.state.gateway.build(template, input.parameters())
         execution = Execution(user_id=user_id, workflow=template, request_snapshot=input.model_dump())
         db.add(execution)
