@@ -50,7 +50,7 @@ export default function Gallery({ csrf, onUseSettings }: { csrf: string; onUseSe
       if (failed.length) { setFailures(failed); setError(`Could not delete ${failed.length} result(s). They are still available here; try again.`) }
     } finally { setWorking(false) }
   }
-  return <section className="panel results"><div className="row"><div><span className="eyebrow">YOUR OUTPUTS</span><h2>Generated results</h2></div>
+  return <section className="panel results"><div className="row"><div><span className="eyebrow">YOUR OUTPUTS</span><h2>Assets</h2></div>
     <button disabled={working || !selected.length} onClick={() => remove(selected)}>Delete selected ({selected.length})</button></div>
     <p>Generated files saved to this gallery are private to your account. Deletion removes the Generation MCP managed copy; provider originals may remain.</p>
     {error && <p role="alert" className="error">{error}</p>}
@@ -64,11 +64,11 @@ export default function Gallery({ csrf, onUseSettings }: { csrf: string; onUseSe
       try { const page = await api.assets(nextOffset); setItems(old => [...old, ...page.items]); setNextOffset(page.nextOffset) }
       catch { setError('Could not load more results.') }
     }}>Load more</button>}
-    {detail && <div className="panel gallery-detail"><div className="row"><h3>{detail.displayName}</h3><button onClick={() => setDetail(null)}>Close</button></div>
+    {detail && <div className="gallery-overlay" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDetail(null) }}><div className="panel gallery-detail" role="dialog" aria-modal="true" aria-label={`Details for ${detail.displayName}`} onKeyDown={event => { if (event.key === 'Escape') setDetail(null) }}><div className="row"><h3>{detail.displayName}</h3><button autoFocus onClick={() => setDetail(null)}>Close</button></div>
       {detail.mediaKind === 'image' && <ImagePreview key={detail.id} item={detail} />}
       <p>{new Date(detail.createdAt).toLocaleString()} · {detail.mimeType} · {detail.sizeBytes === null ? 'Size unknown' : `${(detail.sizeBytes / 1024 / 1024).toFixed(1)} MB`}{detail.width && detail.height ? ` · ${detail.width} × ${detail.height}` : ''}</p>
       <dl>{Object.entries(detail.settings).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{Array.isArray(value) ? value.map((lora, index) => `${index + 1}. ${lora.name} (model ${lora.strengthModel}, CLIP ${lora.strengthClip})`).join('\n') || 'None' : String(value)}</dd></div>)}</dl>
       <div className="row"><a href={detail.downloadUrl}>Download ↓</a>{onUseSettings && <button onClick={() => onUseSettings(detail.settings)}>Use settings ↗</button>}<button disabled={working} onClick={() => remove([detail.id])}>Delete this result</button></div>
-    </div>}
+    </div></div>}
   </section>
 }

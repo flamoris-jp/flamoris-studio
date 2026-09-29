@@ -92,3 +92,15 @@ test('thumbnail generation is lazy and failure preserves the catalog entry', asy
   expect(view.querySelector('article strong')?.textContent).toBe('a.png')
   expect(view.querySelectorAll('article')).toHaveLength(1)
 })
+
+test('View details opens an immediately visible dialog with saved settings', async () => {
+  const detail = vi.spyOn(api, 'asset').mockResolvedValue({ ...item('a'), state: 'completed',
+    submittedAt: '2026-09-24T00:00:00Z', settings: { seed: 42, width: 768 } })
+  const view = await show(['a'])
+  await click(Array.from(view.querySelectorAll('button')).find(b => b.textContent === 'View details')!)
+  expect(detail).toHaveBeenCalledWith('a')
+  expect(view.querySelector('[role="dialog"]')?.textContent).toContain('42')
+  expect(view.querySelector('[role="dialog"]')?.textContent).toContain('768')
+  await click(Array.from(view.querySelectorAll('[role="dialog"] button')).find(b => b.textContent === 'Close')!)
+  expect(view.querySelector('[role="dialog"]')).toBeNull()
+})
