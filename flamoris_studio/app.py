@@ -1,5 +1,6 @@
 """Studio HTTP boundary: all user-owned lookups include the authenticated owner."""
 import os
+import secrets
 import asyncio
 import hashlib
 import uuid
@@ -17,7 +18,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .auth import COOKIE, CSRF_COOKIE, clear_session, current_user, database, digest, hasher, new_csrf, require_csrf, start_session
-from .db import Asset, Execution, LoginSession, User, make_session_factory, now
+from .db import Asset, Execution, ImagePreference, ImageStyle, LoginSession, User, make_session_factory, now
 from .gateway import GatewayError, GenerationGateway
 from .media import Thumbnails, filename, inspect_image
 from .logging_setup import configure_logging
@@ -26,6 +27,7 @@ from .transfer import CHUNK_BYTES, MAX_TRANSFER_BYTES, chunk, metadata, read_wit
 # 512 KiB of raw image data stays below a 1 MiB SSE event even after base64
 # encoding and the MCP JSON envelope. Unknown sizes take the bounded route.
 NATIVE_IMAGE_BYTES = 512 * 1024
+MAX_SAFE_IMAGE_SEED = 2**53 - 1
 
 
 class Credentials(BaseModel):
@@ -68,16 +70,56 @@ class ImageRequest(BaseModel):
     height: int = Field(ge=64, le=4096, multiple_of=8)
     steps: int = Field(ge=1, le=150)
     cfg: float = Field(ge=0, le=100, allow_inf_nan=False)
-    seed: int = Field(ge=0, le=2**64 - 1)
+    seed: int | None = Field(default=None, ge=0, le=MAX_SAFE_IMAGE_SEED)
     checkpoint: str = Field(min_length=1, max_length=1024)
     loras: list[Lora] = Field(default_factory=list, max_length=16)
+    sampler: str = Field(default="euler", pattern=r"^[a-zA-Z0-9_]+$", max_length=80)
+    scheduler: str = Field(default="normal", pattern=r"^[a-zA-Z0-9_]+$", max_length=80)
+    denoise: float = Field(default=1, ge=0, le=1, allow_inf_nan=False)
 
     def parameters(self):
         return {"positive_prompt": self.positivePrompt, "negative_prompt": self.negativePrompt,
                 "width": self.width, "height": self.height, "steps": self.steps,
                 "cfg": self.cfg, "seed": self.seed, "checkpoint": self.checkpoint,
+                "sampler": self.sampler, "scheduler": self.scheduler, "denoise": self.denoise,
                 "loras": [{"name": item.name, "strength_model": item.strengthModel,
                            "strength_clip": item.strengthClip} for item in self.loras]}
+
+
+class StyleInput(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    positivePrompt: str = Field(min_length=1, max_length=20000)
+    negativePrompt: str = Field(default="", max_length=20000)
+
+
+class StyleDuplicate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class ImagePreferencesInput(BaseModel):
+    width: int = Field(ge=64, le=4096, multiple_of=8)
+    height: int = Field(ge=64, le=4096, multiple_of=8)
+    steps: int = Field(ge=1, le=150)
+    cfg: float = Field(ge=0, le=100, allow_inf_nan=False)
+
+
+def style_view(style: ImageStyle):
+    return {"id": str(style.id), "name": style.name,
+            "positivePrompt": style.positive_prompt, "negativePrompt": style.negative_prompt,
+            "createdAt": style.created_at.isoformat(), "updatedAt": style.updated_at.isoformat()}
+
+
+def save_style(db: Session, style: ImageStyle):
+    style.name = style.name.strip()
+    if not style.name:
+        raise HTTPException(422, "Style name is required")
+    db.add(style)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "Style name is already in use") from None
+    return style_view(style)
 
 
 def asset_view(asset: Asset) -> dict:
@@ -289,12 +331,82 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     async def discovery(_: uuid.UUID = Depends(current_user)):
         return await app.state.gateway.discover()
 
+    @app.get("/api/generation/image/preferences")
+    def get_image_preferences(db: Session = Depends(database), user_id: uuid.UUID = Depends(current_user)):
+        preference = db.get(ImagePreference, user_id)
+        if preference is None:
+            return {"width": 512, "height": 512, "steps": 20, "cfg": 7}
+        return {key: getattr(preference, key) for key in ("width", "height", "steps", "cfg")}
+
+    @app.put("/api/generation/image/preferences")
+    def put_image_preferences(input: ImagePreferencesInput, db: Session = Depends(database),
+                              user_id: uuid.UUID = Depends(current_user)):
+        preference = db.get(ImagePreference, user_id)
+        if preference is None:
+            preference = ImagePreference(owner_user_id=user_id)
+        for key, value in input.model_dump().items():
+            setattr(preference, key, value)
+        preference.updated_at = now()
+        db.add(preference)
+        db.commit()
+        return input.model_dump()
+
+    @app.get("/api/generation/image/styles")
+    def list_styles(db: Session = Depends(database), user_id: uuid.UUID = Depends(current_user)):
+        return {"items": [style_view(style) for style in db.scalars(select(ImageStyle)
+                .where(ImageStyle.owner_user_id == user_id).order_by(ImageStyle.name, ImageStyle.id)).all()]}
+
+    @app.post("/api/generation/image/styles", status_code=201)
+    def create_style(input: StyleInput, db: Session = Depends(database),
+                     user_id: uuid.UUID = Depends(current_user)):
+        return save_style(db, ImageStyle(owner_user_id=user_id, name=input.name,
+                          positive_prompt=input.positivePrompt, negative_prompt=input.negativePrompt))
+
+    def owned_style(db: Session, style_id: uuid.UUID, user_id: uuid.UUID):
+        style = db.scalar(select(ImageStyle).where(ImageStyle.id == style_id,
+                          ImageStyle.owner_user_id == user_id))
+        if style is None:
+            raise HTTPException(404)
+        return style
+
+    @app.get("/api/generation/image/styles/{style_id}")
+    def get_style(style_id: uuid.UUID, db: Session = Depends(database),
+                  user_id: uuid.UUID = Depends(current_user)):
+        return style_view(owned_style(db, style_id, user_id))
+
+    @app.put("/api/generation/image/styles/{style_id}")
+    def update_style(style_id: uuid.UUID, input: StyleInput, db: Session = Depends(database),
+                     user_id: uuid.UUID = Depends(current_user)):
+        style = owned_style(db, style_id, user_id)
+        style.name, style.positive_prompt, style.negative_prompt = input.name, input.positivePrompt, input.negativePrompt
+        style.updated_at = now()
+        return save_style(db, style)
+
+    @app.post("/api/generation/image/styles/{style_id}/duplicate", status_code=201)
+    def duplicate_style(style_id: uuid.UUID, input: StyleDuplicate, db: Session = Depends(database),
+                        user_id: uuid.UUID = Depends(current_user)):
+        source = owned_style(db, style_id, user_id)
+        return save_style(db, ImageStyle(owner_user_id=user_id, name=input.name,
+                          positive_prompt=source.positive_prompt, negative_prompt=source.negative_prompt,
+                          recommended_model=source.recommended_model,
+                          recommended_loras=source.recommended_loras,
+                          recommended_parameters=source.recommended_parameters))
+
+    @app.delete("/api/generation/image/styles/{style_id}")
+    def delete_style(style_id: uuid.UUID, db: Session = Depends(database),
+                     user_id: uuid.UUID = Depends(current_user)):
+        db.delete(owned_style(db, style_id, user_id))
+        db.commit()
+        return {"ok": True}
+
     @app.post("/api/generation/image/jobs", status_code=201)
     async def submit(input: ImageRequest, db: Session = Depends(database), user_id: uuid.UUID = Depends(current_user)):
         capability = await app.state.gateway.discover()
         template = "text-to-image-lora" if input.loras else "text-to-image"
         if not capability["available"] or template not in capability["templates"]:
             raise GatewayError("unavailable")
+        if input.seed is None:
+            input.seed = secrets.randbelow(MAX_SAFE_IMAGE_SEED + 1)
         workflow = await app.state.gateway.build(template, input.parameters())
         execution = Execution(user_id=user_id, workflow=template, request_snapshot=input.model_dump())
         db.add(execution)
@@ -332,7 +444,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         asset, execution = row
         request = execution.request_snapshot if isinstance(execution.request_snapshot, dict) else {}
         settings = {key: request[key] for key in ("positivePrompt", "negativePrompt", "checkpoint",
-                    "seed", "steps", "cfg", "width", "height") if key in request}
+                    "seed", "steps", "cfg", "width", "height", "loras", "sampler", "scheduler", "denoise") if key in request}
         return {**asset_view(asset), "state": execution.last_known_status,
                 "submittedAt": execution.submitted_at.isoformat(), "settings": settings}
 

@@ -105,6 +105,94 @@ def image_request():
             "height": 512, "steps": 20, "cfg": 7, "seed": 1, "checkpoint": "test"}
 
 
+def test_image_seed_matches_browser_safe_integer_contract(clients):
+    a, _, _, _ = clients
+    csrf = register(a, "seed@example.test")
+    maximum = 2**53 - 1
+
+    accepted = a.post("/api/generation/image/jobs", json={**image_request(), "seed": maximum},
+                      headers={"X-CSRF-TOKEN": csrf})
+    assert accepted.status_code == 201, accepted.text
+    result = a.get(f"/api/executions/{accepted.json()['id']}/result").json()
+    asset_id = result["assets"][0]["id"]
+    assert a.get(f"/api/assets/{asset_id}").json()["settings"]["seed"] == maximum
+
+    rejected = a.post("/api/generation/image/jobs", json={**image_request(), "seed": maximum + 1},
+                      headers={"X-CSRF-TOKEN": csrf})
+    assert rejected.status_code == 422
+
+
+def test_auto_seed_is_saved_before_submission_and_explicit_zero_is_preserved(clients, monkeypatch):
+    a, _, _, factory = clients
+    csrf = register(a, "auto-seed@example.test")
+    monkeypatch.setattr("flamoris_studio.app.secrets.randbelow", lambda upper: 2345)
+    body = image_request()
+    body.pop("seed")
+    response = a.post("/api/generation/image/jobs", json=body, headers={"X-CSRF-TOKEN": csrf})
+    assert response.status_code == 201
+    with factory() as db:
+        execution = db.get(Execution, uuid.UUID(response.json()["id"]))
+        assert execution.request_snapshot["seed"] == 2345
+    fixed = a.post("/api/generation/image/jobs", json={**body, "seed": 0},
+                   headers={"X-CSRF-TOKEN": csrf})
+    assert fixed.status_code == 201
+    with factory() as db:
+        assert db.get(Execution, uuid.UUID(fixed.json()["id"])).request_snapshot["seed"] == 0
+
+
+def test_image_preferences_are_user_owned_and_validated(clients):
+    a, b, _, _ = clients
+    csrf_a = register(a, "preferences-a@example.test")
+    csrf_b = register(b, "preferences-b@example.test")
+    path = "/api/generation/image/preferences"
+    assert a.get(path).json() == {"width": 512, "height": 512, "steps": 20, "cfg": 7}
+    values = {"width": 768, "height": 1152, "steps": 28, "cfg": 6.5}
+    assert a.put(path, json=values, headers={"X-CSRF-TOKEN": csrf_a}).json() == values
+    assert a.get(path).json() == values
+    assert b.get(path).json() == {"width": 512, "height": 512, "steps": 20, "cfg": 7}
+    assert b.put(path, json={**values, "width": 513}, headers={"X-CSRF-TOKEN": csrf_b}).status_code == 422
+    assert b.get(path).json()["width"] == 512
+
+
+def test_user_scoped_styles_and_request_snapshot(clients):
+    a, b, gateway, factory = clients
+    csrf_a = register(a, "style-a@example.test")
+    csrf_b = register(b, "style-b@example.test")
+    path = "/api/generation/image/styles"
+    body = {"name": "Soft light", "positivePrompt": "tag, " * 3000, "negativePrompt": "blur, " * 2000}
+    assert a.post(path, json=body).status_code == 403
+    created = a.post(path, json=body, headers={"X-CSRF-TOKEN": csrf_a})
+    assert created.status_code == 201, created.text
+    style_id = created.json()["id"]
+    assert a.get(path).json()["items"][0]["positivePrompt"] == body["positivePrompt"]
+    assert b.get(path).json()["items"] == []
+    assert b.get(f"{path}/{style_id}").status_code == 404
+    assert b.put(f"{path}/{style_id}", json=body, headers={"X-CSRF-TOKEN": csrf_b}).status_code == 404
+    assert b.post(f"{path}/{style_id}/duplicate", json={"name": "copy"}, headers={"X-CSRF-TOKEN": csrf_b}).status_code == 404
+    assert b.delete(f"{path}/{style_id}", headers={"X-CSRF-TOKEN": csrf_b}).status_code == 404
+    assert a.post(path, json=body, headers={"X-CSRF-TOKEN": csrf_a}).status_code == 409
+    assert a.post(path, json={**body, "name": "   "}, headers={"X-CSRF-TOKEN": csrf_a}).status_code == 422
+    updated = {**body, "positivePrompt": "edited"}
+    assert a.put(f"{path}/{style_id}", json=updated, headers={"X-CSRF-TOKEN": csrf_a}).json()["positivePrompt"] == "edited"
+    duplicate = a.post(f"{path}/{style_id}/duplicate", json={"name": "copy"}, headers={"X-CSRF-TOKEN": csrf_a})
+    assert duplicate.status_code == 201 and duplicate.json()["positivePrompt"] == "edited"
+    assert a.delete(f"{path}/{style_id}", headers={"X-CSRF-TOKEN": csrf_a}).status_code == 200
+    assert a.get(f"{path}/{style_id}").status_code == 404
+
+    request = {**image_request(), "sampler": "dpmpp_2m", "scheduler": "karras", "denoise": 0.75,
+               "loras": [{"name": "first", "strengthModel": 0.4, "strengthClip": 0.8},
+                         {"name": "second", "strengthModel": 1.2, "strengthClip": 1.0}]}
+    made = a.post("/api/generation/image/jobs", json=request, headers={"X-CSRF-TOKEN": csrf_a})
+    assert made.status_code == 201, made.text
+    result = a.get(f"/api/executions/{made.json()['id']}/result").json()
+    asset_id = result["assets"][0]["id"]
+    settings = a.get(f"/api/assets/{asset_id}").json()["settings"]
+    assert settings["loras"] == request["loras"]
+    assert settings["sampler"] == "dpmpp_2m" and settings["scheduler"] == "karras"
+    assert b.get(f"/api/assets/{asset_id}").status_code == 404
+    assert ImageRequest(**request).parameters()["denoise"] == 0.75
+
+
 def test_multi_user_generation_and_private_assets(clients):
     a, b, gateway, factory = clients
     csrf_a = register(a, "a@example.test")

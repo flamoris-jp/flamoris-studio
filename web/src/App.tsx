@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { api, type Session, type Discovery, type Execution } from './api'
+import { api, type Session, type Discovery, type Execution, type ImageSettings, type ImageStyle, type ImagePreferences } from './api'
 import Gallery, { ImagePreview } from './Gallery'
 
-const sections = ['Image', 'Generated', 'Intelligence', 'Video', 'Music', 'Speech'] as const
-type ImageForm = { positivePrompt: string; negativePrompt: string; width: number; height: number; steps: number; cfg: number; seed: number; checkpoint: string; loras: { name: string; strengthModel: number; strengthClip: number }[] }
-type NumericKey = 'width' | 'height' | 'steps' | 'cfg' | 'seed'
+const sections = ['Image', 'Intelligence', 'Video', 'Music', 'Speech', 'Assets'] as const
+type ImageForm = ImageSettings & { sampler: string; scheduler: string; denoise: number; loras: NonNullable<ImageSettings['loras']> }
+type ImageSubmission = Omit<ImageForm, 'seed'> & { seed?: number }
+type NumericKey = 'width' | 'height' | 'steps' | 'cfg' | 'seed' | 'denoise'
 type ImageDraft = Omit<ImageForm, NumericKey | 'loras'> & Record<NumericKey, string> & {
   loras: { name: string; strengthModel: string; strengthClip: string }[]
 }
@@ -13,16 +14,35 @@ const integer = (value: string, min: number, max: number) =>
   value.trim() !== '' && Number.isSafeInteger(numberValue(value)) && numberValue(value) >= min && numberValue(value) <= max
 const decimal = (value: string, min: number, max: number) =>
   value.trim() !== '' && Number.isFinite(numberValue(value)) && numberValue(value) >= min && numberValue(value) <= max
+const token = (value: string) => /^[a-zA-Z0-9_]{1,80}$/.test(value)
+export const initialImageDraft = (checkpoint = ''): ImageDraft => ({ positivePrompt: '', negativePrompt: '', width: '512', height: '512', steps: '20', cfg: '7', seed: '', denoise: '1', sampler: 'euler', scheduler: 'normal', checkpoint, loras: [] })
+export function restoreImageDraft(old: ImageDraft, settings: Partial<ImageSettings>): ImageDraft {
+  const numeric = (key: NumericKey) => typeof settings[key] === 'number' ? String(settings[key]) : old[key]
+  return { ...old,
+    positivePrompt: typeof settings.positivePrompt === 'string' ? settings.positivePrompt : old.positivePrompt,
+    negativePrompt: typeof settings.negativePrompt === 'string' ? settings.negativePrompt : old.negativePrompt,
+    checkpoint: typeof settings.checkpoint === 'string' ? settings.checkpoint : old.checkpoint,
+    width: numeric('width'), height: numeric('height'), steps: numeric('steps'), cfg: numeric('cfg'), seed: numeric('seed'), denoise: numeric('denoise'),
+    sampler: typeof settings.sampler === 'string' ? settings.sampler : old.sampler,
+    scheduler: typeof settings.scheduler === 'string' ? settings.scheduler : old.scheduler,
+    loras: Array.isArray(settings.loras) ? settings.loras.map(lora => ({ name: lora.name, strengthModel: String(lora.strengthModel), strengthClip: String(lora.strengthClip) })) : old.loras,
+  }
+}
+export function withRandomSeed(old: ImageDraft, entropy: Uint32Array): ImageDraft {
+  const candidate = entropy[0] * 2097152 + (entropy[1] & 2097151)
+  return { ...old, seed: String(String(candidate) === old.seed ? (candidate + 1) % Number.MAX_SAFE_INTEGER : candidate) }
+}
 
-export function imagePayload(form: ImageDraft): ImageForm | null {
+export function imagePayload(form: ImageDraft): ImageSubmission | null {
   if (!form.positivePrompt.trim() || !form.checkpoint ||
       !integer(form.width, 64, 4096) || numberValue(form.width) % 8 !== 0 ||
       !integer(form.height, 64, 4096) || numberValue(form.height) % 8 !== 0 ||
-      !integer(form.steps, 1, 150) || !integer(form.seed, 0, Number.MAX_SAFE_INTEGER) ||
-      !decimal(form.cfg, 0, 100) || form.loras.some(lora => !lora.name ||
+      !integer(form.steps, 1, 150) || (form.seed.trim() !== '' && !integer(form.seed, 0, Number.MAX_SAFE_INTEGER)) ||
+      !decimal(form.cfg, 0, 100) || !decimal(form.denoise, 0, 1) || !token(form.sampler) || !token(form.scheduler) ||
+      form.loras.length > 16 || form.loras.some(lora => !lora.name ||
         !decimal(lora.strengthModel, -20, 20) || !decimal(lora.strengthClip, -20, 20))) return null
   return { ...form, width: numberValue(form.width), height: numberValue(form.height),
-    steps: numberValue(form.steps), cfg: numberValue(form.cfg), seed: numberValue(form.seed),
+    steps: numberValue(form.steps), cfg: numberValue(form.cfg), seed: form.seed.trim() === '' ? undefined : numberValue(form.seed), denoise: numberValue(form.denoise),
     loras: form.loras.map(lora => ({ ...lora, strengthModel: numberValue(lora.strengthModel), strengthClip: numberValue(lora.strengthClip) })) }
 }
 
@@ -31,10 +51,39 @@ export default function App() {
   const [section, setSection] = useState<string>('Image')
   const [discovery, setDiscovery] = useState<Discovery | null>(null)
   const [execution, setExecution] = useState<Execution | null>(null)
+  const [resultSettings, setResultSettings] = useState<Partial<ImageSettings> | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [form, setForm] = useState<ImageDraft>(() => initialImageDraft())
+  const [preferencesReady, setPreferencesReady] = useState(false)
+  const [preferencesError, setPreferencesError] = useState('')
   useEffect(() => { api.session().then(setSession).catch(() => setError('Studio is unavailable.')) }, [])
   useEffect(() => { if (session?.authenticated) api.discovery().then(setDiscovery).catch(() => setDiscovery({ available: false, checkpoints: [], loras: [], templates: [] })) }, [session?.authenticated])
+  useEffect(() => { if (discovery?.checkpoints.length) setForm(old => old.checkpoint ? old : { ...old, checkpoint: discovery.checkpoints[0].name }) }, [discovery])
+  useEffect(() => {
+    if (!session?.authenticated) { setPreferencesReady(false); return }
+    let active = true
+    setPreferencesReady(false)
+    api.imagePreferences().then(preferences => {
+      if (!active) return
+      setForm(old => ({ ...old, ...Object.fromEntries(Object.entries(preferences).map(([key, value]) => [key, String(value)])) }))
+      setPreferencesReady(true)
+    }).catch(() => { if (active) setPreferencesError('Could not load Image defaults.') })
+    return () => { active = false }
+  }, [session?.authenticated, session?.userName])
+  useEffect(() => {
+    if (!preferencesReady || !session?.authenticated) return
+    const values = { width: form.width, height: form.height, steps: form.steps, cfg: form.cfg }
+    if (!integer(values.width, 64, 4096) || Number(values.width) % 8 ||
+      !integer(values.height, 64, 4096) || Number(values.height) % 8 ||
+      !integer(values.steps, 1, 150) || !decimal(values.cfg, 0, 100)) return
+    const timer = window.setTimeout(() => {
+      const preferences: ImagePreferences = { width: Number(values.width), height: Number(values.height), steps: Number(values.steps), cfg: Number(values.cfg) }
+      api.saveImagePreferences(preferences, session.csrfToken).catch(() => setPreferencesError('Could not save Image defaults.'))
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [preferencesReady, session?.authenticated, session?.userName, session?.csrfToken, form.width, form.height, form.steps, form.cfg])
+  const useSettings = (settings: Partial<ImageSettings>) => { setForm(old => restoreImageDraft(old, settings)); setSection('Image'); window.location.hash = '' }
   useEffect(() => {
     if (!session?.authenticated) return
     const id = window.location.hash.match(/^#execution\/([0-9a-f-]{36})$/)?.[1]
@@ -55,11 +104,12 @@ export default function App() {
   if (!session.authenticated) return <Account allowRegistration={session.allowRegistration} onReady={setSession} />
   return <div className="layout"><aside><div className="brand">✦ <strong>FLAMORIS</strong><small>STUDIO</small></div><p className="eyebrow">WORKSPACE</p>
     <nav aria-label="Creative domains">{sections.map(name => <button key={name} aria-current={section === name ? 'page' : undefined} onClick={() => setSection(name)}>{name}</button>)}</nav>
-    <div className="account-footer"><span>{session.userName}</span><button onClick={() => setSection('Account')}>Account settings</button><button onClick={async () => { try { await api.logout(session.csrfToken); setSession(await api.session()); setExecution(null) } catch { setError('Could not sign out.') } }}>Sign out</button></div></aside>
+    <div className="account-footer"><span>{session.userName}</span><button onClick={() => setSection('Account')}>Account settings</button><button onClick={async () => { try { await api.logout(session.csrfToken); setForm(initialImageDraft()); setExecution(null); setResultSettings(null); setDiscovery(null); window.location.hash = ''; setSession(await api.session()) } catch { setError('Could not sign out.') } }}>Sign out</button></div></aside>
     <main><header><div><span className="eyebrow">CREATIVE CONTROL PLANE</span><h1>{section}</h1></div><span className="badge">PHASE 1A</span></header>
-    {section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Generated' ? <Gallery csrf={session.csrfToken} /> : section === 'Image' ? <><p>Turn a prompt into something you can keep.</p>
-      {discovery?.available ? <ImageEditor discovery={discovery} busy={busy} onSubmit={async form => {
-        setBusy(true); setError(''); setExecution(null)
+    {section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Assets' ? <Gallery csrf={session.csrfToken} onUseSettings={useSettings} /> : section === 'Image' ? <><p>Turn a prompt into something you can keep.</p>
+      {preferencesError && <p role="alert" className="error">{preferencesError}</p>}
+      {discovery?.available ? <ImageEditor discovery={discovery} busy={busy} form={form} setForm={setForm} csrf={session.csrfToken} onSubmit={async form => {
+        setBusy(true); setError(''); setExecution(null); setResultSettings(null)
         try { const created = await api.submit(form, session.csrfToken); setExecution(created); window.location.hash = `execution/${created.id}` }
         catch (e) { setError(e instanceof Error ? e.message : 'Generation failed.') }
         finally { setBusy(false) }
@@ -71,7 +121,8 @@ export default function App() {
         {execution.state === 'completed' && <div className="assets">{execution.assets.length ? execution.assets.map(asset => <article key={asset.id}>
           <div><ImagePreview item={asset} /></div>
           <div><strong>{asset.displayName}</strong><small>{asset.mimeType} · {asset.sizeBytes === null ? 'Size pending' : `${(asset.sizeBytes / 1024 / 1024).toFixed(1)} MB`}</small>
-            <a href={asset.downloadUrl}>Download ↓</a></div></article>) : <p>No images were returned.</p>}</div>}
+            <a href={asset.downloadUrl}>Download ↓</a><button onClick={async () => { try { const detail = await api.asset(asset.id); setResultSettings(detail.settings) } catch { setError('Could not load settings.') } }}>View settings</button><button onClick={async () => { try { const detail = await api.asset(asset.id); useSettings(detail.settings) } catch { setError('Could not restore settings.') } }}>Use settings ↗</button></div></article>) : <p>No images were returned.</p>}</div>}
+        {resultSettings && <dl className="settings-list">{Object.entries(resultSettings).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{Array.isArray(value) ? value.map((lora, index) => `${index + 1}. ${lora.name} (model ${lora.strengthModel}, CLIP ${lora.strengthClip})`).join('\n') || 'None' : String(value)}</dd></div>)}</dl>}
       </section>}
     </> : <section className="panel"><span className="eyebrow">COMING LATER</span><h2>{section} is unavailable</h2><p>This editor will connect when its MCP capability is ready.</p></section>}</main></div>
 }
@@ -136,20 +187,54 @@ function Account({ allowRegistration, onReady }: { allowRegistration: boolean; o
   </div></div>
 }
 
-function ImageEditor({ discovery, onSubmit, busy }: { discovery: Discovery; onSubmit: (form: ImageForm) => void; busy: boolean }) {
-  const [form, setForm] = useState<ImageDraft>({ positivePrompt: '', negativePrompt: '', width: '512', height: '512', steps: '20', cfg: '7', seed: '0', checkpoint: discovery.checkpoints[0]?.name ?? '', loras: [] })
+function ImageEditor({ discovery, onSubmit, busy, form, setForm, csrf }: { discovery: Discovery; onSubmit: (form: ImageSubmission) => void; busy: boolean; form: ImageDraft; setForm: React.Dispatch<React.SetStateAction<ImageDraft>>; csrf: string }) {
+  const [styles, setStyles] = useState<ImageStyle[]>([])
+  const [selectedStyle, setSelectedStyle] = useState('')
+  const [styleName, setStyleName] = useState('')
+  const [styleError, setStyleError] = useState('')
+  const [styleBusy, setStyleBusy] = useState(false)
+  useEffect(() => { api.styles().then(page => setStyles(page.items)).catch(() => setStyleError('Could not load Styles.')) }, [])
   const set = <K extends keyof ImageDraft>(key: K, value: ImageDraft[K]) => setForm(old => ({ ...old, [key]: value }))
-  const valid = imagePayload(form) !== null
+  const valid = imagePayload(form) !== null && discovery.checkpoints.some(item => item.name === form.checkpoint) &&
+    form.loras.every(lora => discovery.loras.some(item => item.name === lora.name))
+  const style = styles.find(item => item.id === selectedStyle)
+  async function styleAction(action: 'save' | 'update' | 'duplicate' | 'delete') {
+    setStyleError(''); setStyleBusy(true)
+    try {
+      if (action === 'delete') {
+        if (!style || !window.confirm(`Delete Style “${style.name}”?`)) return
+        await api.deleteStyle(style.id, csrf)
+        setStyles(old => old.filter(item => item.id !== style.id)); setSelectedStyle(''); setStyleName('')
+      } else {
+        const name = styleName.trim()
+        if (!name) { setStyleError('Enter a Style name.'); return }
+        const values = { name, positivePrompt: form.positivePrompt, negativePrompt: form.negativePrompt }
+        if (action !== 'duplicate' && !values.positivePrompt.trim()) { setStyleError('Enter a Positive prompt first.'); return }
+        const saved = action === 'update' && style ? await api.updateStyle(style.id, values, csrf) :
+          action === 'duplicate' && style ? await api.duplicateStyle(style.id, name, csrf) : await api.createStyle(values, csrf)
+        setStyles(old => [...old.filter(item => item.id !== saved.id), saved].sort((a, b) => a.name.localeCompare(b.name)))
+        setSelectedStyle(saved.id); setStyleName(saved.name)
+      }
+    } catch (e) { setStyleError(e instanceof Error ? e.message : 'Style operation failed.') }
+    finally { setStyleBusy(false) }
+  }
   return <form className="panel editor" onSubmit={event => { event.preventDefault(); const payload = imagePayload(form); if (payload) onSubmit(payload) }}><div className="row"><div><span className="eyebrow">IMAGE GENERATOR</span><h2>Compose your image</h2></div><span className="badge">Ready</span></div>
-    <label>Positive prompt<textarea required maxLength={20000} rows={4} value={form.positivePrompt} onChange={e => set('positivePrompt', e.target.value)} placeholder="A place, a person, a moment…" /></label>
-    <label>Negative prompt<textarea maxLength={20000} rows={2} value={form.negativePrompt} onChange={e => set('negativePrompt', e.target.value)} /></label>
-    <div className="fields"><label>Checkpoint<select required value={form.checkpoint} onChange={e => set('checkpoint', e.target.value)}><option value="">Choose a model</option>{discovery.checkpoints.map(x => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>
-      <label>Seed<input type="number" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={form.seed} onChange={e => set('seed', e.target.value)} /></label></div>
+    <label>Model<select required value={form.checkpoint} onChange={e => set('checkpoint', e.target.value)}><option value="">Choose a model</option>{form.checkpoint && !discovery.checkpoints.some(x => x.name === form.checkpoint) && <option value={form.checkpoint} disabled>{form.checkpoint} (unavailable)</option>}{discovery.checkpoints.map(x => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>
+    <div className="style-box"><div className="fields"><label>Style<select value={selectedStyle} onChange={e => { const found = styles.find(item => item.id === e.target.value); setSelectedStyle(e.target.value); setStyleName(found?.name ?? ''); if (found) setForm(old => ({ ...old, positivePrompt: found.positivePrompt, negativePrompt: found.negativePrompt })) }}><option value="">Choose a saved Style</option>{styles.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <label>Style name<input maxLength={100} value={styleName} onChange={e => setStyleName(e.target.value)} placeholder="Name this prompt recipe" /></label></div>
+      <div className="row style-actions"><button type="button" disabled={styleBusy} onClick={() => styleAction('save')}>Save as new</button><button type="button" disabled={!style || styleBusy} onClick={() => styleAction('update')}>Update selected</button><button type="button" disabled={!style || styleBusy} onClick={() => styleAction('duplicate')}>Duplicate</button><button type="button" disabled={!style || styleBusy} onClick={() => styleAction('delete')}>Delete</button></div>
+      {styleError && <p role="alert" className="error">{styleError}</p>}<small>Applying a Style changes the prompts; edits afterward are your own draft.</small></div>
+    <label>Positive prompt<textarea required maxLength={20000} rows={8} value={form.positivePrompt} onChange={e => set('positivePrompt', e.target.value)} placeholder="A place, a person, a moment…" /></label>
+    <label>Negative prompt<textarea maxLength={20000} rows={5} value={form.negativePrompt} onChange={e => set('negativePrompt', e.target.value)} /></label>
+    <div className="reference-note">Reference Image is unavailable until managed inputs and the generation workflow support it.</div>
     <div className="fields four">{(['width', 'height', 'steps', 'cfg'] as const).map(key => <label key={key}>{key}<input type="number" min={key === 'steps' ? 1 : key === 'cfg' ? 0 : 64} max={key === 'steps' ? 150 : key === 'cfg' ? 100 : 4096} step={key === 'cfg' ? 'any' : key === 'steps' ? 1 : 8} value={form[key]} onChange={e => set(key, e.target.value)} /></label>)}</div>
+    <div className="size-presets"><span>Size presets</span>{[[512, 512], [768, 1024], [768, 1152], [768, 1344]].map(([width, height]) => <button type="button" key={`${width}-${height}`} onClick={() => setForm(old => ({ ...old, width: String(width), height: String(height) }))}>{width} × {height}</button>)}</div>
+    <div className="fields"><label>Seed (blank = Auto)<input type="number" min="0" max={Number.MAX_SAFE_INTEGER} step="1" value={form.seed} onChange={e => set('seed', e.target.value)} /></label><button type="button" onClick={() => { const bits = new Uint32Array(2); crypto.getRandomValues(bits); setForm(old => withRandomSeed(old, bits)) }}>Randomize seed</button><button type="button" onClick={() => set('seed', '')}>Auto seed</button></div>
+    <details><summary>Advanced generation settings</summary><div className="fields"><label>Sampler<input value={form.sampler} maxLength={80} onChange={e => set('sampler', e.target.value)} /></label><label>Scheduler<input value={form.scheduler} maxLength={80} onChange={e => set('scheduler', e.target.value)} /></label><label>Denoise<input type="number" min="0" max="1" step="any" value={form.denoise} onChange={e => set('denoise', e.target.value)} /></label></div></details>
     <div className="row"><strong>LoRA layers</strong><button type="button" disabled={form.loras.length >= 16 || !discovery.loras.length} onClick={() => set('loras', [...form.loras, { name: discovery.loras[0].name, strengthModel: '1', strengthClip: '1' }])}>+ Add LoRA</button></div>
-    {form.loras.map((lora, index) => <div className="fields lora" key={index}><label>Model<select value={lora.name} onChange={e => set('loras', form.loras.map((x, i) => i === index ? { ...x, name: e.target.value } : x))}>{discovery.loras.map(x => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>
+    {form.loras.map((lora, index) => <div className="fields lora" key={index}><label>LoRA {index + 1}<select value={lora.name} onChange={e => set('loras', form.loras.map((x, i) => i === index ? { ...x, name: e.target.value } : x))}>{!discovery.loras.some(x => x.name === lora.name) && <option value={lora.name} disabled>{lora.name} (unavailable)</option>}{discovery.loras.map(x => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>
       {(['strengthModel', 'strengthClip'] as const).map(key => <label key={key}>{key}<input type="number" min="-20" max="20" step="any" value={lora[key]} onChange={e => set('loras', form.loras.map((x, i) => i === index ? { ...x, [key]: e.target.value } : x))} /></label>)}
-      <button type="button" onClick={() => set('loras', form.loras.filter((_, i) => i !== index))}>Remove</button></div>)}
+      <button type="button" onClick={() => set('loras', form.loras.filter((_, i) => i !== index))}>Remove</button>{index > 0 && <button type="button" onClick={() => set('loras', form.loras.map((x, i) => i === index ? form.loras[index - 1] : i === index - 1 ? lora : x))}>Move up</button>}</div>)}
     <div className="row actions"><span>Uses the available MCP image capability.</span><button className="primary" disabled={!valid || busy}>{busy ? 'Submitting…' : 'Generate image ↗'}</button></div>
   </form>
 }
