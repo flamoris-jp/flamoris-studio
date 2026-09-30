@@ -2,7 +2,7 @@
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import Gallery from './Gallery'
+import Gallery, { ImagePreview } from './Gallery'
 import { api, type Asset } from './api'
 
 const item = (id: string): Asset => ({
@@ -34,6 +34,7 @@ afterEach(async () => {
   host?.remove()
   root = undefined
   host = undefined
+  vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
@@ -83,12 +84,22 @@ test('missing per-item response is treated as failure', async () => {
 })
 
 test('thumbnail generation is lazy and failure preserves the catalog entry', async () => {
+  vi.useFakeTimers()
   const view = await show(['a'])
   const image = view.querySelector('article img')!
   expect(image.getAttribute('src')).toBe('/thumbnail/a')
   expect(image.getAttribute('loading')).toBe('lazy')
   await act(async () => { image.dispatchEvent(new Event('error')) })
+  expect(view.querySelector('article')?.textContent).not.toContain('Preview unavailable')
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+  expect(view.querySelector('article img')?.getAttribute('src')).toBe('/thumbnail/a?previewRetry=0-1')
+  await act(async () => { view.querySelector('article img')!.dispatchEvent(new Event('error')) })
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  await act(async () => { view.querySelector('article img')!.dispatchEvent(new Event('error')) })
   expect(view.querySelector('article')?.textContent).toContain('Preview unavailable')
+  expect(vi.getTimerCount()).toBe(0)
+  await click(Array.from(view.querySelectorAll('button')).find(b => b.textContent === 'Reload preview')!)
+  expect(view.querySelector('article img')?.getAttribute('src')).toBe('/thumbnail/a?previewRetry=1-0')
   expect(view.querySelector('article strong')?.textContent).toBe('a.png')
   expect(view.querySelectorAll('article')).toHaveLength(1)
 })
@@ -103,4 +114,37 @@ test('View details opens an immediately visible dialog with saved settings', asy
   expect(view.querySelector('[role="dialog"]')?.textContent).toContain('768')
   await click(Array.from(view.querySelectorAll('[role="dialog"] button')).find(b => b.textContent === 'Close')!)
   expect(view.querySelector('[role="dialog"]')).toBeNull()
+})
+
+
+test('24 gallery images recover from load errors without losing entries', async () => {
+  vi.useFakeTimers()
+  const view = await show(Array.from({ length: 24 }, (_, i) => String(i)))
+  await act(async () => {
+    for (const image of view.querySelectorAll('img')) image.dispatchEvent(new Event('error'))
+  })
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+  await act(async () => {
+    for (const image of view.querySelectorAll('img')) image.dispatchEvent(new Event('load'))
+  })
+  expect(view.querySelectorAll('article img')).toHaveLength(24)
+  expect(view.textContent).not.toContain('Preview unavailable')
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+test('preview source changes and unmount cancel pending image retries', async () => {
+  vi.useFakeTimers()
+  host = document.createElement('div')
+  document.body.append(host)
+  root = createRoot(host)
+  await act(async () => { root!.render(<ImagePreview item={item('a')} />) })
+  await act(async () => { host!.querySelector('img')!.dispatchEvent(new Event('error')) })
+  expect(vi.getTimerCount()).toBe(1)
+  await act(async () => { root!.render(<ImagePreview item={item('b')} />) })
+  expect(host.querySelector('img')?.getAttribute('src')).toBe('/preview/b')
+  expect(vi.getTimerCount()).toBe(0)
+  await act(async () => { host!.querySelector('img')!.dispatchEvent(new Event('error')) })
+  await act(async () => { root!.unmount() })
+  root = undefined
+  expect(vi.getTimerCount()).toBe(0)
 })

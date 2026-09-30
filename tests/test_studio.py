@@ -796,3 +796,69 @@ def test_missing_transfer_capability_has_safe_error_on_asset_routes(clients, mis
                                    "message": "Asset transfer is unavailable. The service deployment is incomplete."}
         assert "private-asset" not in response.text
     assert calls.count(missing) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('count', [10, 24])
+async def test_gallery_burst_queues_bounded_thumbnails_and_cached_reads_bypass_slots(clients, count):
+    import asyncio
+    import httpx
+
+    a, b, gateway, factory = clients
+    csrf = register(a, 'preview-burst@example.test')
+    register(b, 'preview-other@example.test')
+    made = a.post('/api/generation/image/jobs', json=image_request(), headers={'X-CSRF-TOKEN': csrf})
+    execution_id = uuid.UUID(made.json()['id'])
+    ids = []
+    with factory() as db:
+        execution = db.get(Execution, execution_id)
+        for i in range(count):
+            asset = Asset(user_id=execution.user_id, execution_id=execution_id,
+                          upstream_asset_id=f'burst-{i}', storage_locator=f'burst-{i}',
+                          display_name=f'{i}.png', media_kind='image', mime_type='image/png', size_bytes=None)
+            db.add(asset)
+            db.flush()
+            ids.append(asset.id)
+        db.commit()
+    digest = hashlib.sha256(gateway.image).hexdigest()
+    prepared = []
+    active = peak = 0
+
+    async def prepare(asset_id):
+        nonlocal active, peak
+        assert active == 0, 'Generation rejects concurrent prepare calls'
+        active += 1
+        peak = max(peak, active)
+        prepared.append(asset_id)
+        await asyncio.sleep(0.02)
+        active -= 1
+        return {'asset_id': asset_id, 'mime_type': 'image/png', 'size_bytes': len(gateway.image),
+                'sha256': digest, 'chunk_bytes': 256 * 1024, 'transfer_version': 1}
+
+    async def read(asset_id, sha256, offset, length):
+        data = gateway.image[offset:offset + length]
+        return {'asset_id': asset_id, 'sha256': sha256, 'offset': offset,
+                'size_bytes': len(gateway.image), 'data_base64': base64.b64encode(data).decode(),
+                'chunk_sha256': hashlib.sha256(data).hexdigest(),
+                'next_offset': offset + len(data), 'eof': offset + len(data) == len(gateway.image)}
+
+    gateway.prepare_asset, gateway.read_asset = prepare, read
+    urls = [f'/api/executions/{execution_id}/assets/{asset_id}/thumbnail' for asset_id in ids]
+    assert b.get(urls[0]).status_code == 404
+    assert not prepared
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=a.app),
+                                 base_url='http://testserver', cookies=dict(a.cookies)) as client:
+        responses = await asyncio.gather(*(client.get(url) for url in urls))
+        assert [response.status_code for response in responses] == [200] * count
+        assert all(response.headers['content-type'] == 'image/webp' for response in responses)
+        assert len(prepared) == count and peak == 1
+        slots = a.app.state.download_slots
+        await slots.acquire()
+        await slots.acquire()
+        try:
+            assert (await client.get(urls[0])).status_code == 200
+            assert len(prepared) == count
+        finally:
+            slots.release()
+            slots.release()
+    assert a.app.state.preview_admission.pending == 0

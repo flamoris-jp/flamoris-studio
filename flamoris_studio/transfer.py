@@ -4,11 +4,41 @@ import base64
 import binascii
 import hashlib
 import re
+from contextlib import asynccontextmanager
+
+from fastapi import HTTPException
 
 from .gateway import GatewayError
 
 CHUNK_BYTES = 256 * 1024
 MAX_TRANSFER_BYTES = 1024**3
+
+
+class PreviewAdmission:
+    """Bound pending previews while sharing the existing transfer semaphore."""
+
+    def __init__(self, slots, *, max_pending=24, timeout=30):
+        self.slots = slots
+        self.max_pending = max_pending
+        self.timeout = timeout
+        self.pending = 0
+
+    @asynccontextmanager
+    async def acquire(self):
+        if self.pending >= self.max_pending:
+            raise HTTPException(429, "Too many pending previews", headers={"Retry-After": "2"})
+        self.pending += 1
+        try:
+            try:
+                await asyncio.wait_for(self.slots.acquire(), timeout=self.timeout)
+            except TimeoutError:
+                raise HTTPException(429, "Preview transfer is busy", headers={"Retry-After": "2"}) from None
+        finally:
+            self.pending -= 1
+        try:
+            yield
+        finally:
+            self.slots.release()
 
 
 def metadata(prepared: dict, asset_id: str, mime: str, max_bytes: int):

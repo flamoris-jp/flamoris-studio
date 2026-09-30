@@ -1,17 +1,40 @@
 import { useEffect, useState } from 'react'
 import { api, type Asset, type AssetDetail, type ImageSettings } from './api'
 
-function Thumbnail({ item }: { item: Asset }) {
+// Image load events do not expose HTTP status. Retry only twice, then let the
+// user retry explicitly; never turn a permanent error into an endless loop.
+function RetryingImage({ url, alt, lazy, unavailable }: {
+  url: string; alt: string; lazy?: boolean; unavailable: string
+}) {
   const [failed, setFailed] = useState(false)
-  if (failed || (item.sizeBytes !== null && item.sizeBytes > 64 * 1024 * 1024)) return <span>Preview unavailable</span>
-  return <img src={item.thumbnailUrl} alt="" loading="lazy" onError={() => setFailed(true)} />
+  const [attempt, setAttempt] = useState(0)
+  const [reload, setReload] = useState(0)
+  useEffect(() => {
+    if (!failed || attempt >= 2) return
+    const timer = window.setTimeout(() => {
+      setAttempt(old => old + 1)
+      setFailed(false)
+    }, 1000 * (attempt + 1))
+    return () => window.clearTimeout(timer)
+  }, [failed, attempt])
+  if (failed && attempt >= 2) return <span>{unavailable} <button onClick={() => {
+    setAttempt(0); setReload(old => old + 1); setFailed(false)
+  }}>Reload preview</button></span>
+  const src = attempt || reload
+    ? `${url}${url.includes('?') ? '&' : '?'}previewRetry=${reload}-${attempt}` : url
+  return <img key={src} src={src} alt={alt} loading={lazy ? 'lazy' : undefined}
+    onLoad={() => setFailed(false)} onError={() => setFailed(true)} />
+}
+
+function Thumbnail({ item }: { item: Asset }) {
+  if (item.sizeBytes !== null && item.sizeBytes > 64 * 1024 * 1024) return <span>Preview unavailable</span>
+  return <RetryingImage key={item.thumbnailUrl} url={item.thumbnailUrl} alt="" lazy unavailable="Preview unavailable" />
 }
 
 export function ImagePreview({ item }: { item: Asset }) {
-  const [failed, setFailed] = useState(false)
-  if (failed || (item.sizeBytes !== null && item.sizeBytes > 64 * 1024 * 1024)) return <span>Preview unavailable; download may still work.</span>
-  return <img src={item.hasThumbnail ? item.thumbnailUrl : item.previewUrl}
-    alt={item.displayName} onError={() => setFailed(true)} />
+  if (item.sizeBytes !== null && item.sizeBytes > 64 * 1024 * 1024) return <span>Preview unavailable; download may still work.</span>
+  const url = item.hasThumbnail ? item.thumbnailUrl : item.previewUrl
+  return <RetryingImage key={url} url={url} alt={item.displayName} unavailable="Preview unavailable; download may still work." />
 }
 
 export default function Gallery({ csrf, onUseSettings }: { csrf: string; onUseSettings?: (settings: Partial<ImageSettings>) => void }) {

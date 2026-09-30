@@ -22,7 +22,7 @@ from .db import Asset, Execution, ImagePreference, ImageStyle, LoginSession, Use
 from .gateway import GatewayError, GenerationGateway
 from .media import Thumbnails, filename, inspect_image
 from .logging_setup import configure_logging
-from .transfer import CHUNK_BYTES, MAX_TRANSFER_BYTES, chunk, metadata, read_with_retry
+from .transfer import CHUNK_BYTES, MAX_TRANSFER_BYTES, PreviewAdmission, chunk, metadata, read_with_retry
 
 # 512 KiB of raw image data stays below a 1 MiB SSE event even after base64
 # encoding and the MCP JSON envelope. Unknown sizes take the bounded route.
@@ -175,6 +175,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     app.state.gateway = gateway or GenerationGateway()
     app.state.thumbnails = thumbnails or Thumbnails(os.getenv("STUDIO_THUMBNAIL_DIR", ""))
     app.state.download_slots = asyncio.Semaphore(2)
+    app.state.preview_admission = PreviewAdmission(app.state.download_slots)
+    app.state.prepare_slots = asyncio.Semaphore(1)
     login_attempts = defaultdict(deque)
 
     @app.exception_handler(GatewayError)
@@ -563,6 +565,27 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             set_status(db, execution, job["status"])
         return view(execution, db)
 
+    async def prepare_owned_asset(asset: Asset, db: Session, request: Request, user_id: uuid.UUID):
+        # Generation admits just one prepare at a time, even for materialized
+        # assets. Serialize this stage across previews and downloads, while reads
+        # still share two transfer slots. Never hold a DB transaction while queued.
+        execution_id, asset_id, upstream_id = asset.execution_id, asset.id, asset.upstream_asset_id
+        db.rollback()
+        slots = app.state.prepare_slots
+        try:
+            await asyncio.wait_for(slots.acquire(), timeout=30)
+        except TimeoutError:
+            raise HTTPException(429, "Asset preparation is busy", headers={"Retry-After": "2"}) from None
+        try:
+            if await request.is_disconnected():
+                raise asyncio.CancelledError()
+            if current_user(request, db) != user_id:
+                raise HTTPException(401)
+            owned_asset(db, execution_id, asset_id, user_id)
+            return await app.state.gateway.prepare_asset(upstream_id)
+        finally:
+            slots.release()
+
     async def get_content(asset: Asset, db: Session, request: Request, user_id: uuid.UUID):
         max_bytes = min(max(int(os.getenv("STUDIO_MAX_ASSET_BYTES", "67108864")), 1), 67108864)
         if asset.size_bytes and asset.size_bytes > max_bytes:
@@ -573,14 +596,13 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             # Release the row lock before remote I/O. An owner/deletion check is
             # repeated at every read, including retries.
             db.rollback()
-            slots = app.state.download_slots
-            try:
-                await asyncio.wait_for(slots.acquire(), timeout=0.01)
-            except TimeoutError:
-                raise HTTPException(429, "Too many active transfers") from None
-            try:
+            async with app.state.preview_admission.acquire():
+                if await request.is_disconnected():
+                    raise asyncio.CancelledError()
+                if current_user(request, db) != user_id:
+                    raise HTTPException(401)
                 owned_asset(db, asset.execution_id, asset.id, user_id)
-                prepared = await app.state.gateway.prepare_asset(asset.upstream_asset_id)
+                prepared = await prepare_owned_asset(asset, db, request, user_id)
                 size, expected, limit = metadata(prepared, asset.upstream_asset_id, asset.mime_type, max_bytes)
                 parts = bytearray()
                 checksum = hashlib.sha256()
@@ -600,8 +622,6 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 if checksum.hexdigest() != expected:
                     raise GatewayError("validation")
                 data, mime = bytes(parts), asset.mime_type
-            finally:
-                slots.release()
         if mime != asset.mime_type or len(data) > max_bytes:
             raise GatewayError("validation")
         try:
@@ -651,7 +671,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 raise HTTPException(429, "Too many active downloads") from None
             try:
                 owned_asset(db, execution_id, asset_id, user_id)
-                prepared = await app.state.gateway.prepare_asset(asset.upstream_asset_id)
+                prepared = await prepare_owned_asset(asset, db, request, user_id)
                 size, digest, limit = metadata(prepared, asset.upstream_asset_id, asset.mime_type, cap)
                 async def read_at(offset):
                     async def attempt():
