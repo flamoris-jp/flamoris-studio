@@ -112,7 +112,9 @@ ownership, reads at most 256 KiB per chunk, verifies chunk/final digests, and
 caps concurrent transfers at two per process. Thumbnail/inline-preview requests
 wait up to 30 seconds for a shared slot, with at most 24 pending previews per
 process; queue overflow/timeouts return 429 with Retry-After. Cached thumbnails
-bypass the transfer queue. Downloads retain immediate busy rejection. The UI
+bypass the transfer queue. Preparation is serialized across previews and downloads
+to respect Generation MCP's one-prepare limit; this stage waits up to 30 seconds.
+Downloads retain immediate transfer-slot busy rejection. The UI
 retries failed image loads twice with delays, then offers Reload preview. The aggregate transfer cap defaults
 to 1 GiB and may be lowered with `STUDIO_MAX_TRANSFER_BYTES`. Deploy the Generation
 bounded-transfer tools and register them on the Hub before large downloads can

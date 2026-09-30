@@ -826,6 +826,7 @@ async def test_gallery_burst_queues_bounded_thumbnails_and_cached_reads_bypass_s
 
     async def prepare(asset_id):
         nonlocal active, peak
+        assert active == 0, 'Generation rejects concurrent prepare calls'
         active += 1
         peak = max(peak, active)
         prepared.append(asset_id)
@@ -846,11 +847,11 @@ async def test_gallery_burst_queues_bounded_thumbnails_and_cached_reads_bypass_s
     assert b.get(urls[0]).status_code == 404
     assert not prepared
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=a.app),
-                                 base_url='http://testserver', cookies=a.cookies) as client:
+                                 base_url='http://testserver', cookies=dict(a.cookies)) as client:
         responses = await asyncio.gather(*(client.get(url) for url in urls))
         assert [response.status_code for response in responses] == [200] * count
         assert all(response.headers['content-type'] == 'image/webp' for response in responses)
-        assert len(prepared) == count and peak == 2
+        assert len(prepared) == count and peak == 1
         slots = a.app.state.download_slots
         await slots.acquire()
         await slots.acquire()
