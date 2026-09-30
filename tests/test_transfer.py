@@ -68,3 +68,89 @@ async def test_read_retry_is_bounded_and_error_specific(monkeypatch, code, expec
         await read_with_retry(attempt)
     assert error.value.code == code
     assert attempts == expected_attempts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('count', [10, 24])
+async def test_preview_burst_waits_without_exceeding_shared_transfer_limit(count):
+    import asyncio
+    from flamoris_studio.transfer import PreviewAdmission
+
+    slots = asyncio.Semaphore(2)
+    admission = PreviewAdmission(slots)
+    active = peak = 0
+
+    async def preview():
+        nonlocal active, peak
+        async with admission.acquire():
+            active += 1
+            peak = max(peak, active)
+            # Longer than the old 10ms admission timeout.
+            await asyncio.sleep(0.02)
+            active -= 1
+            return b'preview'
+
+    assert await asyncio.gather(*(preview() for _ in range(count))) == [b'preview'] * count
+    assert peak == 2 and admission.pending == 0
+    assert not slots.locked()
+
+
+@pytest.mark.asyncio
+async def test_preview_admission_bounds_waiters_and_recovers_after_timeout_and_cancel():
+    import asyncio
+    from fastapi import HTTPException
+    from flamoris_studio.transfer import PreviewAdmission
+
+    slots = asyncio.Semaphore(1)
+    await slots.acquire()  # An existing download owns the shared slot.
+    admission = PreviewAdmission(slots, max_pending=1, timeout=0.03)
+
+    async def preview():
+        async with admission.acquire():
+            return 'ok'
+
+    waiting = asyncio.create_task(preview())
+    await asyncio.sleep(0)
+    with pytest.raises(HTTPException) as overflow:
+        await preview()
+    assert overflow.value.status_code == 429
+    assert overflow.value.headers == {'Retry-After': '2'}
+    with pytest.raises(HTTPException) as timeout:
+        await waiting
+    assert timeout.value.status_code == 429 and admission.pending == 0
+    waiting = asyncio.create_task(preview())
+    await asyncio.sleep(0)
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    assert admission.pending == 0 and slots.locked()
+    slots.release()
+    assert await preview() == 'ok'
+    with pytest.raises(ValueError):
+        async with admission.acquire():
+            raise ValueError('upstream failure')
+    assert await preview() == 'ok'
+
+
+@pytest.mark.asyncio
+async def test_cancelled_active_preview_releases_shared_slot():
+    import asyncio
+    from flamoris_studio.transfer import PreviewAdmission
+
+    slots = asyncio.Semaphore(1)
+    admission = PreviewAdmission(slots)
+    started = asyncio.Event()
+
+    async def preview():
+        async with admission.acquire():
+            started.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(preview())
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    async with admission.acquire():
+        assert slots.locked()
+    assert admission.pending == 0 and not slots.locked()

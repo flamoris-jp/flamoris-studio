@@ -359,306 +359,347 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.post("/api/generation/image/styles", status_code=201)
     def create_style(input: StyleInput, db: Session = Depends(database),
-                     u…14847 tokens truncated… assert listed["items"][0]["id"] == asset_id
-    assert listed["items"][0]["hasThumbnail"] is False
-    assert a.get(listed["items"][0]["thumbnailUrl"]).status_code == 200
-    assert a.get(f"/api/assets/{asset_id}").json()["settings"]["positivePrompt"] == "a quiet stage"
-    assert b.get("/api/assets").json()["items"] == []
-    assert b.get(f"/api/assets/{asset_id}").status_code == 404
-    assert a.post("/api/assets/delete", json={"ids": [asset_id]}).status_code == 403
-    foreign = b.post("/api/assets/delete", json={"ids": [asset_id]}, headers={"X-CSRF-TOKEN": csrf_b})
-    assert foreign.json()["results"] == [{"id": asset_id, "deleted": False, "error": "not_found"}]
-    assert gateway.deleted == []
+                     user_id: uuid.UUID = Depends(current_user)):
+        return save_style(db, ImageStyle(owner_user_id=user_id, name=input.name,
+                          positive_prompt=input.positivePrompt, negative_prompt=input.negativePrompt))
 
-    gateway.fail_delete = True
-    failed = a.post("/api/assets/delete", json={"ids": [asset_id]}, headers={"X-CSRF-TOKEN": csrf_a})
-    assert failed.json()["results"][0]["deleted"] is False
-    assert a.get("/api/assets").json()["items"][0]["id"] == asset_id
-    gateway.fail_delete = False
-    deleted = a.post("/api/assets/delete", json={"ids": [asset_id]}, headers={"X-CSRF-TOKEN": csrf_a})
-    assert deleted.json()["results"] == [{"id": asset_id, "deleted": True}]
-    assert gateway.deleted == ["private-asset"]
-    assert a.get("/api/assets").json()["items"] == []
-    assert a.get(f"/api/assets/{asset_id}").status_code == 404
-    assert a.get(f"/api/executions/{execution_id}/assets/{asset_id}/download").status_code == 404
-    assert a.get(f"/api/executions/{execution_id}/result").json()["assets"] == []
-    assert a.post("/api/assets/delete", json={"ids": [asset_id]}, headers={"X-CSRF-TOKEN": csrf_a}).json()["results"][0]["deleted"]
-    assert gateway.deleted == ["private-asset"]
-    with factory() as db:
-        record = db.get(Asset, uuid.UUID(asset_id))
-        assert record.availability == "deleted" and record.thumbnail_locator is None
+    def owned_style(db: Session, style_id: uuid.UUID, user_id: uuid.UUID):
+        style = db.scalar(select(ImageStyle).where(ImageStyle.id == style_id,
+                          ImageStyle.owner_user_id == user_id))
+        if style is None:
+            raise HTTPException(404)
+        return style
 
+    @app.get("/api/generation/image/styles/{style_id}")
+    def get_style(style_id: uuid.UUID, db: Session = Depends(database),
+                  user_id: uuid.UUID = Depends(current_user)):
+        return style_view(owned_style(db, style_id, user_id))
 
-def test_bulk_delete_mixed_ownership_is_individual(clients):
-    a, b, gateway, _ = clients
-    csrf_a = register(a, "bulk-a@example.test")
-    csrf_b = register(b, "bulk-b@example.test")
-    made_a = a.post("/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf_a}).json()
-    made_b = b.post("/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf_b}).json()
-    asset_a = a.get(f"/api/executions/{made_a['id']}/result").json()["assets"][0]["id"]
-    asset_b = b.get(f"/api/executions/{made_b['id']}/result").json()["assets"][0]["id"]
-    response = a.post("/api/assets/delete", json={"ids": [asset_a, asset_b]},
-                      headers={"X-CSRF-TOKEN": csrf_a}).json()["results"]
-    assert response == [{"id": asset_a, "deleted": True},
-                        {"id": asset_b, "deleted": False, "error": "not_found"}]
-    assert b.get(f"/api/assets/{asset_b}").status_code == 200
-    assert a.get("/api/assets").json()["items"] == []
+    @app.put("/api/generation/image/styles/{style_id}")
+    def update_style(style_id: uuid.UUID, input: StyleInput, db: Session = Depends(database),
+                     user_id: uuid.UUID = Depends(current_user)):
+        style = owned_style(db, style_id, user_id)
+        style.name, style.positive_prompt, style.negative_prompt = input.name, input.positivePrompt, input.negativePrompt
+        style.updated_at = now()
+        return save_style(db, style)
 
+    @app.post("/api/generation/image/styles/{style_id}/duplicate", status_code=201)
+    def duplicate_style(style_id: uuid.UUID, input: StyleDuplicate, db: Session = Depends(database),
+                        user_id: uuid.UUID = Depends(current_user)):
+        source = owned_style(db, style_id, user_id)
+        return save_style(db, ImageStyle(owner_user_id=user_id, name=input.name,
+                          positive_prompt=source.positive_prompt, negative_prompt=source.negative_prompt,
+                          recommended_model=source.recommended_model,
+                          recommended_loras=source.recommended_loras,
+                          recommended_parameters=source.recommended_parameters))
 
-def test_thumbnail_cleanup_error_is_retryable_after_upstream_delete(clients, monkeypatch):
-    a, _, gateway, factory = clients
-    csrf = register(a, "cleanup@example.test")
-    execution_id = a.post("/api/generation/image/jobs", json=image_request(),
-                          headers={"X-CSRF-TOKEN": csrf}).json()["id"]
-    asset_id = a.get(f"/api/executions/{execution_id}/result").json()["assets"][0]["id"]
-    assert a.get(f"/api/executions/{execution_id}/assets/{asset_id}/thumbnail").status_code == 200
-    thumbnails = a.app.state.thumbnails
-    original = thumbnails.delete
-    attempts = []
-
-    def fail_once(locator):
-        attempts.append(locator)
-        if len(attempts) == 1:
-            raise OSError("thumbnail directory unavailable")
-        return original(locator)
-
-    monkeypatch.setattr(thumbnails, "delete", fail_once)
-    response = a.post("/api/assets/delete", json={"ids": [asset_id]},
-                      headers={"X-CSRF-TOKEN": csrf})
-    assert response.json()["results"] == [{"id": asset_id, "deleted": True}]
-    with factory() as db:
-        assert db.get(Asset, uuid.UUID(asset_id)).thumbnail_locator is not None
-    assert gateway.deleted == ["private-asset"]
-    retry = a.post("/api/assets/delete", json={"ids": [asset_id]},
-                   headers={"X-CSRF-TOKEN": csrf})
-    assert retry.json()["results"] == [{"id": asset_id, "deleted": True}]
-    assert gateway.deleted == ["private-asset"]
-    assert len(attempts) == 2
-    with factory() as db:
-        record = db.get(Asset, uuid.UUID(asset_id))
-        assert record.availability == "deleted" and record.thumbnail_locator is None
-
-
-def test_large_asset_catalog_is_independent_of_binary_and_survives_restart(clients):
-    a, b, gateway, factory = clients
-    csrf = register(a, 'large@example.test')
-    register(b, 'other@example.test')
-    async def forbidden(*args, **kwargs):
-        raise AssertionError('metadata sync attempted binary materialization')
-    async def large_assets(job):
-        return [{'asset_id': 'large-asset', 'filename': 'large.png', 'mime_type': 'image/png',
-                 'media_kind': 'image', 'size_bytes': 80 * 1024 * 1024}]
-    async def transfer_limit(asset_id):
-        raise GatewayError("asset_too_large")
-    gateway.result = forbidden
-    gateway.content = forbidden
-    gateway.assets = large_assets
-    gateway.prepare_asset = transfer_limit
-    created = a.post('/api/generation/image/jobs', json=image_request(), headers={'X-CSRF-TOKEN': csrf})
-    execution_id = created.json()['id']
-    result = a.get(f'/api/executions/{execution_id}/result')
-    assert result.status_code == 200
-    asset = result.json()['assets'][0]
-    assert asset['sizeBytes'] == 80 * 1024 * 1024
-    assert not asset['hasThumbnail']
-    assert a.get('/api/assets').json()['items'][0]['id'] == asset['id']
-    assert b.get(asset['downloadUrl']).status_code == 404
-    rejected = a.get(asset['downloadUrl'])
-    assert rejected.status_code == 413
-    assert rejected.json()['error'] == 'asset_too_large'
-    assert a.get(asset['thumbnailUrl']).status_code == 413
-    gateway.status = forbidden
-    again = create_app(factory, gateway, a.app.state.thumbnails)
-    with TestClient(again) as restarted:
-        restarted.cookies.update(a.cookies)
-        assert restarted.get(f'/api/executions/{execution_id}/result').status_code == 200
-        assert restarted.get('/api/assets').json()['items'][0]['id'] == asset['id']
-    with factory() as db:
-        assert len(list(db.scalars(select(Asset)))) == 1
-
-
-def test_catalog_sync_retries_after_timeout_and_thumbnail_disk_failure(clients):
-    a, _, gateway, _ = clients
-    csrf = register(a, 'retry@example.test')
-    created = a.post('/api/generation/image/jobs', json=image_request(), headers={'X-CSRF-TOKEN': csrf})
-    endpoint = f"/api/executions/{created.json()['id']}/result"
-    original = gateway.assets
-    async def unavailable(*args):
-        raise GatewayError('unavailable')
-    gateway.assets = unavailable
-    assert a.get(endpoint).status_code == 503
-    gateway.assets = original
-    result = a.get(endpoint)
-    assert result.status_code == 200
-    asset = result.json()['assets'][0]
-    with patch.object(a.app.state.thumbnails, 'save', side_effect=OSError('disk full')):
-        assert a.get(asset['thumbnailUrl']).status_code == 503
-    gateway.assets = unavailable
-    cached = a.get(endpoint)
-    assert cached.status_code == 200
-    assert cached.json()['catalogSync'] == 'unavailable'
-    assert a.get('/api/assets').json()['items'][0]['id'] == asset['id']
-
-
-@pytest.mark.asyncio
-async def test_gateway_translates_upstream_size_limit_without_leaking_details():
-    from contextlib import asynccontextmanager
-    from types import SimpleNamespace
-    gateway = GenerationGateway()
-    class Session:
-        async def call_tool(self, *args, **kwargs):
-            return SimpleNamespace(is_error=True, content=[SimpleNamespace(
-                text='ComfyUI output exceeds the 64 MiB download limit /private/path')])
-    @asynccontextmanager
-    async def connection():
-        yield Session()
-    gateway._connection = connection
-    with pytest.raises(GatewayError) as error:
-        await gateway.content('asset', 64 * 1024 * 1024)
-    assert error.value.code == 'asset_too_large'
-    assert '/private' not in str(error.value)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("name", ["assets.prepare", "assets.read"])
-async def test_gateway_identifies_only_exact_hub_missing_transfer_tool(name):
-    from contextlib import asynccontextmanager
-    from types import SimpleNamespace
-
-    gateway = GenerationGateway()
-
-    class Session:
-        async def call_tool(self, called, args, **kwargs):
-            assert called == name
-            return SimpleNamespace(is_error=True, content=[
-                SimpleNamespace(text=f"Unknown tool: {called}")])
-
-    @asynccontextmanager
-    async def connection():
-        yield Session()
-
-    gateway._connection = connection
-    with pytest.raises(GatewayError) as error:
-        await gateway._call(name)
-    assert error.value.code == "transfer_unavailable"
-
-    class OtherSession:
-        async def call_tool(self, called, args, **kwargs):
-            return SimpleNamespace(is_error=True, content=[
-                SimpleNamespace(text=f"Unknown tool: {called} /private/path")])
-
-    @asynccontextmanager
-    async def other_connection():
-        yield OtherSession()
-
-    gateway._connection = other_connection
-    with pytest.raises(GatewayError) as other_error:
-        await gateway._call(name)
-    assert other_error.value.code == "upstream_failure"
-
-
-@pytest.mark.parametrize("missing", ["assets.prepare", "assets.read"])
-def test_missing_transfer_capability_has_safe_error_on_asset_routes(clients, missing):
-    a, b, gateway, _ = clients
-    csrf = register(a, "transfer-missing@example.test")
-    register(b, "transfer-other@example.test")
-
-    async def assets(job):
-        return [{"asset_id": "private-asset", "filename": "photo.png",
-                 "mime_type": "image/png", "media_kind": "image",
-                 "size_bytes": None, "output_index": 0}]
-
-    calls = []
-
-    async def prepare(asset_id):
-        calls.append("assets.prepare")
-        if missing == "assets.prepare":
-            raise GatewayError("transfer_unavailable")
-        return {"asset_id": asset_id, "mime_type": "image/png", "size_bytes": len(gateway.image),
-                "sha256": hashlib.sha256(gateway.image).hexdigest(),
-                "chunk_bytes": 256 * 1024, "transfer_version": 1}
-
-    async def read(asset_id, digest, offset, length):
-        calls.append("assets.read")
-        raise GatewayError("transfer_unavailable")
-
-    gateway.assets = assets
-    gateway.prepare_asset = prepare
-    gateway.read_asset = read
-    made = a.post("/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf})
-    asset = a.get(f"/api/executions/{made.json()['id']}/result").json()["assets"][0]
-    for route in ("previewUrl", "thumbnailUrl", "downloadUrl"):
-        before = len(calls)
-        assert b.get(asset[route]).status_code == 404
-        assert len(calls) == before
-        response = a.get(asset[route])
-        assert response.status_code == 503
-        assert response.json() == {"error": "transfer_unavailable",
-                                   "message": "Asset transfer is unavailable. The service deployment is incomplete."}
-        assert "private-asset" not in response.text
-    assert calls.count(missing) == 3
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize('count', [10, 24])
-async def test_gallery_burst_queues_bounded_thumbnails_and_cached_reads_bypass_slots(clients, count):
-    import asyncio
-    import httpx
-
-    a, b, gateway, factory = clients
-    csrf = register(a, 'preview-burst@example.test')
-    register(b, 'preview-other@example.test')
-    made = a.post('/api/generation/image/jobs', json=image_request(), headers={'X-CSRF-TOKEN': csrf})
-    execution_id = uuid.UUID(made.json()['id'])
-    ids = []
-    with factory() as db:
-        execution = db.get(Execution, execution_id)
-        for i in range(count):
-            asset = Asset(user_id=execution.user_id, execution_id=execution_id,
-                          upstream_asset_id=f'burst-{i}', storage_locator=f'burst-{i}',
-                          display_name=f'{i}.png', media_kind='image', mime_type='image/png', size_bytes=None)
-            db.add(asset)
-            db.flush()
-            ids.append(asset.id)
+    @app.delete("/api/generation/image/styles/{style_id}")
+    def delete_style(style_id: uuid.UUID, db: Session = Depends(database),
+                     user_id: uuid.UUID = Depends(current_user)):
+        db.delete(owned_style(db, style_id, user_id))
         db.commit()
-    digest = hashlib.sha256(gateway.image).hexdigest()
-    prepared = []
-    active = peak = 0
+        return {"ok": True}
 
-    async def prepare(asset_id):
-        nonlocal active, peak
-        active += 1
-        peak = max(peak, active)
-        prepared.append(asset_id)
-        await asyncio.sleep(0.02)
-        active -= 1
-        return {'asset_id': asset_id, 'mime_type': 'image/png', 'size_bytes': len(gateway.image),
-                'sha256': digest, 'chunk_bytes': 256 * 1024, 'transfer_version': 1}
-
-    async def read(asset_id, sha256, offset, length):
-        data = gateway.image[offset:offset + length]
-        return {'asset_id': asset_id, 'sha256': sha256, 'offset': offset,
-                'size_bytes': len(gateway.image), 'data_base64': base64.b64encode(data).decode(),
-                'chunk_sha256': hashlib.sha256(data).hexdigest(),
-                'next_offset': offset + len(data), 'eof': offset + len(data) == len(gateway.image)}
-
-    gateway.prepare_asset, gateway.read_asset = prepare, read
-    urls = [f'/api/executions/{execution_id}/assets/{asset_id}/thumbnail' for asset_id in ids]
-    assert b.get(urls[0]).status_code == 404
-    assert not prepared
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=a.app),
-                                 base_url='http://testserver', cookies=a.cookies) as client:
-        responses = await asyncio.gather(*(client.get(url) for url in urls))
-        assert [response.status_code for response in responses] == [200] * count
-        assert all(response.headers['content-type'] == 'image/webp' for response in responses)
-        assert len(prepared) == count and peak == 2
-        slots = a.app.state.download_slots
-        await slots.acquire()
-        await slots.acquire()
+    @app.post("/api/generation/image/jobs", status_code=201)
+    async def submit(input: ImageRequest, db: Session = Depends(database), user_id: uuid.UUID = Depends(current_user)):
+        capability = await app.state.gateway.discover()
+        template = "text-to-image-lora" if input.loras else "text-to-image"
+        if not capability["available"] or template not in capability["templates"]:
+            raise GatewayError("unavailable")
+        if input.seed is None:
+            input.seed = secrets.randbelow(MAX_SAFE_IMAGE_SEED + 1)
+        workflow = await app.state.gateway.build(template, input.parameters())
+        execution = Execution(user_id=user_id, workflow=template, request_snapshot=input.model_dump())
+        db.add(execution)
+        db.commit()  # Persist uncertain submissions before calling the non-idempotent upstream tool.
         try:
-            assert (await client.get(urls[0])).status_code == 200
-            assert len(prepared) == count
-        finally:
-            slots.release()
-            slots.release()
-    assert a.app.state.preview_admission.pending == 0
+            job = await app.state.gateway.submit(workflow)
+            execution.upstream_job_id = job["job_id"]
+            set_status(db, execution, job["status"])
+        except GatewayError as exc:
+            set_status(db, execution, "busy" if exc.code == "busy" else "submission_unknown")
+            raise
+        return view(execution, db)
+
+    @app.get("/api/assets")
+    def list_generated_assets(limit: int = Query(default=24, ge=1, le=48),
+                              offset: int = Query(default=0, ge=0, le=100000),
+                              db: Session = Depends(database),
+                              user_id: uuid.UUID = Depends(current_user)):
+        rows = db.execute(select(Asset, Execution).join(Execution, Asset.execution_id == Execution.id)
+                          .where(Asset.user_id == user_id, Execution.user_id == user_id,
+                                 Asset.availability != "deleted")
+                          .order_by(Asset.created_at.desc(), Asset.id.desc())
+                          .offset(offset).limit(limit + 1)).all()
+        return {"items": [asset_view(asset) for asset, _ in rows[:limit]],
+                "nextOffset": offset + limit if len(rows) > limit else None}
+
+    @app.get("/api/assets/{asset_id}")
+    def generated_asset_detail(asset_id: uuid.UUID, db: Session = Depends(database),
+                               user_id: uuid.UUID = Depends(current_user)):
+        row = db.execute(select(Asset, Execution).join(Execution, Asset.execution_id == Execution.id)
+                         .where(Asset.id == asset_id, Asset.user_id == user_id,
+                                Execution.user_id == user_id, Asset.availability != "deleted")).first()
+        if row is None:
+            raise HTTPException(404)
+        asset, execution = row
+        request = execution.request_snapshot if isinstance(execution.request_snapshot, dict) else {}
+        settings = {key: request[key] for key in ("positivePrompt", "negativePrompt", "checkpoint",
+                    "seed", "steps", "cfg", "width", "height", "loras", "sampler", "scheduler", "denoise") if key in request}
+        return {**asset_view(asset), "state": execution.last_known_status,
+                "submittedAt": execution.submitted_at.isoformat(), "settings": settings}
+
+    @app.post("/api/assets/delete")
+    async def delete_generated_assets(input: DeleteAssetsRequest, db: Session = Depends(database),
+                                      user_id: uuid.UUID = Depends(current_user)):
+        def cleanup_thumbnail(asset: Asset) -> None:
+            # Preserve the locator until cleanup succeeds so a retry can finish it.
+            if asset.thumbnail_locator is None:
+                return
+            try:
+                app.state.thumbnails.delete(asset.thumbnail_locator)
+            except OSError:
+                return
+            asset.thumbnail_locator = None
+            db.commit()
+
+        results = []
+        for asset_id in dict.fromkeys(input.ids):
+            # Serialize with result catalog updates, including a stale assets.list response.
+            row = db.execute(select(Asset, Execution).join(Execution, Asset.execution_id == Execution.id)
+                             .where(Asset.id == asset_id, Asset.user_id == user_id,
+                                    Execution.user_id == user_id)
+                             .with_for_update(of=Execution)).first()
+            if row is None:
+                results.append({"id": str(asset_id), "deleted": False, "error": "not_found"})
+                db.rollback()
+                continue
+            asset, _ = row
+            if asset.availability == "deleted":
+                cleanup_thumbnail(asset)
+                results.append({"id": str(asset_id), "deleted": True})
+                db.rollback()
+                continue
+            try:
+                upstream = await app.state.gateway.delete_asset(asset.upstream_asset_id)
+                if upstream.get("deleted") is not True:
+                    raise GatewayError("upstream_failure")
+                asset.availability = "deleted"
+                asset.updated_at = now()
+                db.commit()
+                cleanup_thumbnail(asset)
+                results.append({"id": str(asset_id), "deleted": True})
+            except GatewayError as exc:
+                db.rollback()
+                results.append({"id": str(asset_id), "deleted": False, "error": exc.code})
+        return {"results": results}
+
+    @app.get("/api/executions/{execution_id}")
+    async def execution_status(execution_id: uuid.UUID, db: Session = Depends(database),
+                               user_id: uuid.UUID = Depends(current_user)):
+        execution = owned(db, execution_id, user_id)
+        if execution.upstream_job_id and execution.last_known_status not in {"completed", "failed", "cancelled"}:
+            job = await app.state.gateway.status(execution.upstream_job_id)
+            set_status(db, execution, job["status"])
+        return view(execution, db)
+
+    @app.get("/api/executions/{execution_id}/result")
+    async def result(execution_id: uuid.UUID, db: Session = Depends(database),
+                     user_id: uuid.UUID = Depends(current_user)):
+        execution = owned(db, execution_id, user_id)
+        if not execution.upstream_job_id:
+            return view(execution, db)
+        if execution.last_known_status != "completed":
+            job = await app.state.gateway.status(execution.upstream_job_id)
+            set_status(db, execution, job["status"])
+            if job["status"] != "completed":
+                return view(execution, db)
+        # Catalog metadata is independent of full materialization and thumbnails.
+        # Completed status is already persisted, so retry listing after a timeout
+        # (or Studio restart) without requiring the old live provider job mapping.
+        try:
+            listing = await app.state.gateway.assets(execution.upstream_job_id)
+        except GatewayError:
+            cached = view(execution, db)
+            if cached["assets"]:
+                return {**cached, "catalogSync": "unavailable"}
+            raise
+        if not isinstance(listing, list) or len(listing) > 64:
+            raise GatewayError("upstream_failure")
+        # Lock the parent row to serialize concurrent catalog updates across processes.
+        db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution.id})
+        known = {asset.upstream_asset_id: asset for asset in db.scalars(
+            select(Asset).where(Asset.execution_id == execution.id, Asset.user_id == user_id))}
+        for item in listing:
+            if not isinstance(item, dict):
+                raise GatewayError("upstream_failure")
+            if item.get("media_kind") != "image" or item.get("mime_type") not in {"image/png", "image/jpeg", "image/webp"}:
+                continue
+            upstream = item.get("asset_id")
+            if not isinstance(upstream, str) or not 0 < len(upstream) <= 256:
+                continue
+            size = item.get("size_bytes")
+            size = size if type(size) is int and 0 <= size <= 2**63 - 1 else None
+            if upstream in known:
+                if size is not None and known[upstream].availability != "deleted":
+                    known[upstream].size_bytes = size
+                continue
+            original = item.get("filename") if isinstance(item.get("filename"), str) else None
+            original = filename(original)
+            asset = Asset(user_id=user_id, execution_id=execution.id, upstream_asset_id=upstream,
+                         storage_locator=upstream, original_filename=original,
+                         display_name=filename(original), media_kind="image", mime_type=item["mime_type"],
+                         size_bytes=size)
+            db.add(asset)
+            known[upstream] = asset
+        db.commit()
+        return view(execution, db)
+
+    @app.post("/api/executions/{execution_id}/cancel")
+    async def cancel(execution_id: uuid.UUID, db: Session = Depends(database),
+                     user_id: uuid.UUID = Depends(current_user)):
+        execution = owned(db, execution_id, user_id)
+        if execution.upstream_job_id and execution.last_known_status not in {"completed", "failed", "cancelled"}:
+            job = await app.state.gateway.cancel(execution.upstream_job_id)
+            set_status(db, execution, job["status"])
+        return view(execution, db)
+
+    async def get_content(asset: Asset, db: Session, request: Request, user_id: uuid.UUID):
+        max_bytes = min(max(int(os.getenv("STUDIO_MAX_ASSET_BYTES", "67108864")), 1), 67108864)
+        if asset.size_bytes and asset.size_bytes > max_bytes:
+            raise GatewayError("asset_too_large")
+        if asset.size_bytes is not None and asset.size_bytes <= NATIVE_IMAGE_BYTES:
+            data, mime = await app.state.gateway.content(asset.upstream_asset_id, max_bytes)
+        else:
+            # Release the row lock before remote I/O. An owner/deletion check is
+            # repeated at every read, including retries.
+            db.rollback()
+            async with app.state.preview_admission.acquire():
+                if await request.is_disconnected():
+                    raise asyncio.CancelledError()
+                if current_user(request, db) != user_id:
+                    raise HTTPException(401)
+                owned_asset(db, asset.execution_id, asset.id, user_id)
+                prepared = await app.state.gateway.prepare_asset(asset.upstream_asset_id)
+                size, expected, limit = metadata(prepared, asset.upstream_asset_id, asset.mime_type, max_bytes)
+                parts = bytearray()
+                checksum = hashlib.sha256()
+                while len(parts) < size:
+                    offset = len(parts)
+                    async def attempt():
+                        if await request.is_disconnected():
+                            raise asyncio.CancelledError()
+                        if current_user(request, db) != user_id:
+                            raise HTTPException(401)
+                        owned_asset(db, asset.execution_id, asset.id, user_id)
+                        result = await app.state.gateway.read_asset(asset.upstream_asset_id, expected, offset, limit)
+                        return chunk(result, asset.upstream_asset_id, expected, offset, size, limit)
+                    part = await read_with_retry(attempt)
+                    checksum.update(part)
+                    parts.extend(part)
+                if checksum.hexdigest() != expected:
+                    raise GatewayError("validation")
+                data, mime = bytes(parts), asset.mime_type
+        if mime != asset.mime_type or len(data) > max_bytes:
+            raise GatewayError("validation")
+        try:
+            asset.width, asset.height = inspect_image(data, mime)
+        except ValueError as exc:
+            raise GatewayError("validation") from exc
+        asset.size_bytes = len(data)
+        db.commit()
+        return data, mime
+
+    @app.get("/api/executions/{execution_id}/assets/{asset_id}/thumbnail")
+    async def thumbnail(execution_id: uuid.UUID, asset_id: uuid.UUID, request: Request, db: Session = Depends(database),
+                        user_id: uuid.UUID = Depends(current_user)):
+        owned(db, execution_id, user_id)
+        db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution_id})
+        asset = owned_asset(db, execution_id, asset_id, user_id)
+        if asset.thumbnail_locator is None:
+            data, _ = await get_content(asset, db, request, user_id)
+            try:
+                asset.thumbnail_locator = app.state.thumbnails.save(asset.id, data)
+                db.commit()
+            except (OSError, ValueError):
+                raise HTTPException(503, "Thumbnail is temporarily unavailable") from None
+        data = app.state.thumbnails.load(asset.thumbnail_locator) if asset.thumbnail_locator else None
+        if data is None:
+            raise HTTPException(404)
+        return Response(data, media_type="image/webp", headers={"Cache-Control": "private, no-store",
+                         "X-Content-Type-Options": "nosniff"})
+
+    @app.get("/api/executions/{execution_id}/assets/{asset_id}/content")
+    @app.get("/api/executions/{execution_id}/assets/{asset_id}/download")
+    async def asset_content(execution_id: uuid.UUID, asset_id: uuid.UUID, request: Request,
+                            db: Session = Depends(database), user_id: uuid.UUID = Depends(current_user)):
+        owned(db, execution_id, user_id)
+        db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution_id})
+        asset = owned_asset(db, execution_id, asset_id, user_id)
+        inline_limit = min(max(int(os.getenv("STUDIO_MAX_ASSET_BYTES", "67108864")), 1), 67108864)
+        if request.url.path.endswith("/download") and (asset.size_bytes is None or asset.size_bytes > min(inline_limit, NATIVE_IMAGE_BYTES)):
+            # No row lock across remote I/O; every chunk checks ownership and deletion.
+            db.rollback()
+            cap = min(max(int(os.getenv("STUDIO_MAX_TRANSFER_BYTES", str(MAX_TRANSFER_BYTES))), 1),
+                      MAX_TRANSFER_BYTES)
+            slots = app.state.download_slots
+            try:
+                await asyncio.wait_for(slots.acquire(), timeout=0.01)
+            except TimeoutError:
+                raise HTTPException(429, "Too many active downloads") from None
+            try:
+                owned_asset(db, execution_id, asset_id, user_id)
+                prepared = await app.state.gateway.prepare_asset(asset.upstream_asset_id)
+                size, digest, limit = metadata(prepared, asset.upstream_asset_id, asset.mime_type, cap)
+                async def read_at(offset):
+                    async def attempt():
+                        if await request.is_disconnected():
+                            raise asyncio.CancelledError()
+                        if current_user(request, db) != user_id:
+                            raise HTTPException(401)
+                        owned_asset(db, execution_id, asset_id, user_id)
+                        result = await app.state.gateway.read_asset(asset.upstream_asset_id, digest, offset, limit)
+                        return chunk(result, asset.upstream_asset_id, digest, offset, size, limit)
+                    return await read_with_retry(attempt)
+                first = await read_at(0)
+            except BaseException:
+                slots.release()
+                raise
+
+            async def stream():
+                hasher = hashlib.sha256()
+                offset = 0
+                data = first
+                try:
+                    while True:
+                        hasher.update(data)
+                        offset += len(data)
+                        if offset == size and hasher.hexdigest() != digest:
+                            raise GatewayError("validation")
+                        yield data
+                        if offset == size:
+                            break
+                        data = await read_at(offset)
+                finally:
+                    slots.release()
+            return StreamingResponse(stream(), media_type=asset.mime_type, headers={
+                "Content-Length": str(size), "Cache-Control": "private, no-store",
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": "default-src 'none'; sandbox",
+                "Content-Disposition": f'attachment; filename="{filename(asset.display_name)}"'})
+        data, mime = await get_content(asset, db, request, user_id)
+        headers = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+                   "Content-Security-Policy": "default-src 'none'; sandbox"}
+        if request.url.path.endswith("/download"):
+            headers["Content-Disposition"] = f'attachment; filename="{filename(asset.display_name)}"'
+        return Response(data, media_type=mime, headers=headers)
+
+    dist = os.getenv("STUDIO_WEB_DIST")
+    if dist and os.path.isdir(dist):
+        app.mount("/", StaticFiles(directory=dist, html=True), name="web")
+    return app
+
+
+def production_app():
+    configure_logging().info("Studio process starting")
+    return create_app()
