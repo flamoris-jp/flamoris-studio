@@ -42,7 +42,7 @@ class Execution(Base):
     category: Mapped[str] = mapped_column(String(32), default="image")
     operation: Mapped[str] = mapped_column(String(64), default="image.generate")
     workflow: Mapped[str] = mapped_column(String(128))
-    reference_input_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managed_inputs.id", ondelete="SET NULL"), index=True)
+    reference_input_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managed_inputs.id", ondelete="SET NULL", name="fk_execution_reference_input", use_alter=True), index=True)
     upstream_job_id: Mapped[str | None] = mapped_column(String(256))
     request_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
     last_known_status: Mapped[str] = mapped_column(String(32), default="submitting")
