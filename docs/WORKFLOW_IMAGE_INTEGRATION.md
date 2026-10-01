@@ -4,7 +4,7 @@ Status: proposed design-only implementation plan, 2026-10-01.
 Tracks #21/#30 plus the Workflow discovery child issue created for this plan.
 
 The canonical Generation schema/semantic contract is
-[WORKFLOW_SYSTEM_DESIGN.md](https://github.com/flamoris-jp/flamoris-generation-mcp/blob/docs/workflow-system-design/docs/WORKFLOW_SYSTEM_DESIGN.md).
+[WORKFLOW_SYSTEM_DESIGN.md](https://github.com/flamoris-jp/flamoris-generation-mcp/pull/43).
 Keep this companion focused on Studio; do not create another workflow authority.
 
 ## 1. Baseline and scope
