@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { ImageEditor, initialImageDraft, restoreImageDraft } from './App'
 import { api, type Asset, type Discovery, type Workflow } from './api'
-import { legalSeed, seedDomain } from './WorkflowImage'
+import { legalSeed, seedDomain, workflowPayload } from './WorkflowImage'
 
 const workflow: Workflow = { id: 'reference', kind: 'definition', name: 'Initial image', selectable: true, reason: null, definitionVersion: 1, definitionDigest: 'sha256:' + 'a'.repeat(64),
   image: { mode: 'img2img', profile: 'image-v1', dimensions: { mode: 'parameters' } }, parameters: {
@@ -106,4 +106,23 @@ test('seed domain sampling respects singleton, typed enum and empty domains', ()
   expect(seedDomain({ type: 'integer', minimum: 1, maximum: 3, multiple_of: 8 })).toBeNull()
   expect(seedDomain({ type: 'integer', multiple_of: 0.5 })).toBeNull()
   expect(seedDomain({ type: 'integer' })?.count).toBe(1n << 53n)
+})
+
+
+test.each(['513', '', 'invalid'])('fixed dimensions override stale draft %s in submitted payload', async stale => {
+  const fixed: Workflow = { ...workflow, image: { ...workflow.image, mode: 'txt2img', dimensions: { mode: 'fixed', width: 768, height: 1152 } },
+    parameters: { model: workflow.parameters.model, prompt: workflow.parameters.prompt } }
+  const form = { ...initialImageDraft('model'), positivePrompt: 'keep this prompt', width: stale, height: stale }
+  expect(workflowPayload(form, fixed)).toMatchObject({ width: 768, height: 1152, positivePrompt: 'keep this prompt' })
+  expect(form.width).toBe(stale)
+  const submit = vi.fn()
+  await act(async () => root.render(<ImageEditor discovery={{ ...discovery, workflows: [fixed] }}
+    form={{ ...form, workflowId: fixed.id, workflowKind: fixed.kind, definitionVersion: fixed.definitionVersion, definitionDigest: fixed.definitionDigest }}
+    setForm={vi.fn()} busy={false} csrf="csrf" onSubmit={submit} />))
+  const width = [...host.querySelectorAll('label')].find(label => label.textContent === 'width')!.querySelector('input')!
+  expect(width.disabled).toBe(true)
+  expect(width.value).toBe('768')
+  expect(button('Generate image').disabled).toBe(false)
+  await click('Generate image')
+  expect(submit).toHaveBeenCalledWith(expect.objectContaining({ width: 768, height: 1152 }))
 })

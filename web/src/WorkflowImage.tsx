@@ -62,6 +62,10 @@ export function workflowPayload(form: ImageDraft, item: Workflow): ImageSubmissi
     const raw = form[key as 'width']
     values[key] = raw.trim() === '' ? undefined : Number(raw)
   }
+  if (item.image.dimensions.mode === 'fixed') {
+    values.width = item.image.dimensions.width
+    values.height = item.image.dimensions.height
+  }
   const loras = roleSpec(item, 'loras')
   if (form.loras.length && !loras) return null
   if (loras && (form.loras.length < (loras.min_items ?? 0) || form.loras.length > (loras.max_items ?? 16))) return null
