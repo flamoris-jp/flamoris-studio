@@ -1,6 +1,6 @@
 export type Session = { authenticated: boolean; userName: string | null; csrfToken: string; allowRegistration: boolean }
 export type Model = { id: string; name: string }
-export type ParameterSpec = { type: string; role?: string; required?: boolean; default?: unknown; minimum?: number; maximum?: number; multiple_of?: number; enum?: (string | number | boolean)[]; min_length?: number; max_length?: number; max_items?: number; min_items?: number }
+export type ParameterSpec = { type: string; role?: string; required?: boolean; default?: unknown; minimum?: number; maximum?: number; multiple_of?: number; enum?: (string | number | boolean)[]; pattern?: string; min_length?: number; max_length?: number; max_items?: number; min_items?: number }
 export type Workflow = { id: string; kind: string; name: string; selectable: boolean; reason: string | null; definitionVersion: number | null; definitionDigest: string | null; image: { mode: string; profile: string; dimensions: { mode: string; width?: number; height?: number } }; parameters: Record<string, ParameterSpec> }
 export type ManagedInput = { id: string; available: boolean; expiresAt?: string; thumbnailUrl: string | null; sourceAssetId?: string | null }
 export type Discovery = { available: boolean; templates: string[]; checkpoints: Model[]; loras: Model[]; workflows?: Workflow[]; managedInputReady?: boolean }

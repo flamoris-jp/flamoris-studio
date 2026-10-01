@@ -10,6 +10,12 @@ export function validValue(spec: ParameterSpec, value: unknown): boolean {
   if (spec.type === 'integer' && (!Number.isSafeInteger(value) || typeof value !== 'number')) return false
   if (spec.type === 'number' && (typeof value !== 'number' || !Number.isFinite(value))) return false
   if (spec.type === 'string' && (typeof value !== 'string' || value.length < (spec.min_length ?? 0) || value.length > (spec.max_length ?? 20000))) return false
+  if (spec.type === 'string' && spec.pattern !== undefined) {
+    try {
+      const match = new RegExp(`^(?:${spec.pattern})$`).exec(value as string)
+      if (!match || match[0] !== value) return false
+    } catch { return false }
+  }
   if (typeof value === 'number' && (value < (spec.minimum ?? -Infinity) || value > (spec.maximum ?? Infinity))) return false
   if (spec.multiple_of !== undefined && (spec.type !== 'integer' || !Number.isSafeInteger(spec.multiple_of) || spec.multiple_of <= 0 || typeof value !== 'number' || value % spec.multiple_of !== 0)) return false
   if (spec.enum && !spec.enum.some(x => typeof x === typeof value && x === value)) return false

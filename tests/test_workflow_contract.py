@@ -1,6 +1,6 @@
 import pytest
 
-from flamoris_studio.workflow_contract import map_parameters, normalize_catalog, random_seed, seed_domain
+from flamoris_studio.workflow_contract import map_parameters, normalize_catalog, random_seed, seed_domain, validate_value
 
 
 def descriptor(mode="txt2img"):
@@ -124,3 +124,29 @@ def test_omitted_required_descriptor_control_is_rejected():
     values = WorkflowImageRequest(**raw).model_dump(mode="json", exclude_none=True)
     with pytest.raises(ValueError):
         map_parameters(item, values)
+
+
+@pytest.mark.parametrize("role,value", [("cfg", 4), ("denoise", 1)])
+@pytest.mark.parametrize("floating_enum", [False, True])
+def test_number_enum_roles_survive_request_normalization(role, value, floating_enum):
+    from flamoris_studio.app import WorkflowImageRequest
+
+    raw = descriptor()
+    raw["parameters"]["control"] = {"type": "number", "role": role, "enum": [float(value) if floating_enum else value]}
+    item = normalize_catalog({"descriptors": [raw]})[0]
+    request = WorkflowImageRequest(workflowId=item["id"], workflowKind="definition", positivePrompt="x", checkpoint="model",
+                                   width=512, height=512, **{role: value})
+    params = map_parameters(item, request.model_dump(mode="json", exclude_none=True))
+    assert params["control"] == value
+
+
+@pytest.mark.parametrize("value", [4, 4.0])
+@pytest.mark.parametrize("candidate", [4, 4.0])
+def test_number_enums_share_generation_json_semantics(candidate, value):
+    assert validate_value({"type": "number", "enum": [candidate]}, value) == 4
+
+
+@pytest.mark.parametrize("kind,value", [("number", True), ("number", "4"), ("number", 5), ("integer", 4.0), ("integer", True)])
+def test_numeric_enum_type_and_domain_rejections(kind, value):
+    with pytest.raises(ValueError):
+        validate_value({"type": kind, "enum": [4]}, value)

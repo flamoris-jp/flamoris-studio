@@ -29,8 +29,9 @@ an expired, revoked or pruned reference requires choosing another owned Asset.
 ## Owned references
 
 The picker paginates existing generated image Assets owned by the signed-in user.
-There is no local file upload; #30 remains open. Create accepts only a Studio Asset
-UUID. Create/get/delete/thumbnail/submit check ownership before upstream calls.
+There is no local file upload; #30 records the original requirement. Its closed
+issue state does not establish local-upload acceptance. Create accepts only a Studio
+Asset UUID. Create/get/delete/thumbnail/submit check ownership before upstream calls.
 Mutation requires CSRF. The immutable Generation input is independent of subsequent
 source-Asset deletion. A missing thumbnail does not make an otherwise valid input
 unusable. Detach only removes the draft attachment; replace swaps after successful
@@ -78,9 +79,10 @@ requirement delegated to a manual operator.
 
 Keep #21 and #36 open for the real installed Workflow/runtime smoke, coordinated
 catalog rollout, multi-user acceptance, expiry/reselection, independent preview
-after source deletion, quota rejection and retention evidence. Keep #30 open for
-local upload. Repository CI covers migration upgrade/downgrade, ownership, exact
-identity, seed domains, quota contention, ambiguous outcomes, cleanup retry,
+after source deletion, quota rejection and retention evidence. Local upload remains
+follow-up scope, regardless of #30's issue state. Repository CI covers migration
+upgrade/downgrade, ownership, exact identity, seed domains, quota contention,
+ambiguous outcomes, cleanup retry,
 frontend picker/restore behavior, builds and the packaged container.
 
 
@@ -90,3 +92,9 @@ fields to be absent; the descriptor alone determines required controls and
 optional defaults. Snapshots record normalized advertised values, including
 resolved defaults, rather than inventing values for graph-internal constants.
 Legacy automatic builtin requests retain their existing required-field contract.
+
+Scalar `number` enums accept equivalent JSON integer/float values consistently
+with Generation, including CFG and denoise values normalized by the API. Integer
+parameters remain strict, and booleans/strings are not numeric candidates. The
+browser validates advertised string patterns as complete matches, including the
+builtin sampler/scheduler token constraints, before enabling submission.

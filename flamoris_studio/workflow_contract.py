@@ -100,7 +100,8 @@ def validate_value(spec, value):
         ):
             raise ValueError("unsupported_parameter")
     if "enum" in spec and not any(
-        type(value) is type(x) and value == x for x in spec["enum"]
+        (type(x) in (int, float) if kind == "number" else type(value) is type(x))
+        and value == x for x in spec["enum"]
     ):
         raise ValueError("unsupported_parameter")
     return value

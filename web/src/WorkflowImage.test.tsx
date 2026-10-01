@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { ImageEditor, initialImageDraft, restoreImageDraft } from './App'
 import { api, type Asset, type Discovery, type Workflow } from './api'
-import { legalSeed, seedDomain, workflowPayload } from './WorkflowImage'
+import { legalSeed, seedDomain, validValue, workflowPayload } from './WorkflowImage'
 
 const workflow: Workflow = { id: 'reference', kind: 'definition', name: 'Initial image', selectable: true, reason: null, definitionVersion: 1, definitionDigest: 'sha256:' + 'a'.repeat(64),
   image: { mode: 'img2img', profile: 'image-v1', dimensions: { mode: 'parameters' } }, parameters: {
@@ -106,6 +106,23 @@ test('seed domain sampling respects singleton, typed enum and empty domains', ()
   expect(seedDomain({ type: 'integer', minimum: 1, maximum: 3, multiple_of: 8 })).toBeNull()
   expect(seedDomain({ type: 'integer', multiple_of: 0.5 })).toBeNull()
   expect(seedDomain({ type: 'integer' })?.count).toBe(1n << 53n)
+})
+
+test.each(['sampler', 'scheduler'])('selected builtin %s applies its advertised full string pattern', role => {
+  const selected: Workflow = { ...workflow, image: { ...workflow.image, mode: 'txt2img', dimensions: { mode: 'fixed', width: 512, height: 512 } },
+    parameters: { model: workflow.parameters.model, prompt: workflow.parameters.prompt,
+      token: { type: 'string', role, pattern: '^[a-zA-Z0-9_]+$', max_length: 80 } } }
+  const form = { ...initialImageDraft('model'), positivePrompt: 'x' }
+  expect(workflowPayload(form, selected)).not.toBeNull()
+  for (const value of ['', 'euler invalid', 'euler\n', 'euler/invalid']) {
+    expect(workflowPayload({ ...form, [role]: value }, selected)).toBeNull()
+  }
+})
+
+test('string patterns require complete matches and invalid patterns fail closed', () => {
+  expect(validValue({ type: 'string', pattern: '[a-z]+' }, 'valid')).toBe(true)
+  for (const value of ['!valid', 'valid!', 'valid\n']) expect(validValue({ type: 'string', pattern: '[a-z]+' }, value)).toBe(false)
+  expect(validValue({ type: 'string', pattern: '[' }, 'valid')).toBe(false)
 })
 
 
