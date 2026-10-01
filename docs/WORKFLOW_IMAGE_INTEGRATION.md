@@ -74,6 +74,14 @@ a per-definition human step. Definitions cannot self-declare ready.
 
 Normal Studio selection requires readiness.state=ready for the exact descriptor
 ID/version/canonical digest. Version OR digest changes invalidate the old attestation.
+Generation also rechecks current runtime fingerprint/provider epoch and profile
+evidence at discovery/build/submit; same-name model or node replacement cannot
+inherit old ready. Studio consumes the computed result, never hashes runtime
+files or derives evidence from health/model names. Map runtime drift/unknown
+evidence to a safe workflow_not_ready reason and preserve drafts. A busy or
+invalid pre-admission reverify preserves an otherwise current ready attestation;
+an admitted reverify supersedes it and failure stays unavailable. Runtime drift
+or explicit revocation invalidates it independently of that busy outcome.
 Registered/validated/failed candidates may appear disabled with safe diagnostics, but
 cannot be selected, restored as usable, or submitted. Missing or mismatched readiness
 fails closed; retry verification stays upstream. Never derive readiness from a workflow
@@ -194,6 +202,64 @@ durable. If input creation response is ambiguous, do not invisibly retry or inve
 ownership mapping; upstream TTL/pruning handles unknown orphans. Local quota and
 timeout/busy handling must remain bounded.
 
+### Managed-input metadata and thumbnail retention
+
+These are proposed Studio limits, independent of Generation's 24h input TTL,
+128-record and 512 MiB snapshot bounds. Do not extend an upstream TTL from local
+metadata or imply that Studio's larger global bound increases upstream capacity.
+
+| Resource | Initial enforced limit |
+| --- | --- |
+| Managed-input rows, including live/terminal/tombstone and pending create reservations | 128 per user; 1024 globally |
+| Independent encoded thumbnail | At most 512 px per dimension and 256 KiB per input |
+| Thumbnail bytes, including committed, temporary/reserved and pending-delete files | 32 MiB per user; 128 MiB globally |
+| Expired/revoked terminal grace | 24h after expires_at or durable revoked_at; use the earlier terminal time |
+| Prune scheduling | On startup and at least hourly; bounded batches of at most 100 rows with an indexed cursor |
+
+Make limits explicit validated deployment configuration with these defaults;
+no unlimited sentinel. Reserve row capacity and worst-case thumbnail bytes
+transactionally for both owner and global budgets BEFORE upstream inputs.create.
+Concurrent creates and cleanup must not oversubscribe them. Release reservations
+only after committed files/counters or confirmed cleanup; count failed-delete
+files until actually removed. A missing/failed preview is allowed, but quota
+failure rejects create before any upstream call. Return a bounded quota error
+without another user's counts or identifiers. Do not evict live inputs or shorten
+their TTL to make room; after reclaiming eligible terminal records, refuse new
+creates if protected records/files still exhaust the budget.
+
+Expiry/revocation blocks new submit/usable restore immediately; the grace period
+is only metadata/preview retention. Owner-scoped unavailable metadata/thumbnail
+may remain during grace. It never authorizes reuse. Source Asset deletion does
+not start this grace or revoke the immutable snapshot. This implements bounded
+preview retention, not a permanent image archive.
+
+After grace, prune terminal metadata and its independent thumbnail unless a
+nonterminal/uncertain Studio execution still needs the mapping for existing job
+reconciliation. Active references are protected until Generation proves terminal
+state/resource release; ambiguous submissions are not terminal merely because
+of a local timeout. Protected records/bytes still count against quota, so they
+cannot enable unbounded retention. Retry cleanup in later bounded batches and
+use normal execution reconciliation, not a second job state machine.
+
+Completed execution history/Use settings does NOT pin an expired/revoked row or
+thumbnail forever. Keep its immutable request_snapshot with the original opaque
+referenceInputId and bounded scalar/expiry display context; it does not depend
+on a live row or thumbnail URL. Any relational execution->input link must be
+nullable/SET NULL on input pruning, never cascade-delete the Execution/Asset or
+rewrite the original snapshot. A pruned handle restores compatible scalars with
+input_unavailable/reselect-reference; thumbnail uses a missing-preview state.
+History thumbnail locators do not grant access after the mapping is gone.
+
+Use durable bounded deletion markers/accounting so DB/file failure or restart
+cannot forget outstanding thumbnails or orphan them without counting their
+bytes. Restrict cleanup to Studio-managed confined thumbnail locators; never
+delete source/result Assets, provider files or arbitrary paths. Recheck lifecycle
+and active-reference state under the cleanup/create guards before deletion.
+Upstream in-use/delete failure remains an owned retryable conflict; expired
+orphans are handled by Generation TTL, and unknown create responses never
+manufacture authorization. Test migration/restart, concurrent quota reservation,
+batch progress, failed file deletion and pruning of history-referenced inputs.
+
 Every get/delete/thumbnail/submit/restore resolves id AND owner_user_id before upstream
 calls. Known raw Generation IDs are not accepted as substitutes. Cross-user and unknown
 handles return the same 404 shape; no prompt/source leaks. Recheck upstream expiry/media
@@ -262,7 +328,9 @@ Ordering:
    before the non-idempotent jobs.submit.
 7. Submit once. Generation rechecks the pinned ready attestation under normal
    JobStore admission before provider await, including revocation/update races
-   and current infrastructure readiness for production img2img.
+   and current runtime fingerprint/epoch/profile evidence, then revision
+   continuity before provider POST after staging. Production img2img also
+   rechecks current infrastructure readiness.
    Preserve busy/submission_unknown behavior and no automatic retry.
 8. Synchronize returned assets through existing owner-scoped catalog flow.
 
@@ -309,6 +377,8 @@ legacy path. Do not reinterpret an old snapshot as a newly registered workflow.
 Use settings first checks Asset/Execution owner and selected workflow availability.
 An img2img restore must also check input mapping owner, revocation and upstream
 expiry. Source deletion alone does not invalidate a copied snapshot.
+Pruned mappings/thumbnails are an expected unavailable reference, even when the
+original Execution still exists; restore its scalars and require reselection.
 
 If the reference expired/revoked, restore compatible prompt/scalars with a
 clear reselect-reference message and keep Generate blocked. If the selected
@@ -356,6 +426,14 @@ attestation, version OR digest replacement, failed/retried verify, both independ
 readiness gates, revoke-between-build-and-submit, self-claimed readiness and
 browser policy bypass rejection. Test no local file picker/drag-drop/upload
 button, and document #30's unresolved local upload scope.
+Include runtime drift with unchanged Definition/name, evidence-unavailable
+discovery, drift after build/staging, pre-admission busy preserving ready and
+admitted failed reverify disabling it. Include per-user/global row/thumbnail
+limits, concurrent creates with zero upstream calls on quota rejection,
+expiry/revocation grace, active/unknown execution protection, history-linked
+pruning/SET NULL, missing-preview/reselect restore, indexed batch cleanup,
+failed-delete accounting and restart recovery. Source deletion alone must not
+prune a still-valid snapshot.
 
 Include a descriptor normalization/submit regression preserving non-default
 dimension/seed values under arbitrary public parameter keys. Upstream
