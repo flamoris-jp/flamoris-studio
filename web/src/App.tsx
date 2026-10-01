@@ -5,7 +5,8 @@ import { WorkflowPicker, ReferencePicker, workflowPayload, roleSpec, legalSeed }
 
 const sections = ['Image', 'Intelligence', 'Video', 'Music', 'Speech', 'Assets'] as const
 type ImageForm = ImageSettings & { sampler: string; scheduler: string; denoise: number; loras: NonNullable<ImageSettings['loras']> }
-export type ImageSubmission = Omit<ImageForm, 'seed'> & { seed?: number }
+type OptionalWorkflowFields = 'steps' | 'cfg' | 'sampler' | 'scheduler' | 'denoise'
+export type ImageSubmission = Omit<ImageForm, 'seed' | OptionalWorkflowFields> & Partial<Pick<ImageForm, OptionalWorkflowFields>> & { seed?: number }
 type NumericKey = 'width' | 'height' | 'steps' | 'cfg' | 'seed' | 'denoise'
 export type ImageDraft = Omit<ImageForm, NumericKey | 'loras'> & Record<NumericKey, string> & {
   loras: { name: string; strengthModel: string; strengthClip: string }[]

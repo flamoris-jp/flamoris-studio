@@ -126,3 +126,36 @@ test.each(['513', '', 'invalid'])('fixed dimensions override stale draft %s in s
   await click('Generate image')
   expect(submit).toHaveBeenCalledWith(expect.objectContaining({ width: 768, height: 1152 }))
 })
+
+
+test.each(['', 'invalid'])('inactive numeric and sampler drafts are omitted while preserving draft %s', async stale => {
+  const fixed: Workflow = { ...workflow, image: { ...workflow.image, mode: 'txt2img', dimensions: { mode: 'fixed', width: 512, height: 512 } },
+    parameters: { model: workflow.parameters.model, prompt: workflow.parameters.prompt } }
+  const form = { ...initialImageDraft('model'), positivePrompt: 'keep this prompt', steps: stale, cfg: stale, denoise: stale, seed: stale, sampler: '', scheduler: '' }
+  const payload = workflowPayload(form, fixed)!
+  for (const field of ['steps', 'cfg', 'denoise', 'seed', 'sampler', 'scheduler']) expect(payload).not.toHaveProperty(field)
+  expect(form.steps).toBe(stale)
+  const submit = vi.fn()
+  await act(async () => root.render(<ImageEditor discovery={{ ...discovery, workflows: [fixed] }}
+    form={{ ...form, workflowId: fixed.id, workflowKind: fixed.kind, definitionVersion: fixed.definitionVersion, definitionDigest: fixed.definitionDigest }}
+    setForm={vi.fn()} busy={false} csrf="csrf" onSubmit={submit} />))
+  const steps = [...host.querySelectorAll('label')].find(label => label.textContent === 'steps')!.querySelector('input')!
+  expect(steps.disabled).toBe(true)
+  expect(button('Generate image').disabled).toBe(false)
+  await click('Generate image')
+  expect(submit).toHaveBeenCalledWith(expect.objectContaining(payload))
+  for (const field of ['steps', 'cfg', 'denoise', 'seed', 'sampler', 'scheduler']) expect(submit.mock.calls[0][0]).not.toHaveProperty(field)
+})
+
+test('optional scalar defaults are materialized in payload; required and invalid controls remain blocked', () => {
+  const selected: Workflow = { ...workflow, image: { ...workflow.image, mode: 'txt2img', dimensions: { mode: 'fixed', width: 512, height: 512 } },
+    parameters: { model: workflow.parameters.model, prompt: workflow.parameters.prompt,
+      count: { type: 'integer', role: 'steps', required: false, default: 12, minimum: 1, maximum: 30 },
+      guidance: { type: 'number', role: 'cfg', required: false, default: 4, minimum: 0, maximum: 100 } } }
+  const form = { ...initialImageDraft('model'), positivePrompt: 'x', steps: '', cfg: '' }
+  expect(workflowPayload(form, selected)).toMatchObject({ steps: 12, cfg: 4 })
+  expect(workflowPayload({ ...form, steps: 'invalid' }, selected)).toBeNull()
+  selected.parameters.count.required = true
+  expect(workflowPayload(form, selected)).toBeNull()
+  expect(form.steps).toBe('')
+})

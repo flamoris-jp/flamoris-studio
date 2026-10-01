@@ -323,3 +323,36 @@ def test_reconciliation_does_not_overwrite_concurrent_changes(clients, mutation)
     asyncio.run(reconcile_expired(a.app))
     with factory() as db:
         assert db.get(Execution, execution_id).last_known_status == ("queued" if mutation == "mapping" else "cancelled")
+
+
+@pytest.mark.parametrize("editable", [False, True])
+def test_selected_submission_omits_constant_controls_and_snapshots_normalized_defaults(clients, editable):
+    a, _, gateway, factory = clients
+    csrf = register(a, "constant-controls@example.test")
+    raw = descriptor()
+    if editable:
+        raw["parameters"]["count"] = {"type": "integer", "role": "steps", "required": False, "default": 12}
+        raw["parameters"]["guidance"] = {"type": "number", "role": "cfg", "required": False, "default": 4}
+    selected = normalize_catalog({"descriptors": [raw]})[0]
+    calls = []
+
+    async def discover():
+        return {"available": True, "workflows": [selected]}
+
+    async def build(item, parameters):
+        calls.append(parameters)
+        return "workflow-private"
+
+    gateway.discover, gateway.build_selected = discover, build
+    body = {k:v for k,v in image_request().items() if k not in {"steps", "cfg"}}
+    body.update(workflowId=selected["id"], workflowKind="definition", definitionVersion=7, definitionDigest=selected["definitionDigest"])
+    response = a.post("/api/generation/image/jobs", json=body, headers={"X-CSRF-TOKEN": csrf})
+    assert response.status_code == 201, response.text
+    with factory() as db:
+        snapshot = db.get(Execution, uuid.UUID(response.json()["id"])).request_snapshot
+        if editable:
+            assert snapshot["steps"] == 12 and snapshot["cfg"] == 4
+            assert calls[0]["count"] == 12 and calls[0]["guidance"] == 4
+        else:
+            assert "steps" not in snapshot and "cfg" not in snapshot
+            assert "count" not in calls[0] and "guidance" not in calls[0]

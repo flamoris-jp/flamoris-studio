@@ -62,6 +62,9 @@ export function workflowPayload(form: ImageDraft, item: Workflow): ImageSubmissi
     const raw = form[key as 'width']
     values[key] = raw.trim() === '' ? undefined : Number(raw)
   }
+  for (const role of ['steps', 'cfg', 'seed', 'sampler', 'scheduler', 'denoise']) {
+    if (!roleSpec(item, role)) delete values[fields[role]]
+  }
   if (item.image.dimensions.mode === 'fixed') {
     values.width = item.image.dimensions.width
     values.height = item.image.dimensions.height
@@ -77,9 +80,12 @@ export function workflowPayload(form: ImageDraft, item: Workflow): ImageSubmissi
     const field = spec.role ? fields[spec.role] : undefined
     let value = field ? values[field] : form.additionalParameters?.[key] ?? spec.default
     if (spec.role === 'seed' && value === undefined) { if (!seedDomain(spec)) return null; continue }
-    if (value === undefined && !spec.required) continue
-    if (value === undefined) value = spec.default
+    if (value === undefined && !spec.required) {
+      value = spec.default
+      if (value === undefined) continue
+    }
     if (!validValue(spec, value)) return null
+    if (field) values[field] = value
   }
   return values as unknown as ImageSubmission
 }

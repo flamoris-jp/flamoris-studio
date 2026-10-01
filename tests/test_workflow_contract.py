@@ -99,3 +99,28 @@ def test_selected_request_scalar_types_are_exact():
     for key in ("width", "height", "steps", "cfg", "seed", "denoise"):
         with pytest.raises(ValueError):
             WorkflowImageRequest(**{**raw, key: True})
+
+
+@pytest.mark.parametrize("controls", [{}, {"steps": 11, "cfg": 4.5}, {"sampler": "euler", "scheduler": "normal", "denoise": 0.5}])
+def test_selected_request_accepts_omitted_controls_and_maps_only_descriptor_roles(controls):
+    from flamoris_studio.app import WorkflowImageRequest
+
+    item = normalize_catalog({"descriptors": [descriptor()]})[0]
+    item["parameters"]["count"] = {"type": "integer", "role": "steps", "required": False, "default": 12}
+    raw = {"workflowId": item["id"], "workflowKind": "definition", "positivePrompt": "x", "checkpoint": "model",
+           "width": 512, "height": 512, **controls}
+    values = WorkflowImageRequest(**raw).model_dump(mode="json", exclude_none=True)
+    params = map_parameters(item, values)
+    assert params["count"] == controls.get("steps", 12)
+    assert set(params) == {"model_key", "prompt_key", "w", "h", "random", "count"}
+
+
+def test_omitted_required_descriptor_control_is_rejected():
+    from flamoris_studio.app import WorkflowImageRequest
+
+    item = normalize_catalog({"descriptors": [descriptor()]})[0]
+    item["parameters"]["count"] = {"type": "integer", "role": "steps", "required": True}
+    raw = {"workflowId": item["id"], "workflowKind": "definition", "positivePrompt": "x", "checkpoint": "model", "width": 512, "height": 512}
+    values = WorkflowImageRequest(**raw).model_dump(mode="json", exclude_none=True)
+    with pytest.raises(ValueError):
+        map_parameters(item, values)

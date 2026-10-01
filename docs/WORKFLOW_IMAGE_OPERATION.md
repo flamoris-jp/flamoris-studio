@@ -82,3 +82,11 @@ after source deletion, quota rejection and retention evidence. Keep #30 open for
 local upload. Repository CI covers migration upgrade/downgrade, ownership, exact
 identity, seed domains, quota contention, ambiguous outcomes, cleanup retry,
 frontend picker/restore behavior, builds and the packaged container.
+
+
+Workflow submissions omit inactive steps, CFG, seed, sampler, scheduler and denoise
+controls without changing the preserved draft. Selected requests allow those
+fields to be absent; the descriptor alone determines required controls and
+optional defaults. Snapshots record normalized advertised values, including
+resolved defaults, rather than inventing values for graph-internal constants.
+Legacy automatic builtin requests retain their existing required-field contract.

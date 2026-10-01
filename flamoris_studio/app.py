@@ -25,7 +25,7 @@ from .media import Thumbnails, filename, inspect_image
 from .logging_setup import configure_logging
 from .managed_inputs import (Limits, owned_input, usable, input_view, reserve, check_input,
     create_snapshot, maintenance, prune, protected, quota_guard)
-from .workflow_contract import map_parameters
+from .workflow_contract import ROLES, map_parameters
 from .input_thumbnails import InputThumbnails
 from .transfer import CHUNK_BYTES, MAX_TRANSFER_BYTES, PreviewAdmission, chunk, metadata, read_with_retry
 
@@ -96,10 +96,12 @@ class WorkflowImageRequest(ImageRequest):
     # Keep scalar types exact before evaluating the descriptor-owned constraints.
     width: int = Field(ge=64, le=4096, multiple_of=8, strict=True)
     height: int = Field(ge=64, le=4096, multiple_of=8, strict=True)
-    steps: int = Field(strict=True)
-    cfg: float = Field(allow_inf_nan=False, strict=True)
+    steps: int | None = Field(default=None, strict=True)
+    cfg: float | None = Field(default=None, allow_inf_nan=False, strict=True)
     seed: int | None = Field(default=None, ge=0, le=MAX_SAFE_IMAGE_SEED, strict=True)
-    denoise: float = Field(default=1, allow_inf_nan=False, strict=True)
+    denoise: float | None = Field(default=None, allow_inf_nan=False, strict=True)
+    sampler: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_]+$", max_length=80)
+    scheduler: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_]+$", max_length=80)
     workflowId: str = Field(min_length=1, max_length=128)
     workflowKind: str = Field(pattern="^(builtin|definition)$")
     definitionVersion: int | None = Field(default=None, ge=1, strict=True)
@@ -518,15 +520,17 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         if reference and not needs_input:
             raise HTTPException(422, "This Workflow does not accept a reference image")
         upstream = await check_input(app.state.gateway, reference) if reference else None
-        values = input.model_dump(mode="json")
+        values = input.model_dump(mode="json", exclude_none=True)
         try:
             parameters = map_parameters(selected, values, upstream)
         except (ValueError, TypeError, KeyError) as exc:
             raise HTTPException(422, "Workflow parameters are unsupported") from exc
-        for _, spec in selected["parameters"].items():
-            if spec.get("role") == "seed":
-                key = next(k for k,v in selected["parameters"].items() if v is spec)
-                values["seed"] = parameters.get(key)
+        for role in ("steps", "cfg", "seed", "sampler", "scheduler", "denoise"):
+            values.pop(ROLES[role], None)
+        for key, spec in selected["parameters"].items():
+            role = spec.get("role")
+            if role in ROLES and role not in {"initial_image", "loras"} and key in parameters:
+                values[ROLES[role]] = parameters[key]
         dimensions = selected["image"].get("dimensions", {})
         if dimensions.get("mode") == "fixed":
             values.update(width=dimensions["width"], height=dimensions["height"])
