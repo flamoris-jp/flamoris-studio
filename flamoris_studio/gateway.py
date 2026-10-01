@@ -3,6 +3,7 @@ import os
 import logging
 import time
 from contextlib import asynccontextmanager
+from .workflow_contract import normalize_catalog
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
@@ -77,13 +78,43 @@ class GenerationGateway:
             return {"available": False, "templates": [], "checkpoints": [], "loras": []}
         checkpoints = await self._json("models.list", {"kind": "checkpoint"})
         loras = await self._json("models.list", {"kind": "lora"})
-        return {"available": True, "templates": found.get("workflow_templates", []),
+        catalog = await self._json("workflows.list")
+        try:
+            descriptors = normalize_catalog(catalog)
+        except (ValueError, TypeError):
+            raise GatewayError("upstream_failure") from None
+        return {"available": True, "workflows": descriptors,
+                "managedInputReady": health.get("managed_input_support", {}).get("ready") is True, "templates": found.get("workflow_templates", []),
                 "checkpoints": [{"id": x["id"], "name": x["name"]} for x in checkpoints["models"]],
                 "loras": [{"id": x["id"], "name": x["name"]} for x in loras["models"]]}
 
     async def build(self, template: str, parameters: dict):
         result = await self._json("workflows.build", {"template": template, "parameters": parameters})
         return result["workflow_id"]
+
+    async def build_selected(self, descriptor, parameters):
+        args = {"template": descriptor["id"], "parameters": parameters}
+        if descriptor["kind"] == "definition":
+            args.update(definition_version=descriptor["definitionVersion"],
+                        definition_digest=descriptor["definitionDigest"], require_ready=True)
+        result = await self._json("workflows.build", args)
+        if result.get("template") != descriptor["id"] or result.get("parameters") != parameters:
+            raise GatewayError("validation")
+        if descriptor["kind"] == "definition" and (
+            result.get("definition_version") != descriptor["definitionVersion"] or
+            result.get("definition_digest") != descriptor["definitionDigest"] or
+            result.get("require_ready") is not True):
+            raise GatewayError("validation")
+        return result["workflow_id"]
+
+    async def create_input(self, asset_id):
+        return await self._json("inputs.create", {"asset_id": asset_id})
+
+    async def get_input(self, input_id):
+        return await self._json("inputs.get", {"input_id": input_id})
+
+    async def delete_input(self, input_id):
+        return await self._json("inputs.delete", {"input_id": input_id})
 
     async def submit(self, workflow_id: str):
         return await self._json("jobs.submit", {"workflow_id": workflow_id})
@@ -132,3 +163,4 @@ class GenerationGateway:
         if not isinstance(result.structured_content, dict):
             raise GatewayError("upstream_failure")
         return result.structured_content
+

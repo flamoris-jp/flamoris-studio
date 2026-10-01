@@ -7,12 +7,13 @@ import uuid
 import time
 from collections import defaultdict, deque
 from datetime import timedelta
+from contextlib import asynccontextmanager
 
 from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -22,6 +23,10 @@ from .db import Asset, Execution, ImagePreference, ImageStyle, LoginSession, Use
 from .gateway import GatewayError, GenerationGateway
 from .media import Thumbnails, filename, inspect_image
 from .logging_setup import configure_logging
+from .managed_inputs import (Limits, owned_input, usable, input_view, reserve, check_input,
+    create_snapshot, maintenance, prune, protected, quota_guard)
+from .workflow_contract import map_parameters
+from .input_thumbnails import InputThumbnails
 from .transfer import CHUNK_BYTES, MAX_TRANSFER_BYTES, PreviewAdmission, chunk, metadata, read_with_retry
 
 # 512 KiB of raw image data stays below a 1 MiB SSE event even after base64
@@ -64,6 +69,7 @@ class Lora(BaseModel):
 
 
 class ImageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     positivePrompt: str = Field(min_length=1, max_length=20000)
     negativePrompt: str = Field(default="", max_length=20000)
     width: int = Field(ge=64, le=4096, multiple_of=8)
@@ -84,6 +90,20 @@ class ImageRequest(BaseModel):
                 "sampler": self.sampler, "scheduler": self.scheduler, "denoise": self.denoise,
                 "loras": [{"name": item.name, "strength_model": item.strengthModel,
                            "strength_clip": item.strengthClip} for item in self.loras]}
+
+
+class WorkflowImageRequest(ImageRequest):
+    workflowId: str = Field(min_length=1, max_length=128)
+    workflowKind: str = Field(pattern="^(builtin|definition)$")
+    definitionVersion: int | None = Field(default=None, ge=1, strict=True)
+    definitionDigest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+    referenceInputId: uuid.UUID | None = None
+    additionalParameters: dict = Field(default_factory=dict, max_length=64)
+
+
+class InputCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    assetId: uuid.UUID
 
 
 class StyleInput(BaseModel):
@@ -170,10 +190,22 @@ def set_status(db: Session, execution: Execution, status: str):
 
 
 def create_app(session_factory=None, gateway=None, thumbnails=None):
-    app = FastAPI(title="FLAMORIS Studio")
+    @asynccontextmanager
+    async def lifespan(app):
+        task = asyncio.create_task(maintenance(app))
+        try:
+            yield
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    app = FastAPI(title="FLAMORIS Studio", lifespan=lifespan)
     app.state.session_factory = session_factory or make_session_factory()
     app.state.gateway = gateway or GenerationGateway()
     app.state.thumbnails = thumbnails or Thumbnails(os.getenv("STUDIO_THUMBNAIL_DIR", ""))
+    root = app.state.thumbnails.root
+    app.state.input_thumbnails = InputThumbnails(str(root / "inputs") if root else "")
+    app.state.input_limits = Limits.from_env()
     app.state.download_slots = asyncio.Semaphore(2)
     app.state.preview_admission = PreviewAdmission(app.state.download_slots)
     app.state.prepare_slots = asyncio.Semaphore(1)
@@ -401,8 +433,127 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         db.commit()
         return {"ok": True}
 
+    @app.post("/api/generation/inputs", status_code=201)
+    async def new_input(body: InputCreate, request: Request, db: Session = Depends(database),
+                        user_id: uuid.UUID = Depends(current_user)):
+        asset = db.scalar(select(Asset).where(Asset.id == body.assetId, Asset.user_id == user_id,
+                                             Asset.availability != "deleted"))
+        if asset is None:
+            raise HTTPException(404)
+        owned(db, asset.execution_id, user_id)
+        if asset.mime_type not in {"image/png", "image/jpeg", "image/webp"} or asset.media_kind != "image":
+            raise HTTPException(422, "Unsupported reference image")
+        row = reserve(db, user_id, asset, app.state.input_limits)
+        async def source_bytes():
+            current = owned_asset(db, asset.execution_id, asset.id, user_id)
+            return await get_content(current, db, request, user_id)
+        return await create_snapshot(app, db, row, source_bytes)
+
+    @app.get("/api/generation/inputs/{input_id}")
+    async def get_input(input_id: uuid.UUID, db: Session = Depends(database),
+                        user_id: uuid.UUID = Depends(current_user)):
+        row = owned_input(db, input_id, user_id)
+        if usable(row):
+            try:
+                await check_input(app.state.gateway, row)
+            except GatewayError:
+                return {**input_view(row), "available": False}
+        return input_view(row)
+
+    @app.delete("/api/generation/inputs/{input_id}")
+    async def delete_input(input_id: uuid.UUID, db: Session = Depends(database),
+                           user_id: uuid.UUID = Depends(current_user)):
+        row = owned_input(db, input_id, user_id)
+        quota_guard(db)
+        if protected(db, row.id):
+            raise HTTPException(409, "Reference image is in use")
+        old_state = row.state
+        row.state = "revoking"
+        db.commit()
+        try:
+            if row.upstream_input_id:
+                result = await app.state.gateway.delete_input(row.upstream_input_id)
+                if result.get("deleted") is not True:
+                    raise GatewayError("upstream_failure")
+            row.state = "revoked"
+            row.terminal_at = min(row.expires_at, now())
+            db.commit()
+        except GatewayError:
+            row.state = old_state
+            db.commit()
+            raise HTTPException(409, "Reference deletion could not be confirmed; retry after reconciliation") from None
+        return input_view(row)
+
+    @app.get("/api/generation/inputs/{input_id}/thumbnail")
+    def input_thumbnail(input_id: uuid.UUID, db: Session = Depends(database),
+                        user_id: uuid.UUID = Depends(current_user)):
+        row = owned_input(db, input_id, user_id)
+        terminal = min(row.expires_at, row.terminal_at) if row.terminal_at else row.expires_at
+        if terminal + timedelta(hours=24) <= now():
+            raise HTTPException(404)
+        data = app.state.input_thumbnails.load(row.thumbnail_locator) if row.thumbnail_locator else None
+        if data is None:
+            raise HTTPException(404)
+        return Response(data, media_type="image/webp", headers={"Cache-Control": "private, no-store"})
+
+    async def selected_submit(input, db, user_id):
+        reference = owned_input(db, input.referenceInputId, user_id) if input.referenceInputId else None
+        if reference and not usable(reference):
+            raise HTTPException(409, "Reference image unavailable; choose another Asset")
+        discovery = await app.state.gateway.discover()
+        selected = next((item for item in discovery.get("workflows", []) if item["id"] == input.workflowId), None)
+        if not discovery["available"] or not selected or not selected["selectable"] or selected["kind"] != input.workflowKind:
+            raise HTTPException(409, "Workflow unavailable; select a ready Workflow")
+        if selected["kind"] == "definition" and (selected["definitionVersion"] != input.definitionVersion or selected["definitionDigest"] != input.definitionDigest):
+            raise HTTPException(409, "Workflow changed; select its current ready version")
+        needs_input = selected["image"].get("mode") == "img2img"
+        if needs_input and (not discovery.get("managedInputReady") or not reference):
+            raise HTTPException(409, "Reference image unavailable; choose an Asset when the service is ready")
+        if reference and not needs_input:
+            raise HTTPException(422, "This Workflow does not accept a reference image")
+        upstream = await check_input(app.state.gateway, reference) if reference else None
+        values = input.model_dump(mode="json")
+        try:
+            parameters = map_parameters(selected, values, upstream)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise HTTPException(422, "Workflow parameters are unsupported") from exc
+        for _, spec in selected["parameters"].items():
+            if spec.get("role") == "seed":
+                key = next(k for k,v in selected["parameters"].items() if v is spec)
+                values["seed"] = parameters.get(key)
+        dimensions = selected["image"].get("dimensions", {})
+        if dimensions.get("mode") == "fixed":
+            values.update(width=dimensions["width"], height=dimensions["height"])
+        snapshot = {**values, "snapshotVersion": 2,
+                    "normalizedParameters": {k:v for k,v in parameters.items() if selected["parameters"][k].get("type") != "managed_input"}}
+        quota_guard(db)
+        if reference:
+            db.refresh(reference)
+            if not usable(reference):
+                raise HTTPException(409, "Reference image unavailable")
+        execution = Execution(user_id=user_id, workflow=selected["id"],
+                              reference_input_id=reference.id if reference else None,
+                              request_snapshot=snapshot)
+        db.add(execution)
+        db.commit()
+        try:
+            workflow = await app.state.gateway.build_selected(selected, parameters)
+        except GatewayError:
+            set_status(db, execution, "failed")
+            raise
+        try:
+            job = await app.state.gateway.submit(workflow)
+            execution.upstream_job_id = job["job_id"]
+            set_status(db, execution, job["status"])
+        except GatewayError as exc:
+            set_status(db, execution, "busy" if exc.code == "busy" else "submission_unknown")
+            raise
+        return view(execution, db)
+
     @app.post("/api/generation/image/jobs", status_code=201)
-    async def submit(input: ImageRequest, db: Session = Depends(database), user_id: uuid.UUID = Depends(current_user)):
+    async def submit(input: WorkflowImageRequest | ImageRequest, db: Session = Depends(database), user_id: uuid.UUID = Depends(current_user)):
+        if isinstance(input, WorkflowImageRequest):
+            return await selected_submit(input, db, user_id)
         capability = await app.state.gateway.discover()
         template = "text-to-image-lora" if input.loras else "text-to-image"
         if not capability["available"] or template not in capability["templates"]:
@@ -436,7 +587,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 "nextOffset": offset + limit if len(rows) > limit else None}
 
     @app.get("/api/assets/{asset_id}")
-    def generated_asset_detail(asset_id: uuid.UUID, db: Session = Depends(database),
+    async def generated_asset_detail(asset_id: uuid.UUID, db: Session = Depends(database),
                                user_id: uuid.UUID = Depends(current_user)):
         row = db.execute(select(Asset, Execution).join(Execution, Asset.execution_id == Execution.id)
                          .where(Asset.id == asset_id, Asset.user_id == user_id,
@@ -446,9 +597,32 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         asset, execution = row
         request = execution.request_snapshot if isinstance(execution.request_snapshot, dict) else {}
         settings = {key: request[key] for key in ("positivePrompt", "negativePrompt", "checkpoint",
-                    "seed", "steps", "cfg", "width", "height", "loras", "sampler", "scheduler", "denoise") if key in request}
+                    "seed", "steps", "cfg", "width", "height", "loras", "sampler", "scheduler", "denoise", "workflowId", "workflowKind", "definitionVersion", "definitionDigest",
+                    "referenceInputId", "additionalParameters") if key in request}
+        reference = None
+        if settings.get("referenceInputId"):
+            try:
+                handle = uuid.UUID(settings["referenceInputId"])
+                mapping = owned_input(db, handle, user_id)
+                reference = input_view(mapping)
+                if usable(mapping):
+                    try:
+                        await check_input(app.state.gateway, mapping)
+                    except (GatewayError, HTTPException):
+                        reference["available"] = False
+            except (ValueError, HTTPException):
+                reference = {"id": settings["referenceInputId"], "available": False, "thumbnailUrl": None}
+        workflow_available = True
+        if settings.get("workflowId"):
+            try:
+                catalog = await app.state.gateway.discover()
+                item = next((d for d in catalog.get("workflows", []) if d["id"] == settings["workflowId"]), None)
+                workflow_available = bool(item and item["selectable"] and item["definitionVersion"] == settings.get("definitionVersion") and item["definitionDigest"] == settings.get("definitionDigest"))
+            except GatewayError:
+                workflow_available = False
         return {**asset_view(asset), "state": execution.last_known_status,
-                "submittedAt": execution.submitted_at.isoformat(), "settings": settings}
+                "submittedAt": execution.submitted_at.isoformat(), "settings": settings,
+                "referenceInput": reference, "workflowAvailable": workflow_available}
 
     @app.post("/api/assets/delete")
     async def delete_generated_assets(input: DeleteAssetsRequest, db: Session = Depends(database),
@@ -725,3 +899,4 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 def production_app():
     configure_logging().info("Studio process starting")
     return create_app()
+

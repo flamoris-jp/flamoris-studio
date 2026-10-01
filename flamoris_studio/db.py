@@ -42,6 +42,7 @@ class Execution(Base):
     category: Mapped[str] = mapped_column(String(32), default="image")
     operation: Mapped[str] = mapped_column(String(64), default="image.generate")
     workflow: Mapped[str] = mapped_column(String(128))
+    reference_input_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managed_inputs.id", ondelete="SET NULL"), index=True)
     upstream_job_id: Mapped[str | None] = mapped_column(String(256))
     request_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
     last_known_status: Mapped[str] = mapped_column(String(32), default="submitting")
@@ -103,8 +104,28 @@ class Asset(Base):
     extra_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
 
 
+class ManagedInput(Base):
+    __tablename__ = "managed_inputs"
+    __table_args__ = (Index("ix_managed_input_cleanup", "terminal_at", "id"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    source_asset_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("assets.id", ondelete="SET NULL"))
+    upstream_input_id: Mapped[str | None] = mapped_column(String(64), unique=True)
+    source_upstream_id: Mapped[str | None] = mapped_column(String(256))
+    checksum: Mapped[str | None] = mapped_column(String(64))
+    mime_type: Mapped[str | None] = mapped_column(String(64))
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="reserved")
+    thumbnail_locator: Mapped[str | None] = mapped_column(String(64))
+    accounted_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=256 * 1024)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 def make_session_factory():
     dsn = os.environ.get("STUDIO_DATABASE_URL")
     if not dsn:
         raise RuntimeError("STUDIO_DATABASE_URL must be configured")
     return sessionmaker(create_engine(dsn, pool_pre_ping=True), expire_on_commit=False)
+
