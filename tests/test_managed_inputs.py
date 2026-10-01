@@ -344,12 +344,13 @@ def test_selected_submission_omits_constant_controls_and_snapshots_normalized_de
         return "workflow-private"
 
     gateway.discover, gateway.build_selected = discover, build
-    body = {k:v for k,v in image_request().items() if k not in {"steps", "cfg"}}
+    body = {k:v for k,v in image_request().items() if k not in {"steps", "cfg", "seed"}}
     body.update(workflowId=selected["id"], workflowKind="definition", definitionVersion=7, definitionDigest=selected["definitionDigest"])
     response = a.post("/api/generation/image/jobs", json=body, headers={"X-CSRF-TOKEN": csrf})
     assert response.status_code == 201, response.text
     with factory() as db:
         snapshot = db.get(Execution, uuid.UUID(response.json()["id"])).request_snapshot
+        assert 4 <= snapshot["seed"] <= 32 and snapshot["seed"] % 4 == 0
         if editable:
             assert snapshot["steps"] == 12 and snapshot["cfg"] == 4
             assert calls[0]["count"] == 12 and calls[0]["guidance"] == 4
