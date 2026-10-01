@@ -3,6 +3,7 @@
 import io
 import os
 import re
+import stat
 from pathlib import Path
 
 from PIL import Image
@@ -70,8 +71,11 @@ class InputThumbnails:
         file = None
         try:
             try:
-                file = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+                file = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
             except FileNotFoundError:
+                return None
+            info = os.fstat(file)
+            if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= 256 * 1024:
                 return None
             raw = os.read(file, 256 * 1024 + 1)
             return raw if 0 < len(raw) <= 256 * 1024 else None

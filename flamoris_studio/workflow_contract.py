@@ -1,6 +1,7 @@
 """Graph-free Image descriptors, role mapping and exact integer seed domains."""
 
 import math
+import re
 import secrets
 
 MAX_SEED = 2**53 - 1
@@ -54,6 +55,8 @@ def validate_value(spec, value):
         if not isinstance(value, str) or not spec.get("min_length", 0) <= len(
             value
         ) <= spec.get("max_length", 20000):
+            raise ValueError("unsupported_parameter")
+        if "pattern" in spec and re.fullmatch(spec["pattern"], value) is None:
             raise ValueError("unsupported_parameter")
     elif kind == "ordered_loras":
         if not isinstance(value, list) or not spec.get("min_items", 0) <= len(
@@ -109,8 +112,11 @@ def seed_domain(spec):
     divisor = spec.get("multiple_of", 1)
     if type(divisor) is not int or divisor <= 0:
         raise ValueError("unsupported_parameter")
-    lower = max(0, math.ceil(spec.get("minimum", 0)))
-    upper = min(MAX_SEED, math.floor(spec.get("maximum", MAX_SEED)))
+    limits = [spec.get("minimum", 0), spec.get("maximum", MAX_SEED)]
+    if any(type(v) not in (int, float) or not math.isfinite(v) for v in limits):
+        raise ValueError("unsupported_parameter")
+    lower = max(0, math.ceil(limits[0]))
+    upper = min(MAX_SEED, math.floor(limits[1]))
     if "enum" in spec:
         values = [
             x
@@ -145,9 +151,21 @@ def normalize_descriptor(raw):
     kind = raw.get("kind")
     image = raw.get("image", {})
     readiness = raw.get("readiness", {})
+    if not isinstance(image, dict) or not isinstance(readiness, dict):
+        raise ValueError("unsupported_parameter")
+    dimensions = image.get("dimensions", {})
+    if not isinstance(dimensions, dict):
+        raise ValueError("unsupported_parameter")
     supported = (
         raw.get("metadata_schema_version") == 2 and image.get("profile") == "image-v1"
+        and image.get("mode") in {"txt2img", "img2img"}
+        and dimensions.get("mode") in {"fixed", "parameters"}
     )
+    if dimensions.get("mode") == "fixed" and any(
+        type(dimensions.get(k)) is not int or not 64 <= dimensions[k] <= 4096 or dimensions[k] % 8
+        for k in ("width", "height")
+    ):
+        supported = False
     parameters = {}
     roles = set()
     source = raw.get("parameters", {})
@@ -157,11 +175,58 @@ def normalize_descriptor(raw):
         if not isinstance(key, str) or len(key) > 128 or not isinstance(value, dict):
             raise ValueError("unsupported_parameter")
         spec = {k: v for k, v in value.items() if k in SPEC_FIELDS}
+        # All public metadata is bounded scalar data; never forward graph bindings
+        # or arbitrary nested objects from upstream metadata.
+        spec.pop("items", None)
+        if spec.get("type") not in {"string", "integer", "number", "boolean", "ordered_loras", "managed_input"}:
+            raise ValueError("unsupported_parameter")
+        for field in ("minimum", "maximum"):
+            if field in spec and (type(spec[field]) not in (int, float) or not math.isfinite(spec[field])):
+                raise ValueError("unsupported_parameter")
+        for field in ("min_length", "max_length", "min_items", "max_items"):
+            if field in spec and (type(spec[field]) is not int or not 0 <= spec[field] <= 20000):
+                raise ValueError("unsupported_parameter")
+        for field in ("required",):
+            if field in spec and type(spec[field]) is not bool:
+                raise ValueError("unsupported_parameter")
+        for field in ("model_kind", "pattern"):
+            if field in spec and (not isinstance(spec[field], str) or len(spec[field]) > 1024):
+                raise ValueError("unsupported_parameter")
+        if "pattern" in spec:
+            try:
+                re.compile(spec["pattern"])
+            except re.error as exc:
+                raise ValueError("unsupported_parameter") from exc
+        if "media_types" in spec and (
+            not isinstance(spec["media_types"], list) or len(spec["media_types"]) > 8
+            or any(v not in {"image/png", "image/jpeg", "image/webp"} for v in spec["media_types"])
+        ):
+            raise ValueError("unsupported_parameter")
+        if "enum" in spec and (
+            not isinstance(spec["enum"], list) or not 1 <= len(spec["enum"]) <= 64
+            or any(type(v) not in (str, int, float, bool) or (isinstance(v, str) and len(v) > 20000)
+                   or (type(v) in (int, float) and not math.isfinite(v)) for v in spec["enum"])
+        ):
+            raise ValueError("unsupported_parameter")
+        if "default" in spec:
+            validate_value(spec, spec["default"])
         role = spec.get("role")
+        if role is not None and not isinstance(role, str):
+            raise ValueError("unsupported_parameter")
         if role is not None:
             if role not in ROLES or role in roles:
                 supported = False
             roles.add(role)
+            expected_type = {
+                "checkpoint": "string", "positive_prompt": "string", "negative_prompt": "string",
+                "width": "integer", "height": "integer", "steps": "integer", "seed": "integer",
+                "cfg": "number", "denoise": "number", "sampler": "string", "scheduler": "string",
+                "loras": "ordered_loras", "initial_image": "managed_input",
+            }.get(role)
+            if spec.get("type") != expected_type:
+                supported = False
+        elif spec["type"] in {"ordered_loras", "managed_input"}:
+            supported = False
         if spec.get("type") == "managed_input" and role != "initial_image":
             supported = False
         if role == "seed":
@@ -189,7 +254,9 @@ def normalize_descriptor(raw):
         ready = (
             ready
             and type(raw.get("definition_version")) is int
+            and raw["definition_version"] > 0
             and isinstance(raw.get("definition_digest"), str)
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", raw["definition_digest"]) is not None
         )
         ready = (
             ready
@@ -213,17 +280,18 @@ def normalize_descriptor(raw):
             for k in (
                 "profile",
                 "mode",
-                "dimensions",
                 "reference_semantics",
                 "resize_policy",
             )
             if k in image
-        },
+        } | {"dimensions": {k: dimensions[k] for k in ("mode", "width", "height") if k in dimensions}},
         "parameters": parameters,
     }
 
 
 def normalize_catalog(raw):
+    if not isinstance(raw, dict):
+        raise ValueError("unsupported_parameter")
     entries = raw.get("descriptors", [])
     if not isinstance(entries, list) or len(entries) > 128:
         raise ValueError("unsupported_parameter")

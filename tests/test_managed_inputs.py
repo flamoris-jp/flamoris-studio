@@ -11,7 +11,7 @@ from test_workflow_contract import descriptor
 
 from flamoris_studio.db import Asset, Execution, ManagedInput, now
 from flamoris_studio.gateway import GatewayError
-from flamoris_studio.managed_inputs import Limits, prune
+from flamoris_studio.managed_inputs import Limits, prune, quota_guard
 from flamoris_studio.workflow_contract import normalize_catalog
 
 clients = studio_clients
@@ -142,3 +142,71 @@ def test_selected_workflow_owner_first_both_gates_and_seed_snapshot(clients):
         assert "source" not in snapshot["normalizedParameters"]
         assert execution.reference_input_id == uuid.UUID(attached["id"])
     assert a.delete("/api/generation/inputs/" + attached["id"], headers={"X-CSRF-TOKEN": ca}).status_code == 409
+
+
+def test_quota_lock_and_byte_quota_reject_before_upstream(clients):
+    a, _, gateway, factory = clients
+    csrf = register(a, "input-lock@example.test")
+    asset = source(a, csrf)
+    prepare_gateway(gateway)
+    path = "/api/generation/inputs"
+    with factory() as db:
+        quota_guard(db)
+        assert a.post(path, json={"assetId": asset["id"]}, headers={"X-CSRF-TOKEN": csrf}).status_code == 409
+        assert gateway.input_calls == []
+    a.app.state.input_limits = Limits(global_bytes=256 * 1024 - 1)
+    assert a.post(path, json={"assetId": asset["id"]}, headers={"X-CSRF-TOKEN": csrf}).status_code == 409
+    assert gateway.input_calls == []
+
+
+def test_unknown_create_is_charged_and_never_replayed(clients):
+    a, _, gateway, factory = clients
+    csrf = register(a, "input-unknown@example.test")
+    asset = source(a, csrf)
+    prepare_gateway(gateway)
+    calls = []
+
+    async def unknown(key):
+        calls.append(key)
+        raise GatewayError("unavailable")
+
+    gateway.create_input = unknown
+    path = "/api/generation/inputs"
+    assert a.post(path, json={"assetId": asset["id"]}, headers={"X-CSRF-TOKEN": csrf}).status_code == 503
+    assert len(calls) == 1
+    with factory() as db:
+        row = db.scalar(select(ManagedInput))
+        assert row.state == "create_unknown" and row.accounted_bytes == 256 * 1024
+        assert row.upstream_input_id is None
+
+
+def test_uncertain_delete_and_thumbnail_cleanup_remain_unavailable_and_accounted(clients, monkeypatch):
+    a, _, gateway, factory = clients
+    csrf = register(a, "input-delete@example.test")
+    asset = source(a, csrf)
+    prepare_gateway(gateway)
+    path = "/api/generation/inputs"
+    item = a.post(path, json={"assetId": asset["id"]}, headers={"X-CSRF-TOKEN": csrf}).json()
+
+    async def unknown(key):
+        raise GatewayError("unavailable")
+
+    gateway.delete_input = unknown
+    assert a.delete(path + "/" + item["id"], headers={"X-CSRF-TOKEN": csrf}).status_code == 409
+    assert not a.get(path + "/" + item["id"]).json()["available"]
+    real_delete = a.app.state.input_thumbnails.delete
+
+    def failure(locator):
+        raise OSError("storage busy")
+
+    monkeypatch.setattr(a.app.state.input_thumbnails, "delete", failure)
+    with factory() as db:
+        row = db.get(ManagedInput, uuid.UUID(item["id"]))
+        row.expires_at = row.terminal_at = now() - timedelta(hours=50)
+        before = row.accounted_bytes
+        db.commit()
+        assert prune(db, a.app.state.input_thumbnails) == 0
+        db.refresh(row)
+        assert row.state == "pending_delete" and row.accounted_bytes == before
+        monkeypatch.setattr(a.app.state.input_thumbnails, "delete", real_delete)
+        assert prune(db, a.app.state.input_thumbnails) == 1

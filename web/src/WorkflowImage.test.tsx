@@ -42,18 +42,35 @@ async function selectWorkflow() {
 }
 
 test('initial selection, attach, remove and replace obey both readiness gates', async () => {
-  await show(); await selectWorkflow()
+  const submit = await show(); await selectWorkflow()
   expect(button('Generate image').disabled).toBe(true)
   expect(button('Choose from Assets').disabled).toBe(false)
   await click('Choose from Assets'); await click('Source.png')
   expect(api.createInput).toHaveBeenCalledWith('asset-a', 'csrf')
   expect(button('Generate image').disabled).toBe(false)
+  expect(submit).not.toHaveBeenCalled()
+  await click('Generate image')
+  expect(submit).toHaveBeenCalledTimes(1)
+  expect(submit.mock.calls[0][0]).toMatchObject({ workflowId: 'reference', definitionVersion: 1, definitionDigest: workflow.definitionDigest, referenceInputId: 'owned', positivePrompt: 'keep this prompt' })
   await click('Remove reference')
   expect(button('Generate image').disabled).toBe(true)
   await click('Choose from Assets'); await click('Source.png')
   expect(button('Generate image').disabled).toBe(false)
   expect(host.querySelector('textarea')?.value).toBe('keep this prompt')
   expect(host.querySelector('input[type="file"]')).toBeNull()
+})
+
+test('ready model domain and fixed dimensions remain explicit in the editor', async () => {
+  await show({ ...discovery, checkpoints: [...discovery.checkpoints, { id: 'other', name: 'unverified' }], workflows: [{ ...workflow,
+    image: { ...workflow.image, dimensions: { mode: 'fixed', width: 768, height: 1152 } },
+    parameters: { ...workflow.parameters, model: { ...workflow.parameters.model, enum: ['model'] } } }] })
+  await selectWorkflow()
+  const model = host.querySelectorAll('select')[1]
+  expect([...model.options].map(option => option.value)).not.toContain('unverified')
+  const width = [...host.querySelectorAll('label')].find(label => label.textContent === 'width')!.querySelector('input')!
+  expect(width.disabled).toBe(true)
+  expect(width.value).toBe('768')
+  expect(button('512 × 512').disabled).toBe(true)
 })
 
 test('missing infrastructure disables picker; empty Assets do not enable generate', async () => {

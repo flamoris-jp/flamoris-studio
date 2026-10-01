@@ -55,6 +55,8 @@ def test_singleton_typed_seed_domains(spec, expected):
     {"type": "integer", "multiple_of": True},
     {"type": "integer", "multiple_of": 0.5},
     {"type": "number"},
+    {"type": "integer", "minimum": True},
+    {"type": "integer", "maximum": float("inf")},
 ])
 def test_empty_invalid_seed_domains_fail_closed(spec):
     with pytest.raises(ValueError):
@@ -71,3 +73,29 @@ def test_managed_injection_and_unsupported_loras_rejected():
     with pytest.raises(ValueError):
         map_parameters(item, values)
     assert map_parameters(item, values, "owned-id")["source"] == "owned-id"
+
+
+@pytest.mark.parametrize("field,value", [("image", []), ("readiness", None), ("parameters", [])])
+def test_malformed_catalog_entries_do_not_break_discovery(field, value):
+    raw = descriptor()
+    raw[field] = value
+    assert normalize_catalog({"descriptors": [raw]}) == []
+
+
+def test_wrong_role_type_and_noncanonical_identity_never_selectable():
+    raw = descriptor()
+    raw["parameters"]["w"]["type"] = "string"
+    raw["parameters"]["w"].pop("multiple_of")
+    assert not normalize_catalog({"descriptors": [raw]})[0]["selectable"]
+    raw = descriptor()
+    raw["definition_digest"] = raw["readiness"]["definition_digest"] = "unknown"
+    assert not normalize_catalog({"descriptors": [raw]})[0]["selectable"]
+
+
+def test_selected_request_scalar_types_are_exact():
+    from flamoris_studio.app import WorkflowImageRequest
+    from test_studio import image_request
+    raw = {**image_request(), "workflowId": "arbitrary-image", "workflowKind": "definition"}
+    for key in ("width", "height", "steps", "cfg", "seed", "denoise"):
+        with pytest.raises(ValueError):
+            WorkflowImageRequest(**{**raw, key: True})

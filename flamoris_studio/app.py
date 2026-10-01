@@ -93,6 +93,13 @@ class ImageRequest(BaseModel):
 
 
 class WorkflowImageRequest(ImageRequest):
+    # Keep scalar types exact before evaluating the descriptor-owned constraints.
+    width: int = Field(ge=64, le=4096, multiple_of=8, strict=True)
+    height: int = Field(ge=64, le=4096, multiple_of=8, strict=True)
+    steps: int = Field(strict=True)
+    cfg: float = Field(allow_inf_nan=False, strict=True)
+    seed: int | None = Field(default=None, ge=0, le=MAX_SAFE_IMAGE_SEED, strict=True)
+    denoise: float = Field(default=1, allow_inf_nan=False, strict=True)
     workflowId: str = Field(min_length=1, max_length=128)
     workflowKind: str = Field(pattern="^(builtin|definition)$")
     definitionVersion: int | None = Field(default=None, ge=1, strict=True)
@@ -467,7 +474,6 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         quota_guard(db)
         if protected(db, row.id):
             raise HTTPException(409, "Reference image is in use")
-        old_state = row.state
         row.state = "revoking"
         db.commit()
         try:
@@ -479,8 +485,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             row.terminal_at = min(row.expires_at, now())
             db.commit()
         except GatewayError:
-            row.state = old_state
-            db.commit()
+            # The delete may have committed upstream. Keep the input unavailable
+            # until an explicit delete retry or TTL reconciliation confirms it.
             raise HTTPException(409, "Reference deletion could not be confirmed; retry after reconciliation") from None
         return input_view(row)
 
@@ -899,4 +905,3 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 def production_app():
     configure_logging().info("Studio process starting")
     return create_app()
-

@@ -6,6 +6,7 @@ const fields: Record<string, keyof ImageDraft> = { checkpoint: 'checkpoint', pos
 export const roleSpec = (item: Workflow | undefined, role: string) => Object.values(item?.parameters ?? {}).find(spec => spec.role === role)
 
 export function validValue(spec: ParameterSpec, value: unknown): boolean {
+  if (spec.type === 'boolean' && typeof value !== 'boolean') return false
   if (spec.type === 'integer' && (!Number.isSafeInteger(value) || typeof value !== 'number')) return false
   if (spec.type === 'number' && (typeof value !== 'number' || !Number.isFinite(value))) return false
   if (spec.type === 'string' && (typeof value !== 'string' || value.length < (spec.min_length ?? 0) || value.length > (spec.max_length ?? 20000))) return false
@@ -61,7 +62,10 @@ export function workflowPayload(form: ImageDraft, item: Workflow): ImageSubmissi
     const raw = form[key as 'width']
     values[key] = raw.trim() === '' ? undefined : Number(raw)
   }
-  if (form.loras.length && !(roleSpec(item, 'loras')?.max_items)) return null
+  const loras = roleSpec(item, 'loras')
+  if (form.loras.length && !loras) return null
+  if (loras && (form.loras.length < (loras.min_items ?? 0) || form.loras.length > (loras.max_items ?? 16))) return null
+  if (form.loras.some(l => !l.name || [l.strengthModel, l.strengthClip].some(v => v.trim() === '' || !Number.isFinite(Number(v)) || Number(v) < -20 || Number(v) > 20))) return null
   values.loras = form.loras.map(l => ({ ...l, strengthModel: Number(l.strengthModel), strengthClip: Number(l.strengthClip) }))
   for (const [key, spec] of Object.entries(item.parameters)) {
     if (spec.role === 'initial_image') { if (!form.referenceInputId) return null; continue }

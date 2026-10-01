@@ -1,0 +1,77 @@
+# Workflow Image operation
+
+Apply the `20261001_04` migration before starting this version. Deploy matching
+Generation MCP and Hub schemas first, with ingress paused and provider work
+drained/reconciled; a mixed schema rejects the entire Generation connection.
+Generation's trusted runtime mutation authority and automatic bounded verification
+establish Definition readiness. Studio never registers a graph or overrides it.
+The independent managed-input infrastructure gate must also be ready for img2img.
+No merge, deploy or live acceptance is implied by repository tests.
+
+## Selection and restoration
+
+Discovery normalizes bounded graph-free Image-v1 metadata. Builtins retain their
+compatibility basis. Only a ready Definition with exact version/digest is selectable.
+Arbitrary public parameter keys map by declared roles, with additional scalar
+controls rendered from metadata. Unsupported LoRA drafts block submission until
+removed or a compatible Workflow is selected. Seeds use cryptographic randomness
+within the exact bounded integer, enum and multiple-of domain. Manual values are
+checked in Studio and Generation, including the JavaScript safe integer ceiling.
+
+Submit refreshes readiness and identity, resolves an owned input, builds with
+`require_ready=true`, then calls `jobs.submit` once. An uncertain submission is not
+automatically replayed. Stale selection preserves the draft and requires explicit
+selection of the current version. Snapshots record public Workflow identity,
+normalized non-input parameters and the Studio input UUID. Raw upstream input IDs
+stay in the server. **Use settings** restores the same reference when still available;
+an expired, revoked or pruned reference requires choosing another owned Asset.
+
+## Owned references
+
+The picker paginates existing generated image Assets owned by the signed-in user.
+There is no local file upload; #30 remains open. Create accepts only a Studio Asset
+UUID. Create/get/delete/thumbnail/submit check ownership before upstream calls.
+Mutation requires CSRF. The immutable Generation input is independent of subsequent
+source-Asset deletion. A missing thumbnail does not make an otherwise valid input
+unusable. Detach only removes the draft attachment; replace swaps after successful
+creation and leaves the previous immutable input to its bounded lifetime.
+
+Input thumbnails live separately in `STUDIO_THUMBNAIL_DIR/inputs`. They are at most
+512 pixels and 256 KiB. PostgreSQL reserves the only possible temporary/final locator
+before writing files. Failed or ambiguous upstream creates remain charged; confirmed
+compensation marks a terminal row. An uncertain delete remains unavailable until an
+explicit retry or expiry reconciliation. Active/uncertain executions protect mappings.
+
+## Quota and retention
+
+The global PostgreSQL transaction advisory lock serializes reservations, deletion
+and admission. Contention rejects immediately, before `inputs.create`. Row and byte
+quotas count all states, including pending cleanup and unknown creates. A worst-case
+256 KiB reservation precedes upstream or filesystem work and is reduced only after
+confirmed thumbnail publication or cleanup.
+
+| Environment variable | Default |
+| --- | ---: |
+| `STUDIO_INPUT_USER_ROWS` | 128 |
+| `STUDIO_INPUT_GLOBAL_ROWS` | 1024 |
+| `STUDIO_INPUT_USER_BYTES` | 33554432 |
+| `STUDIO_INPUT_GLOBAL_BYTES` | 134217728 |
+
+Configuration must be positive, at most 4096 rows or 1 GiB. Maintenance starts with
+the application and runs hourly. Indexed batches promote at most 100 expirations
+and prune at most 100 eligible rows per pass. Expired/revoked mappings have a 24-hour
+grace. Protected rows are excluded before the batch limit. Cleanup first persists a
+pending-delete marker, removes the recorded final and temporary thumbnail files,
+then deletes the mapping. File failures preserve quota accounting for a later pass.
+The nullable execution FK uses `ON DELETE SET NULL`; request snapshots, executions
+and generated Assets are retained. There is no unbounded directory scan or cleanup
+requirement delegated to a manual operator.
+
+## Acceptance still required
+
+Keep #21 and #36 open for the real installed Workflow/runtime smoke, coordinated
+catalog rollout, multi-user acceptance, expiry/reselection, independent preview
+after source deletion, quota rejection and retention evidence. Keep #30 open for
+local upload. Repository CI covers migration upgrade/downgrade, ownership, exact
+identity, seed domains, quota contention, ambiguous outcomes, cleanup retry,
+frontend picker/restore behavior, builds and the packaged container.
