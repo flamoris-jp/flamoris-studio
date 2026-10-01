@@ -11,11 +11,38 @@ from test_studio import image_request, register
 from test_workflow_contract import descriptor
 
 from flamoris_studio.db import Asset, Execution, ManagedInput, now
-from flamoris_studio.gateway import GatewayError
+from flamoris_studio.gateway import GatewayError, GenerationGateway
 from flamoris_studio.managed_inputs import Limits, prune, quota_guard
 from flamoris_studio.workflow_contract import normalize_catalog
 
 clients = studio_clients
+
+
+@pytest.mark.parametrize("workflow_id", [None, 7])
+def test_invalid_selected_build_response_fails_before_submission(clients, monkeypatch, workflow_id):
+    a, _, gateway, factory = clients
+    csrf = register(a, "invalid-build@example.test")
+    selected = normalize_catalog({"descriptors": [descriptor()]})[0]
+    real_gateway = GenerationGateway()
+
+    async def discover():
+        return {"available": True, "workflows": [selected]}
+
+    async def result(name, args):
+        return {**args, **({"workflow_id": workflow_id} if workflow_id is not None else {})}
+
+    monkeypatch.setattr(real_gateway, "_json", result)
+    monkeypatch.setattr(gateway, "discover", discover)
+    monkeypatch.setattr(gateway, "build_selected", real_gateway.build_selected, raising=False)
+    body = {**image_request(), "seed": 8, "workflowId": selected["id"], "workflowKind": "definition",
+            "definitionVersion": selected["definitionVersion"], "definitionDigest": selected["definitionDigest"]}
+    response = a.post("/api/generation/image/jobs", json=body, headers={"X-CSRF-TOKEN": csrf})
+    assert response.status_code == 422, response.text
+    assert gateway.submit_count == 0
+    with factory() as db:
+        execution = db.scalar(select(Execution).where(Execution.workflow == selected["id"]))
+        assert execution.last_known_status == "failed"
+        assert execution.upstream_job_id is None
 
 
 def source(a, csrf):

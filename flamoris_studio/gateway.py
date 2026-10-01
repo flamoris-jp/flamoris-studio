@@ -1,6 +1,7 @@
 """The only module allowed to see upstream MCP payloads and SDK objects."""
 import os
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
 from .workflow_contract import normalize_catalog
@@ -105,7 +106,10 @@ class GenerationGateway:
             result.get("definition_digest") != descriptor["definitionDigest"] or
             result.get("require_ready") is not True):
             raise GatewayError("validation")
-        return result["workflow_id"]
+        workflow_id = result.get("workflow_id")
+        if not isinstance(workflow_id, str) or not re.fullmatch(r"[a-f0-9]{32}", workflow_id):
+            raise GatewayError("validation")
+        return workflow_id
 
     async def create_input(self, asset_id):
         return await self._json("inputs.create", {"asset_id": asset_id})

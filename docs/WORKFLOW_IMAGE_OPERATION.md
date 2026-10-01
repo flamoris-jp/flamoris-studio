@@ -98,3 +98,7 @@ with Generation, including CFG and denoise values normalized by the API. Integer
 parameters remain strict, and booleans/strings are not numeric candidates. The
 browser validates advertised string patterns as complete matches, including the
 builtin sampler/scheduler token constraints, before enabling submission.
+
+Selected Workflow build responses must include a canonical opaque Workflow ID.
+Missing or malformed IDs produce a controlled validation error and a failed
+Studio execution before `jobs.submit`; no provider submission is attempted.

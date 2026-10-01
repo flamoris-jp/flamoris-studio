@@ -150,3 +150,38 @@ def test_number_enums_share_generation_json_semantics(candidate, value):
 def test_numeric_enum_type_and_domain_rejections(kind, value):
     with pytest.raises(ValueError):
         validate_value({"type": kind, "enum": [4]}, value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("workflow_id", [None, True, 7, "", "../private", "a" * 33, "g" * 32, {"id": "a" * 32}])
+async def test_selected_build_rejects_missing_or_invalid_workflow_id(monkeypatch, workflow_id):
+    from flamoris_studio.gateway import GenerationGateway, GatewayError
+
+    item = normalize_catalog({"descriptors": [descriptor()]})[0]
+    gateway = GenerationGateway()
+
+    async def result(name, args):
+        return {**args, **({"workflow_id": workflow_id} if workflow_id is not None else {})}
+
+    monkeypatch.setattr(gateway, "_json", result)
+    with pytest.raises(GatewayError) as error:
+        await gateway.build_selected(item, {"model_key": "model"})
+    assert error.value.code == "validation"
+
+
+@pytest.mark.asyncio
+async def test_selected_build_preserves_pinned_contract_and_valid_id(monkeypatch):
+    from flamoris_studio.gateway import GenerationGateway
+
+    item = normalize_catalog({"descriptors": [descriptor()]})[0]
+    gateway = GenerationGateway()
+
+    async def result(name, args):
+        assert name == "workflows.build"
+        assert args["definition_version"] == item["definitionVersion"]
+        assert args["definition_digest"] == item["definitionDigest"]
+        assert args["require_ready"] is True
+        return {**args, "workflow_id": "a" * 32}
+
+    monkeypatch.setattr(gateway, "_json", result)
+    assert await gateway.build_selected(item, {"model_key": "model"}) == "a" * 32
