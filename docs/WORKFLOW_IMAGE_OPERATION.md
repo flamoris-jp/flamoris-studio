@@ -59,7 +59,14 @@ confirmed thumbnail publication or cleanup.
 
 Configuration must be positive, at most 4096 rows or 1 GiB. Maintenance starts with
 the application and runs hourly. Indexed batches promote at most 100 expirations
-and prune at most 100 eligible rows per pass. Expired/revoked mappings have a 24-hour
+and prune at most 100 eligible rows per pass. Before pruning, maintenance observes
+at most 100 expired-reference executions with known Generation job IDs, with a
+60-second total budget and five seconds per status call. No DB transaction or
+quota lock spans remote IO. A rotating execution cursor prevents unavailable jobs
+from starving later rows. Only matching terminal Generation responses update the
+cached status; unknown IDs, malformed responses and unavailable jobs remain
+protected. Concurrent mapping changes or terminal observations are preserved.
+Browser polling is not required to release completed-job reference retention. Expired/revoked mappings have a 24-hour
 grace. Protected rows are excluded before the batch limit. Cleanup first persists a
 pending-delete marker, removes the recorded final and temporary thumbnail files,
 then deletes the mapping. File failures preserve quota accounting for a later pass.

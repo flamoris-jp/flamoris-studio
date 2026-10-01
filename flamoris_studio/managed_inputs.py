@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from .db import Execution, ManagedInput, now
@@ -212,9 +212,67 @@ def prune(db, thumbnails):
     return count
 
 
+async def reconcile_expired(app, cursor=None):
+    """Observe <=100 known jobs in <=60 seconds, without holding DB locks over IO."""
+    query = (
+        select(Execution.id, Execution.user_id, Execution.reference_input_id, Execution.upstream_job_id)
+        .join(ManagedInput, Execution.reference_input_id == ManagedInput.id)
+        .where(
+            ManagedInput.owner_user_id == Execution.user_id,
+            ManagedInput.expires_at <= now(),
+            Execution.upstream_job_id.is_not(None),
+            Execution.last_known_status.not_in(TERMINAL_STATES),
+        )
+        .order_by(Execution.id)
+        .limit(100)
+    )
+    with app.state.session_factory() as db:
+        rows = db.execute(query.where(Execution.id > cursor) if cursor else query).all()
+        if not rows and cursor:
+            rows = db.execute(query).all()
+    deadline = asyncio.get_running_loop().time() + 60
+    for execution_id, owner_id, reference_id, job_id in rows:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        cursor = execution_id  # Failed/unknown jobs cannot starve later rows.
+        try:
+            raw = await asyncio.wait_for(app.state.gateway.status(job_id), min(5, remaining))
+        except (GatewayError, TimeoutError):
+            continue
+        if (
+            not isinstance(raw, dict)
+            or raw.get("job_id") != job_id
+            or not isinstance(raw.get("status"), str)
+            or raw.get("status") not in {"completed", "failed", "cancelled"}
+        ):
+            continue
+        with app.state.session_factory() as db:
+            # Recheck the mapping after IO; never overwrite a concurrent terminal result.
+            db.execute(
+                update(Execution)
+                .where(
+                    Execution.id == execution_id,
+                    Execution.user_id == owner_id,
+                    Execution.reference_input_id == reference_id,
+                    Execution.upstream_job_id == job_id,
+                    Execution.last_known_status.not_in(TERMINAL_STATES),
+                )
+                .values(
+                    last_known_status=raw["status"],
+                    updated_at=now(),
+                    completed_at=func.coalesce(Execution.completed_at, now()),
+                )
+            )
+            db.commit()
+    return cursor
+
+
 async def maintenance(app):
+    cursor = None
     while True:
         try:
+            cursor = await reconcile_expired(app, cursor)
             with app.state.session_factory() as db:
                 prune(db, app.state.input_thumbnails)
         except (SQLAlchemyError, HTTPException, OSError):

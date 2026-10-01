@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import time
 import uuid
@@ -210,3 +211,115 @@ def test_uncertain_delete_and_thumbnail_cleanup_remain_unavailable_and_accounted
         assert row.state == "pending_delete" and row.accounted_bytes == before
         monkeypatch.setattr(a.app.state.input_thumbnails, "delete", real_delete)
         assert prune(db, a.app.state.input_thumbnails) == 1
+
+
+@pytest.mark.parametrize("outcome", ["completed", "failed", "cancelled", "running", "unavailable", "mismatch", "malformed", "unknown"])
+def test_expired_references_reconcile_without_browser_polling(clients, outcome):
+    from flamoris_studio.managed_inputs import reconcile_expired
+
+    a, _, gateway, factory = clients
+    csrf = register(a, "reconcile@example.test")
+    asset = source(a, csrf)
+    prepare_gateway(gateway)
+    item = a.post("/api/generation/inputs", json={"assetId": asset["id"]}, headers={"X-CSRF-TOKEN": csrf}).json()
+    input_id, execution_id = uuid.UUID(item["id"]), uuid.UUID(asset["executionId"])
+    with factory() as db:
+        row = db.get(ManagedInput, input_id)
+        row.expires_at = now() - timedelta(hours=50)
+        execution = db.get(Execution, execution_id)
+        execution.reference_input_id = input_id
+        execution.last_known_status = "submission_unknown" if outcome == "unknown" else "queued"
+        execution.completed_at = None
+        if outcome == "unknown":
+            execution.upstream_job_id = None
+        db.commit()
+    calls = []
+
+    async def status(job_id):
+        calls.append(job_id)
+        # No transaction/advisory lock may remain held during remote IO.
+        with factory() as db:
+            quota_guard(db)
+        if outcome == "unavailable":
+            raise GatewayError("unavailable")
+        if outcome == "mismatch":
+            return {"job_id": "other-job", "status": "completed"}
+        if outcome == "malformed":
+            return {"job_id": job_id, "status": {"completed": True}}
+        return {"job_id": job_id, "status": outcome}
+
+    gateway.status = status
+    asyncio.run(reconcile_expired(a.app))
+    terminal = outcome in {"completed", "failed", "cancelled"}
+    assert len(calls) == (0 if outcome == "unknown" else 1)
+    with factory() as db:
+        execution = db.get(Execution, execution_id)
+        assert execution.last_known_status == (outcome if terminal else "submission_unknown" if outcome == "unknown" else "queued")
+        assert (execution.completed_at is not None) == terminal
+        assert prune(db, a.app.state.input_thumbnails) == int(terminal)
+        assert (db.get(ManagedInput, input_id) is None) == terminal
+
+
+def test_reconciliation_bounds_and_cursor_do_not_starve_later_jobs(clients):
+    from flamoris_studio.managed_inputs import reconcile_expired
+
+    a, _, gateway, factory = clients
+    csrf = register(a, "reconcile-batch@example.test")
+    asset = source(a, csrf)
+    prepare_gateway(gateway)
+    item = a.post("/api/generation/inputs", json={"assetId": asset["id"]}, headers={"X-CSRF-TOKEN": csrf}).json()
+    with factory() as db:
+        row = db.get(ManagedInput, uuid.UUID(item["id"]))
+        row.expires_at = now() - timedelta(hours=50)
+        for index in range(101):
+            db.add(Execution(id=uuid.UUID(int=index + 1), user_id=row.owner_user_id,
+                             workflow="reference", reference_input_id=row.id,
+                             upstream_job_id=f"job-{index}", request_snapshot={}, last_known_status="queued"))
+        db.commit()
+    calls = []
+
+    async def status(job_id):
+        calls.append(job_id)
+        raise GatewayError("unavailable")
+
+    gateway.status = status
+    cursor = asyncio.run(reconcile_expired(a.app))
+    assert len(calls) == 100
+    cursor = asyncio.run(reconcile_expired(a.app, cursor))
+    assert calls[-1] == "job-100" and len(calls) == 101
+    asyncio.run(reconcile_expired(a.app, cursor))
+    assert calls[101] == "job-0" and len(calls) == 201
+
+
+@pytest.mark.parametrize("mutation", ["mapping", "terminal"])
+def test_reconciliation_does_not_overwrite_concurrent_changes(clients, mutation):
+    from flamoris_studio.managed_inputs import reconcile_expired
+
+    a, _, gateway, factory = clients
+    csrf = register(a, "reconcile-race@example.test")
+    asset = source(a, csrf)
+    prepare_gateway(gateway)
+    item = a.post("/api/generation/inputs", json={"assetId": asset["id"]}, headers={"X-CSRF-TOKEN": csrf}).json()
+    execution_id = uuid.UUID(asset["executionId"])
+    with factory() as db:
+        row = db.get(ManagedInput, uuid.UUID(item["id"]))
+        row.expires_at = now() - timedelta(hours=50)
+        execution = db.get(Execution, execution_id)
+        execution.reference_input_id = row.id
+        execution.last_known_status = "queued"
+        db.commit()
+
+    async def status(job_id):
+        with factory() as db:
+            execution = db.get(Execution, execution_id)
+            if mutation == "mapping":
+                execution.upstream_job_id = "replacement-job"
+            else:
+                execution.last_known_status = "cancelled"
+            db.commit()
+        return {"job_id": job_id, "status": "completed"}
+
+    gateway.status = status
+    asyncio.run(reconcile_expired(a.app))
+    with factory() as db:
+        assert db.get(Execution, execution_id).last_known_status == ("queued" if mutation == "mapping" else "cancelled")
