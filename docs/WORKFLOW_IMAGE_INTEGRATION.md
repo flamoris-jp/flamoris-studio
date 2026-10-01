@@ -1,7 +1,7 @@
 # Studio Workflow selection and managed Image inputs
 
-Status: proposed design-only implementation plan, 2026-10-01.
-Tracks #21/#30/#36. This design and its existing-Asset slice do not close #30.
+Status: proposed design-only implementation plan, 2026-10-01. Tracks #21/#30/#36. This
+design and its existing-Asset slice do not close #30.
 
 The canonical Generation schema/semantic contract is
 [WORKFLOW_SYSTEM_DESIGN.md](https://github.com/flamoris-jp/flamoris-generation-mcp/pull/43).
@@ -9,110 +9,107 @@ Keep this companion focused on Studio; do not create another workflow authority.
 
 ## 1. Baseline and scope
 
-Reviewed Studio main: e89e35e380627c9d4b14d0f59db5acf3cae47745.
-Generation main: cd5d6011bc0e35c274e8a9d7c1780cdd42100b53.
-Hub main: fcbe0243c2e54d77e7ea44dc073c883e90d38cb4.
+Reviewed Studio main: e89e35e380627c9d4b14d0f59db5acf3cae47745. Generation main:
+cd5d6011bc0e35c274e8a9d7c1780cdd42100b53. Hub main:
+fcbe0243c2e54d77e7ea44dc073c883e90d38cb4.
 
-Current gateway discovers capability template IDs and models but not
-workflows.list descriptors. The submit route chooses the builtin template
-based on whether LoRAs are present. ImageRequest always includes fixed basic
-fields, so forwarding it wholesale to a registered definition would send
-undeclared parameters.
+Current gateway discovers capability template IDs and models but not workflows.list
+descriptors. The submit route chooses the builtin template based on whether LoRAs are
+present. ImageRequest always includes fixed basic fields, so forwarding it wholesale to
+a registered definition would send undeclared parameters.
 
 Already implemented: Styles CRUD and ownership, per-user width/height/steps/CFG
 preferences, automatic concrete seed snapshots, ordered optional LoRAs,
-sampler/scheduler/denoise, result settings/Use settings, and Assets details.
-Existing tests cover these paths. Preserve them; do not rebuild them.
+sampler/scheduler/denoise, result settings/Use settings, and Assets details. Existing
+tests cover these paths. Preserve them; do not rebuild them.
 
 Missing: descriptor selection, supported-field validation, input ownership
-records/endpoints, reference picker/preview, version-aware snapshots/restoration.
-The static Reference Image notice is unconditional; adding a graph alone
-cannot enable it.
+records/endpoints, reference picker/preview, version-aware snapshots/restoration. The
+static Reference Image notice is unconditional; adding a graph alone cannot enable it.
 
-This scope uses existing generated assets belonging to the signed-in Studio
-user. File chooser/drag-and-drop upload of local files is not supported by
-Generation inputs.create and is a separate future feature. Do not show an
-upload button that cannot submit safely. Reference Image v1 is exactly:
-Studio-owned existing generated Asset -> managed input snapshot -> JANKU
-img2img. No PC local file picker or drag/drop upload is implemented in this
-slice. #30 retains its broader "choose or drag/drop an image" requirement;
-local upload -> authorized managed input is follow-up scope, and #30 must stay
-open even when this slice passes offline and live acceptance.
+This scope uses existing generated assets belonging to the signed-in Studio user. File
+chooser/drag-and-drop upload of local files is not supported by Generation inputs.create
+and is a separate future feature. Do not show an upload button that cannot submit
+safely. Reference Image v1 is exactly: Studio-owned existing generated Asset -> managed
+input snapshot -> JANKU img2img. No PC local file picker or drag/drop upload is
+implemented in this slice. #30 retains its broader "choose or drag/drop an image"
+requirement; local upload -> authorized managed input is follow-up scope, and #30 must
+stay open even when this slice passes offline and live acceptance.
 
-External ChatGPT-created asset import remains Hub #25, Generation #41, Studio
-#35. No filesystem scan, global generation catalog import, or inferred ownership
-is included here.
+External ChatGPT-created asset import remains Hub #25, Generation #41, Studio #35. No
+filesystem scan, global generation catalog import, or inferred ownership is included
+here.
 
 ## 2. Discovery and dedicated Image UI
 
 Gateway reads health/capabilities/models plus workflows.list, validates bounded
-descriptors, and returns normalized Studio DTOs. Never return graph/node/input
-binding, provider filenames, built/saved upstream IDs, or private diagnostics.
+descriptors, and returns normalized Studio DTOs. Never return graph/node/input binding,
+provider filenames, built/saved upstream IDs, or private diagnostics.
 
-Add workflows to the existing discovery response while preserving templates,
-checkpoints and loras for compatibility. A Workflow option includes ID, version,
-kind, name, description, image mode/resize semantics, public parameter rules,
-Generation-computed readiness and availability plus a safe unavailable reason.
-For definitions include definition_version/canonical definition_digest and
-bounded safe verification metadata, never the private attestation evidence. Provider identity may remain
-diagnostic; it does not choose the primary editor.
+Add workflows to the existing discovery response while preserving templates, checkpoints
+and loras for compatibility. A Workflow option includes ID, version, kind, name,
+description, image mode/resize semantics, public parameter rules, Generation-computed
+readiness and availability plus a safe unavailable reason. For definitions include
+definition_version/canonical definition_digest and bounded safe verification metadata,
+never the private attestation evidence. Provider identity may remain diagnostic; it does
+not choose the primary editor.
 
 Stable availability reasons include metadata_upgrade_required,
 unsupported_image_profile, unsupported_parameter, provider_unavailable,
-managed_input_not_ready, workflow_not_ready, readiness_mismatch. A malformed entry must not break compatible entries;
-a malformed entire envelope produces safe discovery unavailable. Bound number
-of entries, parameters, strings, and metadata response size. Reject conflicting
-IDs/duplicate roles and invalid constraints. Never render upstream markup.
+managed_input_not_ready, workflow_not_ready, readiness_mismatch. A malformed entry must
+not break compatible entries; a malformed entire envelope produces safe discovery
+unavailable. Bound number of entries, parameters, strings, and metadata response size.
+Reject conflicting IDs/duplicate roles and invalid constraints. Never render upstream
+markup.
 
 Definition readiness is registered -> static validation -> validated -> bounded
-real-runtime verification -> ready. Successful workflows.register is durable,
-static and restart-free; it does not enable production selection. Generation's
-separate workflows.verify uses the ordinary JobStore reservation, staging and
-asset APIs, returns a job_id, and automatically persists attestation after
-compatibility/build/submit/completion/declared-output verification. Studio is
-not an attestation authority and adds no Approve action or browser verify tool.
-ChatGPT/Work/runtime-enabled CI/operations tools can register -> verify -> poll
-without a per-definition human step. Definitions cannot self-declare ready.
+real-runtime verification -> ready. Successful workflows.register is durable, static and
+restart-free; it does not enable production selection. Generation's separate
+workflows.verify uses the ordinary JobStore reservation, staging and asset APIs, returns
+a job_id, and automatically persists attestation after
+compatibility/build/submit/completion/declared-output verification. Studio is not an
+attestation authority and adds no Approve action or browser verify tool.
+ChatGPT/Work/runtime-enabled CI/operations tools can register -> verify -> poll without
+a per-definition human step. Definitions cannot self-declare ready.
 
 Normal Studio selection requires readiness.state=ready for the exact descriptor
-ID/version/canonical digest. Version OR digest changes invalidate the old
-attestation. Registered/validated/failed candidates may appear disabled with
-safe diagnostics, but cannot be selected, restored as usable, or submitted.
-Missing or mismatched readiness fails closed; retry verification stays upstream.
-Never derive readiness from a workflow ID, JANKU name, raw graph, registration
-success, or global managed-input flag. Builtins retain the Generation-owned
-builtin_compatibility ready basis; it does not certify an external Definition.
-No raw attestation/prompt/source/runtime evidence reaches the browser.
+ID/version/canonical digest. Version OR digest changes invalidate the old attestation.
+Registered/validated/failed candidates may appear disabled with safe diagnostics, but
+cannot be selected, restored as usable, or submitted. Missing or mismatched readiness
+fails closed; retry verification stays upstream. Never derive readiness from a workflow
+ID, JANKU name, raw graph, registration success, or global managed-input flag. Builtins
+retain the Generation-owned builtin_compatibility ready basis; it does not certify an
+external Definition. No raw attestation/prompt/source/runtime evidence reaches the
+browser.
 
-V1 definitions lacking roles/Image metadata are listed but disabled for this
-editor until a reviewed higher-version metadata upgrade. Do not infer features
-from the workflow ID, JANKU name, parameter key or ComfyUI node.
+V1 definitions lacking roles/Image metadata are listed but disabled for this editor
+until a reviewed higher-version metadata upgrade. Do not infer features from the
+workflow ID, JANKU name, parameter key or ComfyUI node.
 
-Builtin descriptors retain no-LoRA and ordered-LoRA behavior. Existing requests
-with no selected workflow retain the current builtin selection compatibility
-path. New UI chooses a descriptor explicitly. LoRAs are shown only when that
-descriptor advertises them. Preserve an unsupported LoRA draft on switching,
-but require the user to clear/resolve it before submitting; never silently
-discard it or inject it into a scalar-only definition.
+Builtin descriptors retain no-LoRA and ordered-LoRA behavior. Existing requests with no
+selected workflow retain the current builtin selection compatibility path. New UI
+chooses a descriptor explicitly. LoRAs are shown only when that descriptor advertises
+them. Preserve an unsupported LoRA draft on switching, but require the user to
+clear/resolve it before submitting; never silently discard it or inject it into a
+scalar-only definition.
 
 Known parameter roles drive the existing dedicated controls. Additional supported
-scalar/enum parameters may use a bounded Advanced section, not a universal
-schema form. Unknown required types/profiles make the option unavailable.
-Supported required values must be collected; optional defaults come from
-metadata. Only declared fields are submitted.
+scalar/enum parameters may use a bounded Advanced section, not a universal schema form.
+Unknown required types/profiles make the option unavailable. Supported required values
+must be collected; optional defaults come from metadata. Only declared fields are
+submitted.
 
-Preserve prompt and unrelated drafts on workflow/model change. Validate against
-the selected descriptor before Generate. Do not silently clamp a preference
-outside that workflow's range; show a validation message. Fixed dimensions are
-displayed as fixed, with no editable width/height sent. Size presets only select
-values accepted by the descriptor. Keep preferences separate from Styles and
-workflow defaults. Explicit draft/Use settings values win over initial
-preferences; preferences initialize supported fields only when valid, then use
-workflow defaults as fallback.
+Preserve prompt and unrelated drafts on workflow/model change. Validate against the
+selected descriptor before Generate. Do not silently clamp a preference outside that
+workflow's range; show a validation message. Fixed dimensions are displayed as fixed,
+with no editable width/height sent. Size presets only select values accepted by the
+descriptor. Keep preferences separate from Styles and workflow defaults. Explicit
+draft/Use settings values win over initial preferences; preferences initialize supported
+fields only when valid, then use workflow defaults as fallback.
 
-Reference control label: Initial image (img2img). Explain that it transforms the
-whole image and uses center crop/resize to output dimensions. Denoise controls
-how much it changes; it is not a promise to retain a character identity.
+Reference control label: Initial image (img2img). Explain that it transforms the whole
+image and uses center crop/resize to output dimensions. Denoise controls how much it
+changes; it is not a promise to retain a character identity.
 
 Enable the picker only when all hold:
 
@@ -123,20 +120,20 @@ Enable the picker only when all hold:
 5. Studio has deployed its ownership mapping/API.
 
 An existing input is not a picker prerequisite. With no attachment, or after
-expiry/revocation/removal, keep selection and replacement available when those
-five conditions hold. If no eligible owned Asset exists, show an empty picker
-with guidance to generate one; do not substitute an unauthorized upstream Asset.
-Invalid scalar drafts block Generate, not selection of a supported initial image.
+expiry/revocation/removal, keep selection and replacement available when those five
+conditions hold. If no eligible owned Asset exists, show an empty picker with guidance
+to generate one; do not substitute an unauthorized upstream Asset. Invalid scalar drafts
+block Generate, not selection of a supported initial image.
 
-Generate additionally requires an authorized, unexpired, non-revoked input and
-valid remaining parameters. Recheck authorization/expiry on the server and
-during staging; a usable picker does not grant permission to submit.
+Generate additionally requires an authorized, unexpired, non-revoked input and valid
+remaining parameters. Recheck authorization/expiry on the server and during staging; a
+usable picker does not grant permission to submit.
 
-No input attachment for txt2img; do not send an old hidden reference when
-switching modes. Preserve the local draft separately for switching back.
-Unknown/mismatched Workflow or infrastructure readiness, or provider failure,
-blocks selection and submission. Input
-expiry/revocation blocks submission while permitting authorized reselection.
+No input attachment for txt2img; do not send an old hidden reference when switching
+modes. Preserve the local draft separately for switching back. Unknown/mismatched
+Workflow or infrastructure readiness, or provider failure, blocks selection and
+submission. Input expiry/revocation blocks submission while permitting authorized
+reselection.
 
 ## 3. Ownership model and proposed API
 
@@ -153,10 +150,10 @@ Add Studio-owned managed_inputs with:
 | revoked_at | Local access revocation/tombstone |
 | thumbnail_locator | Studio-owned thumbnail independent of source Asset lifetime |
 
-Use an Alembic migration after the current migration head. Never cascade-delete
-an immutable snapshot merely because its source catalog entry is removed.
-The persisted owner is its authorization authority after creation; a source
-digest/ID alone grants no access.
+Use an Alembic migration after the current migration head. Never cascade-delete an
+immutable snapshot merely because its source catalog entry is removed. The persisted
+owner is its authorization authority after creation; a source digest/ID alone grants no
+access.
 
 Proposed endpoints under /api/generation/image/inputs:
 
@@ -166,45 +163,42 @@ Proposed endpoints under /api/generation/image/inputs:
 - DELETE /{inputId}: revoke/delete only owned input, preserving CSRF.
 - GET /{inputId}/thumbnail: owned, bounded thumbnail; works after source deletion.
 
-Responses contain only Studio input/source handles, MIME/size, expiry, display
-name and the authorized thumbnail URL. Never expose the raw upstream input
-ID, source upstream ID, digest as an authorization token, or runtime filename.
+Responses contain only Studio input/source handles, MIME/size, expiry, display name and
+the authorized thumbnail URL. Never expose the raw upstream input ID, source upstream
+ID, digest as an authorization token, or runtime filename.
 
-Picker uses the existing /api/assets collection, filtered to supported images,
-then calls input create. One initial image at a time. Replace only swaps the
-draft attachment after a successful create. Remove clears it; deleting a stored
-snapshot is an explicit lifecycle action, not an accidental side effect of
-switching workflows. A snapshot shared by an execution/settings record is not
-implicitly destroyed.
+Picker uses the existing /api/assets collection, filtered to supported images, then
+calls input create. One initial image at a time. Replace only swaps the draft attachment
+after a successful create. Remove clears it; deleting a stored snapshot is an explicit
+lifecycle action, not an accidental side effect of switching workflows. A snapshot
+shared by an execution/settings record is not implicitly destroyed.
 
-Generate thumbnails from the source bytes whose digest matches the created
-snapshot; use the existing bounded image/thumbnail and transfer infrastructure.
-Persist a thumbnail independent of the source so a valid immutable snapshot can
-still be shown after source deletion. If preview retrieval fails, show safe
-missing-preview state without falsifying input validity. Retain mapping and
-expiry checks; no new large binary store is required.
+Generate thumbnails from the source bytes whose digest matches the created snapshot; use
+the existing bounded image/thumbnail and transfer infrastructure. Persist a thumbnail
+independent of the source so a valid immutable snapshot can still be shown after source
+deletion. If preview retrieval fails, show safe missing-preview state without falsifying
+input validity. Retain mapping and expiry checks; no new large binary store is required.
 
 If snapshot creation succeeds but DB commit fails, attempt bounded best-effort
-compensating deletion using the returned input ID; never grant access before
-the row is durable. If input creation response is ambiguous, do not invisibly
-retry or invent an ownership mapping; upstream TTL/pruning handles unknown
-orphans. Local quota and timeout/busy handling must remain bounded.
+compensating deletion using the returned input ID; never grant access before the row is
+durable. If input creation response is ambiguous, do not invisibly retry or invent an
+ownership mapping; upstream TTL/pruning handles unknown orphans. Local quota and
+timeout/busy handling must remain bounded.
 
-Every get/delete/thumbnail/submit/restore resolves id AND owner_user_id before
-upstream calls. Known raw Generation IDs are not accepted as substitutes.
-Cross-user and unknown handles return the same 404 shape; no prompt/source
-leaks. Recheck upstream expiry/media under normal submit validation and staging.
-Handle in-use deletion as a retryable conflict, not successful deletion.
-Only mark the row revoked/deleted after the appropriate durable local decision;
-if upstream deletion fails, retain enough state for a safe owned retry.
-Generation remains responsible for file TTL/staging, not Studio's database.
+Every get/delete/thumbnail/submit/restore resolves id AND owner_user_id before upstream
+calls. Known raw Generation IDs are not accepted as substitutes. Cross-user and unknown
+handles return the same 404 shape; no prompt/source leaks. Recheck upstream expiry/media
+under normal submit validation and staging. Handle in-use deletion as a retryable
+conflict, not successful deletion. Only mark the row revoked/deleted after the
+appropriate durable local decision; if upstream deletion fails, retain enough state for
+a safe owned retry. Generation remains responsible for file TTL/staging, not Studio's
+database.
 
 ## 4. Submit DTO and execution snapshot
 
-Keep the legacy ImageRequest path. Add an explicit request shape for selected
-workflows, with workflowId, workflowKind, definitionVersion and definitionDigest
-(definitions only),
-typed Image role values, bounded additional scalar parameters, and optional
+Keep the legacy ImageRequest path. Add an explicit request shape for selected workflows,
+with workflowId, workflowKind, definitionVersion and definitionDigest (definitions
+only), typed Image role values, bounded additional scalar parameters, and optional
 referenceInputId (Studio UUID only).
 
 Example conceptual request:
@@ -258,7 +252,8 @@ Ordering:
 6. Validate normalized recipe result. Persist Studio execution/request snapshot
    before the non-idempotent jobs.submit.
 7. Submit once. Generation rechecks the pinned ready attestation under normal
-   JobStore admission before provider await, including revocation/update races.
+   JobStore admission before provider await, including revocation/update races
+   and current infrastructure readiness for production img2img.
    Preserve busy/submission_unknown behavior and no automatic retry.
 8. Synchronize returned assets through existing owner-scoped catalog flow.
 
@@ -290,8 +285,9 @@ If no seed role exists, omit it rather than injecting a seed parameter.
 Snapshot version 2 retains selected workflow kind/ID/version/canonical digest,
 normalized public
 scalar parameters, resolved concrete seed, Image role settings, referenceInputId,
-and safe thumbnail/expiry presentation context. Upstream input bindings and
-digests may be stored only as internal provenance; redact them from browser
+and safe thumbnail/expiry presentation context. The canonical Definition digest
+is public contract identity; upstream input bindings and input-byte digests
+may be stored only as internal provenance; redact them from browser
 settings. Keep execution ownership and original snapshot authoritative for
 Use settings, not provider filenames or reconstructed PNG metadata.
 
@@ -386,4 +382,3 @@ This design PR does not close #21/#30/#36, run product changes, or merge itself.
 Completion of this existing-Asset Reference Image v1 slice must not close #30.
 Its local upload -> authorized managed input requirement remains follow-up scope;
 do not advertise or render an upload control before that contract is implemented.
-
