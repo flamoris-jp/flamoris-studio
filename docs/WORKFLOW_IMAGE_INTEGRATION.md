@@ -93,6 +93,15 @@ them. Preserve an unsupported LoRA draft on switching, but require the user to
 clear/resolve it before submitting; never silently discard it or inject it into a
 scalar-only definition.
 
+Generation must validate each advertised Image role against its effective
+declared-output path and the reviewed node/input semantics. An unused width,
+seed or steps binding, or a binding to the wrong input, must not become an
+editable advertised role merely because its type/range is valid. Non-default
+dimension/seed values must affect the active resize/latent/sampler inputs;
+effective smoke budgets also include fixed graph literals and batch/output
+count. Studio consumes this validated graph-free contract and never duplicates
+provider graph validation.
+
 Known parameter roles drive the existing dedicated controls. Additional supported
 scalar/enum parameters may use a bounded Advanced section, not a universal schema form.
 Unknown required types/profiles make the option unavailable. Supported required values
@@ -348,6 +357,12 @@ readiness gates, revoke-between-build-and-submit, self-claimed readiness and
 browser policy bypass rejection. Test no local file picker/drag-drop/upload
 button, and document #30's unresolved local upload scope.
 
+Include a descriptor normalization/submit regression preserving non-default
+dimension/seed values under arbitrary public parameter keys. Upstream
+unused/wrong-semantic bindings must be rejected by Generation, not repaired by
+Studio. Mixed-schema discovery failure must preserve drafts and never replay
+submission; verify legacy/new discovery after paired rollout/rollback.
+
 Frontend tests must exercise actual components and mocked API calls for
 workflow selection, metadata-dependent controls, picker attach/replace/remove,
 initial selection with no existing input, reselection after expiry/revocation/
@@ -362,6 +377,28 @@ npm run build, npm test, and the production Docker package/static-asset smoke
 defined in CI. Ordinary CI needs no GPU, private model, tunnel or live ComfyUI.
 
 ## 7. Rollout/acceptance
+
+Follow Generation's canonical coordinated schema rollout/rollback. Hub compares
+configured input schemas exactly before every Generation call. Adding optional
+build arguments breaks the old catalog and blocks unchanged health/status/asset
+calls too; optional argument compatibility is not mixed-deployment compatibility.
+
+Pause Studio Generate and all other submitters, drain/reconcile active provider
+work while the old pair matches, then replace the Generation singleton and
+update/restart the deployed Hub catalog during the same maintenance window.
+Preserve deployment-specific endpoint/authentication settings. Verify full schema/
+annotation parity and legacy/new calls on a fresh connection before deploying
+this Studio backend/migration/UI and reopening ingress. Expect discovery failure
+during the mixed-schema interval; do not present a retry that replays submission.
+
+If rollback is needed, keep ingress paused and reconcile provider work. Return
+Studio to a compatible code/DB state through documented procedures, then restore
+the matching Generation code and Hub catalog pair plus compatible backed-up
+persistence. Preserve newer definitions/data for recovery; older code must not
+be started against unreadable v2 definitions, recipes, attestations or migrations.
+Recheck ownership, catalog parity, singleton/provider state and readiness before
+reopening. The one-time maintenance window does not add a release/restart step
+for later Definition registrations or verification.
 
 Deploy schema/signature/backend/UI support through current repository procedures;
 do not guess service commands. Keep production reference controls off until
