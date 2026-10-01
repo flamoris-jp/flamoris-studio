@@ -93,11 +93,21 @@ Enable the picker only when all hold:
 2. Required image media type and remaining parameters are supported.
 3. Provider is available and managed-input rollout readiness is on.
 4. Studio has deployed its ownership mapping/API.
-5. An authorized, unexpired input is available for Generate.
+
+An existing input is not a picker prerequisite. With no attachment, or after
+expiry/revocation/removal, keep selection and replacement available when those
+four conditions hold. If no eligible owned Asset exists, show an empty picker
+with guidance to generate one; do not substitute an unauthorized upstream Asset.
+Invalid scalar drafts block Generate, not selection of a supported initial image.
+
+Generate additionally requires an authorized, unexpired, non-revoked input and
+valid remaining parameters. Recheck authorization/expiry on the server and
+during staging; a usable picker does not grant permission to submit.
 
 No input attachment for txt2img; do not send an old hidden reference when
 switching modes. Preserve the local draft separately for switching back.
-Unknown readiness, input expiry or upstream failure must fail closed.
+Unknown readiness or provider failure blocks selection and submission. Input
+expiry/revocation blocks submission while permitting authorized reselection.
 
 ## 3. Ownership model and proposed API
 
@@ -203,14 +213,38 @@ Ordering:
    constraints and validate required/mutually incompatible fields.
 3. Resolve Studio input handle to the mapped upstream input and revalidate
    expiry/MIME. Map Image roles to declared parameter keys.
-4. Assign concrete cryptographic auto seed if that role is supported and blank;
-   explicit zero remains zero. Restrict to browser-safe integer range.
+4. Assign a concrete cryptographic auto seed if that role is supported and blank,
+   using the canonical descriptor-constrained seed domain below. Explicit values,
+   including zero, are preserved and validated; never silently replace them.
+   Revalidate all resolved values after automatic assignment, before build.
 5. Build using explicit definition_version for definitions; use builtin
    compatibility mapping for existing requests.
 6. Validate normalized recipe result. Persist Studio execution/request snapshot
    before the non-idempotent jobs.submit.
 7. Submit once. Preserve busy/submission_unknown behavior and no automatic retry.
 8. Synchronize returned assets through existing owner-scoped catalog flow.
+
+### Descriptor-constrained automatic seed
+
+For a declared integer seed role, the legal domain is the intersection of
+0..Number.MAX_SAFE_INTEGER with its minimum, maximum, typed enum, and multiple_of.
+Absent bounds do not enlarge Studio's safe range. Apply fractional bounds with
+ceil/floor; exclude booleans and coerced numeric strings. The canonical rules
+are in Generation's Workflow design; the descriptor remains the authority.
+
+Sample cryptographically from the legal values directly: use a bounded filtered
+enum, or derive an exact integer progression and sample its index. Do not draw
+from the full browser-safe range and retry until validation happens to pass.
+Use exact arithmetic for multiple_of membership, including fractional steps;
+never round an invalid seed into the domain. An empty/unsupported domain makes
+the workflow unavailable with unsupported_parameter before build/submit.
+The frontend Randomize seed action follows the same domain; the backend checks
+the result independently. Preserve the legacy builtin seed behavior.
+
+Revalidate generated/explicit seeds against the descriptor, then persist the
+concrete normalized value before jobs.submit. A stale descriptor/version still
+follows workflow_changed handling; seed resolution cannot authorize an upgrade.
+If no seed role exists, omit it rather than injecting a seed parameter.
 
 Snapshot version 2 retains selected workflow kind/ID/version, normalized public
 scalar parameters, resolved concrete seed, Image role settings, referenceInputId,
@@ -264,10 +298,16 @@ ownership rejection with zero upstream calls, source-deleted snapshot reuse,
 cross-user get/delete/thumbnail/submit/restore, expiry/revocation/in-use conflict,
 DB failure/orphans, CSRF, stale versions, auto/zero seed snapshots, migrations/
 restart, and existing txt2img/LoRA/Style/preferences/assets/download regressions.
+Seed cases include a 32-bit maximum, nonzero minimum, typed enum, integral and
+fractional multiple_of, a singleton/empty safe domain, invalid explicit zero,
+missing seed role, and normalized snapshot/Use settings round trips.
 
 Frontend tests must exercise actual components and mocked API calls for
 workflow selection, metadata-dependent controls, picker attach/replace/remove,
-preview failure/expiry, preserving prompt and LoRA drafts, disabled unsupported
+initial selection with no existing input, reselection after expiry/revocation/
+removal, empty eligible-Asset list, Generate blocked until valid attachment,
+descriptor-constrained Randomize seed, preview failure/expiry, preserving prompt
+and LoRA drafts, disabled unsupported
 workflows, and Use settings. Existing helper-only tests are insufficient for
 this integration. Keep no Batch Count until the upstream contract supports it.
 
