@@ -1,7 +1,7 @@
 # Studio Workflow selection and managed Image inputs
 
 Status: proposed design-only implementation plan, 2026-10-01.
-Tracks #21/#30 plus the Workflow discovery child issue created for this plan.
+Tracks #21/#30/#36. This design and its existing-Asset slice do not close #30.
 
 The canonical Generation schema/semantic contract is
 [WORKFLOW_SYSTEM_DESIGN.md](https://github.com/flamoris-jp/flamoris-generation-mcp/pull/43).
@@ -32,7 +32,12 @@ cannot enable it.
 This scope uses existing generated assets belonging to the signed-in Studio
 user. File chooser/drag-and-drop upload of local files is not supported by
 Generation inputs.create and is a separate future feature. Do not show an
-upload button that cannot submit safely.
+upload button that cannot submit safely. Reference Image v1 is exactly:
+Studio-owned existing generated Asset -> managed input snapshot -> JANKU
+img2img. No PC local file picker or drag/drop upload is implemented in this
+slice. #30 retains its broader "choose or drag/drop an image" requirement;
+local upload -> authorized managed input is follow-up scope, and #30 must stay
+open even when this slice passes offline and live acceptance.
 
 External ChatGPT-created asset import remains Hub #25, Generation #41, Studio
 #35. No filesystem scan, global generation catalog import, or inferred ownership
@@ -47,15 +52,37 @@ binding, provider filenames, built/saved upstream IDs, or private diagnostics.
 Add workflows to the existing discovery response while preserving templates,
 checkpoints and loras for compatibility. A Workflow option includes ID, version,
 kind, name, description, image mode/resize semantics, public parameter rules,
-and availability plus a safe unavailable reason. Provider identity may remain
+Generation-computed readiness and availability plus a safe unavailable reason.
+For definitions include definition_version/canonical definition_digest and
+bounded safe verification metadata, never the private attestation evidence. Provider identity may remain
 diagnostic; it does not choose the primary editor.
 
 Stable availability reasons include metadata_upgrade_required,
 unsupported_image_profile, unsupported_parameter, provider_unavailable,
-managed_input_not_ready. A malformed entry must not break compatible entries;
+managed_input_not_ready, workflow_not_ready, readiness_mismatch. A malformed entry must not break compatible entries;
 a malformed entire envelope produces safe discovery unavailable. Bound number
 of entries, parameters, strings, and metadata response size. Reject conflicting
 IDs/duplicate roles and invalid constraints. Never render upstream markup.
+
+Definition readiness is registered -> static validation -> validated -> bounded
+real-runtime verification -> ready. Successful workflows.register is durable,
+static and restart-free; it does not enable production selection. Generation's
+separate workflows.verify uses the ordinary JobStore reservation, staging and
+asset APIs, returns a job_id, and automatically persists attestation after
+compatibility/build/submit/completion/declared-output verification. Studio is
+not an attestation authority and adds no Approve action or browser verify tool.
+ChatGPT/Work/runtime-enabled CI/operations tools can register -> verify -> poll
+without a per-definition human step. Definitions cannot self-declare ready.
+
+Normal Studio selection requires readiness.state=ready for the exact descriptor
+ID/version/canonical digest. Version OR digest changes invalidate the old
+attestation. Registered/validated/failed candidates may appear disabled with
+safe diagnostics, but cannot be selected, restored as usable, or submitted.
+Missing or mismatched readiness fails closed; retry verification stays upstream.
+Never derive readiness from a workflow ID, JANKU name, raw graph, registration
+success, or global managed-input flag. Builtins retain the Generation-owned
+builtin_compatibility ready basis; it does not certify an external Definition.
+No raw attestation/prompt/source/runtime evidence reaches the browser.
 
 V1 definitions lacking roles/Image metadata are listed but disabled for this
 editor until a reviewed higher-version metadata upgrade. Do not infer features
@@ -91,12 +118,13 @@ Enable the picker only when all hold:
 
 1. Workflow declares the supported img2img/initial_image contract.
 2. Required image media type and remaining parameters are supported.
-3. Provider is available and managed-input rollout readiness is on.
-4. Studio has deployed its ownership mapping/API.
+3. Exact Workflow ID/version/digest has Generation-owned ready attestation.
+4. Provider is available AND managed-input infrastructure readiness is on.
+5. Studio has deployed its ownership mapping/API.
 
 An existing input is not a picker prerequisite. With no attachment, or after
 expiry/revocation/removal, keep selection and replacement available when those
-four conditions hold. If no eligible owned Asset exists, show an empty picker
+five conditions hold. If no eligible owned Asset exists, show an empty picker
 with guidance to generate one; do not substitute an unauthorized upstream Asset.
 Invalid scalar drafts block Generate, not selection of a supported initial image.
 
@@ -106,7 +134,8 @@ during staging; a usable picker does not grant permission to submit.
 
 No input attachment for txt2img; do not send an old hidden reference when
 switching modes. Preserve the local draft separately for switching back.
-Unknown readiness or provider failure blocks selection and submission. Input
+Unknown/mismatched Workflow or infrastructure readiness, or provider failure,
+blocks selection and submission. Input
 expiry/revocation blocks submission while permitting authorized reselection.
 
 ## 3. Ownership model and proposed API
@@ -173,7 +202,8 @@ Generation remains responsible for file TTL/staging, not Studio's database.
 ## 4. Submit DTO and execution snapshot
 
 Keep the legacy ImageRequest path. Add an explicit request shape for selected
-workflows, with workflowId, workflowKind, definitionVersion (definitions only),
+workflows, with workflowId, workflowKind, definitionVersion and definitionDigest
+(definitions only),
 typed Image role values, bounded additional scalar parameters, and optional
 referenceInputId (Studio UUID only).
 
@@ -184,6 +214,7 @@ Example conceptual request:
   "workflowId": "janku-reference-image",
   "workflowKind": "definition",
   "definitionVersion": 1,
+  "definitionDigest": "sha256:<canonical-definition-digest>",
   "positivePrompt": "a quiet garden",
   "negativePrompt": "",
   "checkpoint": "catalog-selected-checkpoint",
@@ -200,8 +231,8 @@ Example conceptual request:
 }
 ```
 
-The model name and UUID above are placeholders, not runtime IDs.
-Client-supplied workflowKind/version/profile are untrusted: verify them against
+The model name, digest and UUID above are placeholders, not runtime identities.
+Client-supplied workflowKind/version/digest/profile are untrusted: verify them against
 fresh server-side discovery. Never accept raw graph, node patches, model paths,
 URLs, Generation input IDs, or managed_input values hidden in additionalParameters.
 
@@ -209,7 +240,9 @@ Ordering:
 
 1. Validate local shape and authorize every submitted Studio reference before
    contacting the shared upstream, including discovery.
-2. Read/validate the selected descriptor and version. Apply supported metadata
+2. Read/validate the selected descriptor and exact version/digest ready
+   attestation. For reference use require infrastructure readiness too; no browser
+   flag can bypass either gate. Apply supported metadata
    constraints and validate required/mutually incompatible fields.
 3. Resolve Studio input handle to the mapped upstream input and revalidate
    expiry/MIME. Map Image roles to declared parameter keys.
@@ -217,11 +250,16 @@ Ordering:
    using the canonical descriptor-constrained seed domain below. Explicit values,
    including zero, are preserved and validated; never silently replace them.
    Revalidate all resolved values after automatic assignment, before build.
-5. Build using explicit definition_version for definitions; use builtin
-   compatibility mapping for existing requests.
+5. Build using explicit definition_version, definition_digest and server-set
+   require_ready=true for definitions; the normalized recipe pins identity and
+   ready requirement. Use builtin compatibility mapping for existing requests.
+   Candidate verification's trusted require_ready=false path is never exposed
+   by the Studio API; reject injected readiness policy flags.
 6. Validate normalized recipe result. Persist Studio execution/request snapshot
    before the non-idempotent jobs.submit.
-7. Submit once. Preserve busy/submission_unknown behavior and no automatic retry.
+7. Submit once. Generation rechecks the pinned ready attestation under normal
+   JobStore admission before provider await, including revocation/update races.
+   Preserve busy/submission_unknown behavior and no automatic retry.
 8. Synchronize returned assets through existing owner-scoped catalog flow.
 
 ### Descriptor-constrained automatic seed
@@ -235,8 +273,11 @@ are in Generation's Workflow design; the descriptor remains the authority.
 Sample cryptographically from the legal values directly: use a bounded filtered
 enum, or derive an exact integer progression and sample its index. Do not draw
 from the full browser-safe range and retry until validation happens to pass.
-Use exact arithmetic for multiple_of membership, including fractional steps;
-never round an invalid seed into the domain. An empty/unsupported domain makes
+V2 multiple_of is positive integer only on integer parameters. Generation and
+Studio use the same integer remainder/progression semantics; width/height use 8.
+Reject nonpositive/non-integer divisors, booleans and numeric strings in metadata;
+never round an invalid seed into the domain. Decimal steps for number parameters
+need a future separate contract without float tolerance. An empty/unsupported domain makes
 the workflow unavailable with unsupported_parameter before build/submit.
 The frontend Randomize seed action follows the same domain; the backend checks
 the result independently. Preserve the legacy builtin seed behavior.
@@ -246,7 +287,8 @@ concrete normalized value before jobs.submit. A stale descriptor/version still
 follows workflow_changed handling; seed resolution cannot authorize an upgrade.
 If no seed role exists, omit it rather than injecting a seed parameter.
 
-Snapshot version 2 retains selected workflow kind/ID/version, normalized public
+Snapshot version 2 retains selected workflow kind/ID/version/canonical digest,
+normalized public
 scalar parameters, resolved concrete seed, Image role settings, referenceInputId,
 and safe thumbnail/expiry presentation context. Upstream input bindings and
 digests may be stored only as internal provenance; redact them from browser
@@ -265,14 +307,17 @@ expiry. Source deletion alone does not invalidate a copied snapshot.
 
 If the reference expired/revoked, restore compatible prompt/scalars with a
 clear reselect-reference message and keep Generate blocked. If the selected
-definition version was replaced, preserve the old settings visibly but require
-explicit selection/revalidation of the current version; never silently upgrade.
+definition version or canonical digest was replaced, preserve the old settings visibly but require
+explicit selection/revalidation of a current ready identity; never silently
+upgrade. If attestation was revoked or reverify failed, retain an unavailable
+draft and require renewed ready discovery before Generate.
 
 A stale build/version failure maps to workflow_changed, refreshes discovery,
 keeps the draft and requires a new Generate click. Upstream submission_unknown
 must not present a retry action that automatically resubmits.
 
-Definition-update, input-delete/expiry and source-delete races require tests.
+Definition/version/digest-update, attestation-revocation, input-delete/expiry and
+source-delete races require tests.
 Generation stage lease is the final file-use boundary; Studio cannot make an
 input immortal through a database row.
 
@@ -280,9 +325,9 @@ input immortal through a database row.
 
 | Commit | Existing layers to extend |
 | --- | --- |
-| 1 | gateway.py descriptor DTOs/normalization; api.ts discovery types |
+| 1 | gateway.py ready-only descriptor DTOs/normalization; api.ts discovery types |
 | 2 | db.py, new Alembic migration, owned input helpers/endpoints |
-| 3 | app.py selection/version/role mapping and snapshot v2 |
+| 3 | app.py exact ready identity/role mapping, require_ready policy and snapshot v2 |
 | 4 | App.tsx dedicated Workflow selector and Asset reference picker |
 | 5 | App.tsx/api.ts/Gallery.tsx settings/reference restoration |
 | 6 | tests, README, architecture cross-link and operational notes |
@@ -298,9 +343,14 @@ ownership rejection with zero upstream calls, source-deleted snapshot reuse,
 cross-user get/delete/thumbnail/submit/restore, expiry/revocation/in-use conflict,
 DB failure/orphans, CSRF, stale versions, auto/zero seed snapshots, migrations/
 restart, and existing txt2img/LoRA/Style/preferences/assets/download regressions.
-Seed cases include a 32-bit maximum, nonzero minimum, typed enum, integral and
-fractional multiple_of, a singleton/empty safe domain, invalid explicit zero,
+Seed cases include a 32-bit maximum, nonzero minimum, typed enum, positive integer
+multiple_of, invalid divisors, a singleton/empty safe domain, invalid explicit zero,
 missing seed role, and normalized snapshot/Use settings round trips.
+Readiness cases include register-only/validated exclusion, missing/mismatched
+attestation, version OR digest replacement, failed/retried verify, both independent
+readiness gates, revoke-between-build-and-submit, self-claimed readiness and
+browser policy bypass rejection. Test no local file picker/drag-drop/upload
+button, and document #30's unresolved local upload scope.
 
 Frontend tests must exercise actual components and mocked API calls for
 workflow selection, metadata-dependent controls, picker attach/replace/remove,
@@ -319,14 +369,21 @@ defined in CI. Ordinary CI needs no GPU, private model, tunnel or live ComfyUI.
 
 Deploy schema/signature/backend/UI support through current repository procedures;
 do not guess service commands. Keep production reference controls off until
-the explicit real-runtime smoke and provider-input retention policy are evidenced.
-Per-definition trusted runtime registration remains restart/release-free.
+infrastructure smoke/retention policy AND per-definition automatic ready
+attestation are evidenced. The global flag alone never enables a Definition.
+Per-definition register -> verify -> poll -> ready remains restart/release-free
+and needs no human Approve. Failed verification stays registered/validated,
+unavailable in production and explicitly retryable through upstream tools.
 
-Acceptance: choose a reviewed registered Image definition; select an owned
+Acceptance: choose an automatically attested exact ready Image definition; select an owned
 generated image; create a snapshot; submit img2img; view the normal Studio
 result/Asset; inspect exact settings; restore the still-valid reference;
 reject another user's equivalent operations; prove source deletion and snapshot
 expiry have distinct behavior. Offline acceptance and live acceptance must be
 reported separately.
 
-This design PR does not close #21/#30, run product changes, or merge itself.
+This design PR does not close #21/#30/#36, run product changes, or merge itself.
+Completion of this existing-Asset Reference Image v1 slice must not close #30.
+Its local upload -> authorized managed input requirement remains follow-up scope;
+do not advertise or render an upload control before that contract is implemented.
+
