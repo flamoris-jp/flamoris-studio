@@ -38,6 +38,15 @@ def current_user(request: Request, db: Session = Depends(database)) -> uuid.UUID
     return login.user_id
 
 
+def authenticated_user(request: Request, db: Session = Depends(database)) -> uuid.UUID:
+    user_id = current_user(request, db)
+    # Authentication is read-only. Return its connection before endpoint work
+    # waits for admission or performs remote I/O; explicit rechecks keep their
+    # caller's transaction semantics through current_user.
+    db.rollback()
+    return user_id
+
+
 def start_session(response, db: Session, user_id: uuid.UUID):
     token = secrets.token_urlsafe(48)
     db.add(LoginSession(token_hash=digest(token), user_id=user_id, expires_at=now() + timedelta(seconds=SESSION_SECONDS)))

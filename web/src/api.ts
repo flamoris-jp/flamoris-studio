@@ -18,8 +18,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { credentials: 'same-origin', ...options })
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
-    if (response.status === 401) throw new Error('Session expired. Refresh and sign in again.')
-    throw new Error(body.message || body.error || `Request failed (${response.status}).`)
+    if (response.status === 401) throw new HTTPFailure('Session expired. Refresh and sign in again.', 401)
+    throw new HTTPFailure(body.message || body.error || `Request failed (${response.status}).`, response.status)
   }
   const text = await response.text()
   return (text ? JSON.parse(text) : undefined) as T
@@ -27,7 +27,33 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 const post = <T>(path: string, body: unknown, csrf: string) => request<T>(path, {
   method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify(body),
 })
+export class HTTPFailure extends Error {
+  status: number
+  constructor(message: string, status: number) { super(message); this.status = status }
+}
+export type AssistantAvailability = { available: boolean; state: 'ready' | 'offline' | 'busy' | 'unknown' | 'unavailable'; sessionKey?: string; expiresAt?: string; sessionExpiresAt?: string }
+export type AssistantAnswer = { requestHandle: string; sessionKey: string; text: string; provenance: { model: string; provider: string; execution_id?: string } }
+export class AssistantFailure extends Error {
+  uncertain: boolean
+  constructor(message: string, uncertain: boolean) { super(message); this.uncertain = uncertain }
+}
+async function assistantAsk(payload: unknown, csrf: string): Promise<AssistantAnswer> {
+  let response: Response
+  try {
+    response = await fetch('/api/assistant/ask', { credentials: 'same-origin', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify(payload) })
+  } catch { throw new AssistantFailure('Assistant outcome could not be confirmed.', true) }
+  if (!response.ok) {
+    const body = await response.json().catch(() => { throw new AssistantFailure('Assistant outcome could not be confirmed.', true) })
+    const message = typeof body.detail === 'string' ? body.detail : 'Assistant request failed.'
+    throw new AssistantFailure(message, response.status >= 500 || response.status === 401 || /already recorded|result withheld/.test(message))
+  }
+  try { return await response.json() as AssistantAnswer }
+  catch { throw new AssistantFailure('Assistant outcome could not be confirmed.', true) }
+}
 export const api = {
+  assistantAvailability: (csrf: string) => post<AssistantAvailability>('/api/assistant/availability', {}, csrf),
+  assistantAsk,
   session: () => request<Session>('/api/session'),
   authenticate: (action: 'login' | 'register', email: string, password: string, csrf: string) => post(`/api/auth/${action}`, { email, password }, csrf),
   logout: (csrf: string) => post('/api/auth/logout', {}, csrf),

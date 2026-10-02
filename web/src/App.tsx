@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, type Session, type Discovery, type Execution, type ImageSettings, type ImageStyle, type ImagePreferences, type Workflow } from './api'
 import Gallery, { ResultPreview } from './Gallery'
 import { WorkflowPicker, ReferencePicker, workflowPayload, roleSpec, legalSeed } from './WorkflowImage'
+import Assistant from './Assistant'
 
 const sections = ['Image', 'Intelligence', 'Video', 'Music', 'Speech', 'Assets'] as const
 type ImageForm = ImageSettings & { sampler: string; scheduler: string; denoise: number; loras: NonNullable<ImageSettings['loras']> }
@@ -111,7 +112,7 @@ export default function App() {
     <nav aria-label="Creative domains">{sections.map(name => <button key={name} aria-current={section === name ? 'page' : undefined} onClick={() => setSection(name)}>{name}</button>)}</nav>
     <div className="account-footer"><span>{session.userName}</span><button onClick={() => setSection('Account')}>Account settings</button><button onClick={async () => { try { await api.logout(session.csrfToken); setForm(initialImageDraft()); setExecution(null); setResultSettings(null); setDiscovery(null); window.location.hash = ''; setSession(await api.session()) } catch { setError('Could not sign out.') } }}>Sign out</button></div></aside>
     <main><header><div><span className="eyebrow">CREATIVE CONTROL PLANE</span><h1>{section}</h1></div><span className="badge">PHASE 1A</span></header>
-    {section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Assets' ? <Gallery csrf={session.csrfToken} onUseSettings={useSettings} /> : section === 'Image' ? <><p>Turn a prompt into something you can keep.</p>
+    {section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Assets' ? <Gallery csrf={session.csrfToken} onUseSettings={useSettings} /> : section === 'Intelligence' ? <Assistant key={session.userName} csrf={session.csrfToken} initiallyOpen /> : section === 'Image' ? <div className="image-workspace"><div><p>Turn a prompt into something you can keep.</p>
       {preferencesError && <p role="alert" className="error">{preferencesError}</p>}
       {discovery?.available ? <ImageEditor discovery={discovery} busy={busy} form={form} setForm={setForm} csrf={session.csrfToken} onSubmit={async form => {
         setBusy(true); setError(''); setExecution(null); setResultSettings(null)
@@ -129,7 +130,7 @@ export default function App() {
             <a href={asset.downloadUrl}>Download ↓</a>{asset.mediaKind === 'image' && ['image/png','image/jpeg','image/webp'].includes(asset.mimeType) && <><button onClick={async () => { try { const detail = await api.asset(asset.id); setResultSettings(detail.settings) } catch { setError('Could not load settings.') } }}>View settings</button><button onClick={async () => { try { const detail = await api.asset(asset.id); useSettings(detail.settings) } catch { setError('Could not restore settings.') } }}>Use settings ↗</button></>}</div></article>) : <p>No files were returned.</p>}</div>}
         {resultSettings && <dl className="settings-list">{Object.entries(resultSettings).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{Array.isArray(value) ? value.map((lora, index) => `${index + 1}. ${lora.name} (model ${lora.strengthModel}, CLIP ${lora.strengthClip})`).join('\n') || 'None' : String(value)}</dd></div>)}</dl>}
       </section>}
-    </> : <section className="panel"><span className="eyebrow">COMING LATER</span><h2>{section} is unavailable</h2><p>This editor will connect when its MCP capability is ready.</p></section>}</main></div>
+    </div><Assistant key={session.userName} csrf={session.csrfToken} draft={form} /></div> : <section className="panel"><span className="eyebrow">COMING LATER</span><h2>{section} is unavailable</h2><p>This editor will connect when its MCP capability is ready.</p></section>}</main></div>
 }
 
 function AccountSettings({ session, onChanged }: { session: Session; onChanged: (session: Session) => void }) {
