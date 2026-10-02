@@ -1,0 +1,65 @@
+# Opt-in pinned Image v3 operation
+
+Advances #36/#39 and FLAMORIS AI #15 using Generation #51 and Hub #30. Studio
+consumes Generation's reviewed `image-generate-v1` revision 1 through its existing
+Image editor. It does not author/register graphs, attest candidates, switch a
+runtime or implement another scheduler. The initial execution profile supports
+one audited txt2img leaf inside nested pinned pass-through wrappers.
+
+Set `STUDIO_GENERATION_V3_ENABLED=true` only after deploying a compatible Generation
+with `FLAMORIS_WORKFLOW_V3_ENABLED=true` and replacing the Hub's runtime Generation
+catalog using `_generation-v3.example.yaml`. The Studio flag defaults to false;
+legacy Image discovery/build remains unchanged. An enabled but unavailable or
+incompatible v3 catalog fails closed without falling back to a different route.
+No new DB migration is needed: existing source-discriminated execution and immutable
+request snapshots retain the v3 Workflow kind, expected schema/compiler/adapter/profile
+revisions and exact root version/digest. These are checked against the build reply;
+Generation retains the complete immutable plan and invocation receipt.
+
+## Selection and dispatch
+
+The backend translates only the reviewed graph-free descriptor revision 3 into
+bounded Image presentation metadata. Known role/schema/cardinality/format domains,
+exact canonical root identity, current whole-root readiness, reviewed scalar domain
+and the measured checkpoint are required. Unknown/malformed profiles reject;
+unqualified roots remain disabled. Fixed-size v3 roots are disabled because this
+catalog does not publish effective fixed dimensions; Studio never guesses a size
+from a graph, model or Workflow name. Editable width/height remain paired bounded
+multiples of eight. Text retains its UTF-8 JSON byte ceiling in browser and backend.
+
+Studio uses `v3:<root-id>` presentation IDs and the `v3` Workflow kind to distinguish
+v3 roots from legacy Definitions with the same name/id. This is a catalog identity,
+not an authorization grant. The picker and Use settings reuse existing Image role
+controls; stale restored versions preserve the prompt and require explicit selection.
+No reference, LoRA, sampler or scheduler control is fabricated for the v3 profile.
+
+Submission refreshes discovery and exact version/digest/current readiness before
+reserving an owner-scoped Studio Execution. It calls `workflows.v3.build` with the
+exact upstream root and server-set `require_ready=true`. The gateway verifies the
+returned root, normalized parameters, schema/compiler/adapter revisions, canonical
+closure/structural/invocation pins and bounded opaque workflow handle before calling
+ordinary `jobs.submit` once. A malformed build cannot cause job submission. Generation
+then independently rechecks retained pins, revocation and runtime/model evidence.
+
+Generation alone owns immutable version history and parent qualification. Studio
+has no ready override, child-to-parent approval rule or provider-health shortcut.
+Operators register and automatically smoke the exact root through Generation's
+reviewed tools before it can be selected. Unknown submission results retain the
+original Studio execution/request for reconciliation and never automatically replay.
+
+## User isolation and results
+
+Existing cookie authentication, CSRF and source/owner checks apply. Browser requests
+cannot supply an upstream managed input, arbitrary graph, candidate bypass or provider
+credential. Studio Execution/Asset UUID mappings remain user-owned. Status, result,
+cancel, thumbnail, preview, download and deletion reuse the existing owner-checked
+Generation route; upstream job/asset references stay server-side. Output roles and
+media bounds use the existing result/transfer contract.
+
+Normal tests include actual descriptor-shape fixtures, strict gateway reply checks,
+ready/stale/profile/model/byte-domain fences, two-user PostgreSQL execution ownership,
+real editor interactions and restoration. GPU/model installation is not required.
+Repository CI is not deployment evidence. Enable this route only after real runtime
+smoke and authenticated two-user acceptance on the deployed matched versions.
+Multiple native components, Music/Speech/Video, fixed-size v3 presentation metadata
+and runtime orchestration remain follow-up scope; #39/#45 stay open.

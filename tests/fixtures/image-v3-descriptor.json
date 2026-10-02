@@ -1,0 +1,127 @@
+{
+  "id": "image-parent",
+  "version": 1,
+  "digest": "sha256:49315eb003d277e1eb3243a7d40c2d855adb2fd04496258607896a2609fad173",
+  "descriptor_revision": 3,
+  "name": "Pinned Image",
+  "description": "",
+  "capability_id": "image.generate",
+  "profile": {
+    "id": "image-generate-v1",
+    "revision": 1
+  },
+  "execution_kind": "composition",
+  "inputs": {
+    "checkpoint": {
+      "type": "string",
+      "schema_id": "image-checkpoint",
+      "schema_revision": 1,
+      "role": "checkpoint",
+      "min_count": 1,
+      "max_count": 1,
+      "max_bytes": 20000,
+      "mime_types": []
+    },
+    "positive_prompt": {
+      "type": "string",
+      "schema_id": "image-positive-prompt",
+      "schema_revision": 1,
+      "role": "positive_prompt",
+      "min_count": 1,
+      "max_count": 1,
+      "max_bytes": 20000,
+      "mime_types": []
+    },
+    "steps": {
+      "type": "integer",
+      "schema_id": "image-steps",
+      "schema_revision": 1,
+      "role": "steps",
+      "min_count": 0,
+      "max_count": 1,
+      "max_bytes": 64,
+      "mime_types": [],
+      "minimum": 1.0,
+      "maximum": 150.0,
+      "default": 20
+    },
+    "cfg": {
+      "type": "number",
+      "schema_id": "image-cfg",
+      "schema_revision": 1,
+      "role": "cfg",
+      "min_count": 0,
+      "max_count": 1,
+      "max_bytes": 64,
+      "mime_types": [],
+      "minimum": 0.0,
+      "maximum": 100.0,
+      "default": 7.0
+    },
+    "width": {
+      "type": "integer",
+      "schema_id": "image-width",
+      "schema_revision": 1,
+      "role": "width",
+      "min_count": 0,
+      "max_count": 1,
+      "max_bytes": 64,
+      "mime_types": [],
+      "minimum": 64.0,
+      "maximum": 4096.0,
+      "default": 512
+    },
+    "height": {
+      "type": "integer",
+      "schema_id": "image-height",
+      "schema_revision": 1,
+      "role": "height",
+      "min_count": 0,
+      "max_count": 1,
+      "max_bytes": 64,
+      "mime_types": [],
+      "minimum": 64.0,
+      "maximum": 4096.0,
+      "default": 512
+    },
+    "seed": {
+      "type": "integer",
+      "schema_id": "image-seed",
+      "schema_revision": 1,
+      "role": "seed",
+      "min_count": 0,
+      "max_count": 1,
+      "max_bytes": 64,
+      "mime_types": [],
+      "minimum": 0.0,
+      "maximum": 4294967295.0,
+      "default": 0
+    }
+  },
+  "outputs": {
+    "image": {
+      "type": "asset",
+      "schema_id": "image-v1",
+      "schema_revision": 1,
+      "role": "primary_image",
+      "min_count": 1,
+      "max_count": 1,
+      "max_bytes": 1048576,
+      "media_kind": "image",
+      "mime_types": [
+        "image/png"
+      ]
+    }
+  },
+  "readiness": {
+    "state": "ready",
+    "reason": null
+  },
+  "qualified_models": [
+    "checkpoint:test"
+  ],
+  "qualified_domain": {
+    "id": "image-v1-bounded-scalars",
+    "revision": 1
+  }
+}

@@ -19,6 +19,7 @@ export function validValue(spec: ParameterSpec, value: unknown): boolean {
   if (typeof value === 'number' && (value < (spec.minimum ?? -Infinity) || value > (spec.maximum ?? Infinity))) return false
   if (spec.multiple_of !== undefined && (spec.type !== 'integer' || !Number.isSafeInteger(spec.multiple_of) || spec.multiple_of <= 0 || typeof value !== 'number' || value % spec.multiple_of !== 0)) return false
   if (spec.enum && !spec.enum.some(x => typeof x === typeof value && x === value)) return false
+  if (spec.max_bytes !== undefined && (!Number.isSafeInteger(spec.max_bytes) || spec.max_bytes <= 0 || new TextEncoder().encode(JSON.stringify(value)).length > spec.max_bytes)) return false
   return true
 }
 

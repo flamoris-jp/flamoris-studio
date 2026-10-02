@@ -5,6 +5,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from .workflow_contract import normalize_catalog
+from .image_v3_contract import normalize_v3_catalog
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
@@ -82,6 +83,10 @@ class GenerationGateway:
         catalog = await self._json("workflows.list")
         try:
             descriptors = normalize_catalog(catalog)
+            if os.getenv("STUDIO_GENERATION_V3_ENABLED", "false").lower() == "true":
+                descriptors += normalize_v3_catalog(await self._json("workflows.v3.list"))
+                if len(descriptors) > 128 or len({d["id"] for d in descriptors}) != len(descriptors):
+                    raise ValueError("unsupported_parameter")
         except (ValueError, TypeError):
             raise GatewayError("upstream_failure") from None
         return {"available": True, "workflows": descriptors,
@@ -95,16 +100,32 @@ class GenerationGateway:
 
     async def build_selected(self, descriptor, parameters):
         args = {"template": descriptor["id"], "parameters": parameters}
+        v3 = descriptor["kind"] == "v3"
+        if v3:
+            if (os.getenv("STUDIO_GENERATION_V3_ENABLED", "false").lower() != "true"
+                or not re.fullmatch(r"v3:[a-z][a-z0-9_-]{0,63}", descriptor["id"])):
+                raise GatewayError("validation")
+            args = {"workflow_id": descriptor["id"].removeprefix("v3:"), "parameters": parameters,
+                    "definition_version": descriptor["definitionVersion"],
+                    "definition_digest": descriptor["definitionDigest"], "require_ready": True}
         if descriptor["kind"] == "definition":
             args.update(definition_version=descriptor["definitionVersion"],
                         definition_digest=descriptor["definitionDigest"], require_ready=True)
-        result = await self._json("workflows.build", args)
-        if result.get("template") != descriptor["id"] or result.get("parameters") != parameters:
+        result = await self._json("workflows.v3.build" if v3 else "workflows.build", args)
+        expected_template = descriptor["id"].removeprefix("v3:") if v3 else descriptor["id"]
+        if result.get("template") != expected_template or result.get("parameters") != parameters:
             raise GatewayError("validation")
-        if descriptor["kind"] == "definition" and (
+        if descriptor["kind"] in {"definition", "v3"} and (
             result.get("definition_version") != descriptor["definitionVersion"] or
             result.get("definition_digest") != descriptor["definitionDigest"] or
             result.get("require_ready") is not True):
+            raise GatewayError("validation")
+        if v3 and (any(type(result.get(k)) is not int for k in (
+                       "schema_version", "definition_version", "compiler_revision", "adapter_revision"))
+                   or result.get("schema_version") != 3 or result.get("compiler_revision") != 2
+                   or result.get("adapter_revision") != 1 or any(
+                       not isinstance(result.get(k), str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", result[k])
+                       for k in ("structural_digest", "closure_digest", "invocation_digest"))):
             raise GatewayError("validation")
         workflow_id = result.get("workflow_id")
         if not isinstance(workflow_id, str) or not re.fullmatch(r"[a-f0-9]{32}", workflow_id):
@@ -167,4 +188,3 @@ class GenerationGateway:
         if not isinstance(result.structured_content, dict):
             raise GatewayError("upstream_failure")
         return result.structured_content
-
