@@ -135,7 +135,7 @@ export function ReferencePicker({ enabled, needsReference, inputId, csrf, onChan
   }, [inputId, onValid])
   async function load(offset = 0) {
     setBusy(true); setError('')
-    try { const page = await api.assets(offset); setAssets(old => [...(offset ? old : []), ...page.items.filter(a => ['image/png','image/jpeg','image/webp'].includes(a.mimeType))]); setNextOffset(page.nextOffset); setOpen(true) }
+    try { const page = await api.assets(offset); setAssets(old => [...(offset ? old : []), ...page.items.filter(a => a.mediaKind === 'image' && ['image/png','image/jpeg','image/webp'].includes(a.mimeType))]); setNextOffset(page.nextOffset); setOpen(true) }
     catch { setError('Could not load Assets.') } finally { setBusy(false) }
   }
   async function attach(asset: Asset) {

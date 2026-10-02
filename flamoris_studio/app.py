@@ -28,6 +28,8 @@ from .managed_inputs import (Limits, owned_input, usable, input_view, reserve, c
 from .workflow_contract import ROLES, map_parameters
 from .input_thumbnails import InputThumbnails
 from .transfer import CHUNK_BYTES, MAX_TRANSFER_BYTES, PreviewAdmission, chunk, metadata, read_with_retry
+from .result_contract import normalize_outputs, output_role, preview_kind
+from .range_transfer import representation_response
 
 # 512 KiB of raw image data stays below a 1 MiB SSE event even after base64
 # encoding and the MCP JSON envelope. Unknown sizes take the bounded route.
@@ -156,6 +158,8 @@ def asset_view(asset: Asset) -> dict:
     return {"id": str(asset.id), "executionId": str(asset.execution_id),
             "displayName": asset.display_name, "mimeType": asset.mime_type,
             "mediaKind": asset.media_kind, "sizeBytes": asset.size_bytes,
+            "source": asset.source, "previewKind": preview_kind(asset.media_kind, asset.mime_type),
+            "outputRole": output_role((asset.extra_metadata or {}).get("output_role")),
             "width": asset.width, "height": asset.height,
             "createdAt": asset.created_at.isoformat(),
             "hasThumbnail": asset.thumbnail_locator is not None,
@@ -168,6 +172,7 @@ def view(execution: Execution, db: Session):
                                             Asset.user_id == execution.user_id,
                                             Asset.availability != "deleted").order_by(Asset.created_at)).all()
     return {"id": str(execution.id), "state": execution.last_known_status,
+            "source": execution.source, "category": execution.category, "operation": execution.operation,
             "submittedAt": execution.submitted_at.isoformat(),
             "assets": [asset_view(asset) for asset in assets]}
 
@@ -180,10 +185,12 @@ def owned(db: Session, execution_id: uuid.UUID, user_id: uuid.UUID) -> Execution
 
 
 def owned_asset(db: Session, execution_id: uuid.UUID, asset_id: uuid.UUID, user_id: uuid.UUID) -> Asset:
-    owned(db, execution_id, user_id)
+    execution = owned(db, execution_id, user_id)
+    if execution.source != "generation":
+        raise HTTPException(404)
     asset = db.scalar(select(Asset).where(Asset.id == asset_id, Asset.execution_id == execution_id,
                                          Asset.user_id == user_id, Asset.availability != "deleted"))
-    if asset is None:
+    if asset is None or asset.source != "generation":
         raise HTTPException(404)
     return asset
 
@@ -653,7 +660,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             # Serialize with result catalog updates, including a stale assets.list response.
             row = db.execute(select(Asset, Execution).join(Execution, Asset.execution_id == Execution.id)
                              .where(Asset.id == asset_id, Asset.user_id == user_id,
-                                    Execution.user_id == user_id)
+                                    Execution.user_id == user_id, Asset.source == "generation",
+                                    Execution.source == "generation")
                              .with_for_update(of=Execution)).first()
             if row is None:
                 results.append({"id": str(asset_id), "deleted": False, "error": "not_found"})
@@ -683,6 +691,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     async def execution_status(execution_id: uuid.UUID, db: Session = Depends(database),
                                user_id: uuid.UUID = Depends(current_user)):
         execution = owned(db, execution_id, user_id)
+        if execution.source != "generation":
+            raise HTTPException(404)
         if execution.upstream_job_id and execution.last_known_status not in {"completed", "failed", "cancelled"}:
             job = await app.state.gateway.status(execution.upstream_job_id)
             set_status(db, execution, job["status"])
@@ -692,6 +702,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     async def result(execution_id: uuid.UUID, db: Session = Depends(database),
                      user_id: uuid.UUID = Depends(current_user)):
         execution = owned(db, execution_id, user_id)
+        if execution.source != "generation":
+            raise HTTPException(404)
         if not execution.upstream_job_id:
             return view(execution, db)
         if execution.last_known_status != "completed":
@@ -709,32 +721,30 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             if cached["assets"]:
                 return {**cached, "catalogSync": "unavailable"}
             raise
-        if not isinstance(listing, list) or len(listing) > 64:
-            raise GatewayError("upstream_failure")
+        outputs = normalize_outputs(listing)
         # Lock the parent row to serialize concurrent catalog updates across processes.
         db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution.id})
         known = {asset.upstream_asset_id: asset for asset in db.scalars(
             select(Asset).where(Asset.execution_id == execution.id, Asset.user_id == user_id))}
-        for item in listing:
-            if not isinstance(item, dict):
-                raise GatewayError("upstream_failure")
-            if item.get("media_kind") != "image" or item.get("mime_type") not in {"image/png", "image/jpeg", "image/webp"}:
-                continue
-            upstream = item.get("asset_id")
-            if not isinstance(upstream, str) or not 0 < len(upstream) <= 256:
-                continue
-            size = item.get("size_bytes")
-            size = size if type(size) is int and 0 <= size <= 2**63 - 1 else None
+        for item in outputs:
+            upstream, size = item.upstream_id, item.size_bytes
             if upstream in known:
-                if size is not None and known[upstream].availability != "deleted":
-                    known[upstream].size_bytes = size
+                existing = known[upstream]
+                if existing.availability == "deleted":
+                    continue
+                prior_role = output_role((existing.extra_metadata or {}).get("output_role"))
+                if ((existing.media_kind, existing.mime_type) != (item.media_kind, item.mime_type) or
+                    prior_role is not None and prior_role != item.role):
+                    raise GatewayError("validation")
+                if item.role is not None:
+                    existing.extra_metadata = {**(existing.extra_metadata or {}), "output_role": item.role}
+                if size is not None:
+                    existing.size_bytes = size
                 continue
-            original = item.get("filename") if isinstance(item.get("filename"), str) else None
-            original = filename(original)
             asset = Asset(user_id=user_id, execution_id=execution.id, upstream_asset_id=upstream,
-                         storage_locator=upstream, original_filename=original,
-                         display_name=filename(original), media_kind="image", mime_type=item["mime_type"],
-                         size_bytes=size)
+                         storage_locator=upstream, original_filename=item.display_name,
+                         display_name=item.display_name, media_kind=item.media_kind, mime_type=item.mime_type,
+                         size_bytes=size, extra_metadata={"output_role": item.role} if item.role else {})
             db.add(asset)
             known[upstream] = asset
         db.commit()
@@ -744,6 +754,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     async def cancel(execution_id: uuid.UUID, db: Session = Depends(database),
                      user_id: uuid.UUID = Depends(current_user)):
         execution = owned(db, execution_id, user_id)
+        if execution.source != "generation":
+            raise HTTPException(404)
         if execution.upstream_job_id and execution.last_known_status not in {"completed", "failed", "cancelled"}:
             job = await app.state.gateway.cancel(execution.upstream_job_id)
             set_status(db, execution, job["status"])
@@ -822,6 +834,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         owned(db, execution_id, user_id)
         db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution_id})
         asset = owned_asset(db, execution_id, asset_id, user_id)
+        if preview_kind(asset.media_kind, asset.mime_type) != "image":
+            raise HTTPException(404)
         if asset.thumbnail_locator is None:
             data, _ = await get_content(asset, db, request, user_id)
             try:
@@ -842,6 +856,39 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         owned(db, execution_id, user_id)
         db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution_id})
         asset = owned_asset(db, execution_id, asset_id, user_id)
+        if asset.source != "generation":
+            raise HTTPException(404)
+        kind = preview_kind(asset.media_kind, asset.mime_type)
+        if kind != "image":
+            # Non-image content always uses the prepared bounded transport; no
+            # image/base64 fallback or arbitrary browser-executable preview.
+            upstream_id, mime, display_name = asset.upstream_asset_id, asset.mime_type, asset.display_name
+            db.rollback()
+            cap = min(max(int(os.getenv("STUDIO_MAX_TRANSFER_BYTES", str(MAX_TRANSFER_BYTES))), 1), MAX_TRANSFER_BYTES)
+
+            async def authorize():
+                if await request.is_disconnected():
+                    raise asyncio.CancelledError()
+                db.rollback()
+                if current_user(request, db) != user_id:
+                    raise HTTPException(401)
+                current = owned_asset(db, execution_id, asset_id, user_id)
+                if (current.source != "generation" or current.mime_type != mime or
+                    current.upstream_asset_id != upstream_id):
+                    raise HTTPException(404)
+
+            async def prepare():
+                await authorize()
+                return await prepare_owned_asset(asset, db, request, user_id)
+
+            return await representation_response(gateway=app.state.gateway, prepare=prepare,
+                authorize=authorize, slots=app.state.download_slots, upstream_id=upstream_id,
+                mime=mime, display_name=display_name, max_bytes=cap,
+                range_headers=request.headers.getlist("range"),
+                if_range=(request.headers.get("if-range")
+                          if len(request.headers.getlist("if-range")) <= 1 else "unsupported"),
+                allow_range=kind in {"audio", "video"},
+                attachment=kind == "file" or request.url.path.endswith("/download"))
         inline_limit = min(max(int(os.getenv("STUDIO_MAX_ASSET_BYTES", "67108864")), 1), 67108864)
         if request.url.path.endswith("/download") and (asset.size_bytes is None or asset.size_bytes > min(inline_limit, NATIVE_IMAGE_BYTES)):
             # No row lock across remote I/O; every chunk checks ownership and deletion.

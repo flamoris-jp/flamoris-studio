@@ -4,7 +4,8 @@ export type ParameterSpec = { type: string; role?: string; required?: boolean; d
 export type Workflow = { id: string; kind: string; name: string; selectable: boolean; reason: string | null; definitionVersion: number | null; definitionDigest: string | null; image: { mode: string; profile: string; dimensions: { mode: string; width?: number; height?: number } }; parameters: Record<string, ParameterSpec> }
 export type ManagedInput = { id: string; available: boolean; expiresAt?: string; thumbnailUrl: string | null; sourceAssetId?: string | null }
 export type Discovery = { available: boolean; templates: string[]; checkpoints: Model[]; loras: Model[]; workflows?: Workflow[]; managedInputReady?: boolean }
-export type Asset = { id: string; executionId: string; displayName: string; mimeType: string; mediaKind: string; sizeBytes: number | null; width: number | null; height: number | null; createdAt: string; hasThumbnail: boolean; previewUrl: string; downloadUrl: string; thumbnailUrl: string }
+export type OutputRole = { port: string; role: string; index: number }
+export type Asset = { id: string; executionId: string; displayName: string; mimeType: string; mediaKind: string; sizeBytes: number | null; width: number | null; height: number | null; createdAt: string; hasThumbnail: boolean; previewUrl: string; downloadUrl: string; thumbnailUrl: string; source?: 'generation'; previewKind?: 'image' | 'audio' | 'video' | 'file'; outputRole?: OutputRole | null }
 export type ImageSettings = { workflowId?: string; workflowKind?: string; definitionVersion?: number | null; definitionDigest?: string | null; referenceInputId?: string | null; additionalParameters?: Record<string, unknown>; positivePrompt: string; negativePrompt: string; checkpoint: string; width: number; height: number; steps: number; cfg: number; seed: number; sampler?: string; scheduler?: string; denoise?: number; loras?: { name: string; strengthModel: number; strengthClip: number }[] }
 export type ImagePreferences = Pick<ImageSettings, 'width' | 'height' | 'steps' | 'cfg'>
 export type ImageStyle = { id: string; name: string; positivePrompt: string; negativePrompt: string; createdAt: string; updatedAt: string }
@@ -53,4 +54,3 @@ export const api = {
   asset: (id: string) => request<AssetDetail>(`/api/assets/${encodeURIComponent(id)}`),
   deleteAssets: (ids: string[], csrf: string) => post<Deletion>('/api/assets/delete', { ids }, csrf),
 }
-

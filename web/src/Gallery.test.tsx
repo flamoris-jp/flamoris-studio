@@ -2,7 +2,7 @@
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import Gallery, { ImagePreview } from './Gallery'
+import Gallery, { ImagePreview, ResultPreview } from './Gallery'
 import { api, type Asset } from './api'
 
 const item = (id: string): Asset => ({
@@ -147,4 +147,49 @@ test('preview source changes and unmount cancel pending image retries', async ()
   await act(async () => { root!.unmount() })
   root = undefined
   expect(vi.getTimerCount()).toBe(0)
+})
+
+test.each([
+  ['audio', 'audio/wav', 'audio'], ['video', 'video/mp4', 'video'],
+])('validated %s preview is controlled, never autoplays, and offers explicit reload', async (mediaKind, mimeType, tag) => {
+  host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  const asset = { ...item('media'), mediaKind, mimeType }
+  await act(async () => root!.render(<ResultPreview item={asset} />))
+  const player = host.querySelector(tag)!
+  expect(player.getAttribute('src')).toBe('/preview/media')
+  expect(player.hasAttribute('controls')).toBe(true)
+  expect(player.getAttribute('preload')).toBe('metadata')
+  expect(player.hasAttribute('autoplay')).toBe(false)
+  await act(async () => player.dispatchEvent(new Event('error')))
+  expect(host.textContent).toContain('download may still work')
+  expect(host.querySelector(tag)).toBeNull()
+  await click(host.querySelector('button')!)
+  expect(host.querySelector(tag)).not.toBeNull()
+})
+
+test.each([
+  ['midi', 'audio/midi'], ['metadata', 'application/json'],
+  ['image', 'image/vnd.adobe.photoshop'], ['image', 'image/svg+xml'],
+  ['audio', 'text/html'],
+])('unsupported %s/%s stays a file without executable or guessed preview', async (mediaKind, mimeType) => {
+  host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  await act(async () => root!.render(<ResultPreview item={{ ...item('file'), mediaKind, mimeType }} />))
+  expect(host.querySelector('img,audio,video,iframe,script')).toBeNull()
+  expect(host.textContent).toContain('Download')
+})
+
+test('non-image gallery entry remains after preview failure and does not restore Image settings', async () => {
+  const media = { ...item('audio'), mediaKind: 'audio', mimeType: 'audio/wav',
+    outputRole: { port: 'audio', role: 'primary_audio', index: 0 } }
+  vi.spyOn(api, 'assets').mockResolvedValue({ items: [media], nextOffset: null })
+  vi.spyOn(api, 'asset').mockResolvedValue({ ...media, state: 'completed', submittedAt: media.createdAt, settings: {} })
+  host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  await act(async () => root!.render(<Gallery csrf="csrf" onUseSettings={vi.fn()} />))
+  expect(host.querySelector('article img,audio,video')).toBeNull()
+  await click(Array.from(host.querySelectorAll('button')).find(b => b.textContent === 'View details')!)
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain('primary_audio')
+  expect(host.textContent).not.toContain('Use settings')
+  await act(async () => host!.querySelector('audio')!.dispatchEvent(new Event('error')))
+  expect(host.querySelectorAll('article')).toHaveLength(1)
+  expect(host.querySelector('[role="dialog"] a')?.getAttribute('href')).toBe('/download/audio')
 })
