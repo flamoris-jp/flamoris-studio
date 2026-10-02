@@ -33,9 +33,14 @@ The Image editor includes user-owned Styles stored in PostgreSQL. A Style saves
 positive and negative prompts; applying it leaves an editable draft. The editor
 also exposes size presets, ordered optional LoRAs, sampler, scheduler, denoise,
 and a random seed action. Generated result details show Studio's original request
-snapshot and offer **Use settings** to return to the Image editor. Reference-image
-submission remains unavailable until Studio's managed-input authorization (#21)
-and the Generation workflow contract are ready.
+snapshot and offer **Use settings** to return to the Image editor. The Workflow
+picker uses graph-free Image-v1 descriptors and only selects ready Definitions
+with exact version/digest evidence. Reference images come from the signed-in
+user's existing generated Assets when both Workflow and managed-input
+infrastructure are ready. Attach, detach and replace preserve the prompt draft;
+expired references require reselection. Local upload remains follow-up scope;
+#30 records its original requirement but is not evidence that upload is implemented.
+See [Workflow Image operation](docs/WORKFLOW_IMAGE_OPERATION.md).
 
 Examples include:
 
