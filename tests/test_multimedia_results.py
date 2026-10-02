@@ -153,9 +153,11 @@ def test_audio_catalog_range_download_ownership_and_tombstone(clients):
     install_bytes_gateway(
         gateway, byte_source, [output(port="audio", role="primary_audio", role_index=0)]
     )
-    execution = a.post(
-        "/api/image/generate", json=image_request(), headers={"X-CSRF-TOKEN": csrf}
-    ).json()
+    created = a.post(
+        "/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf}
+    )
+    assert created.status_code == 201, created.text
+    execution = created.json()
     response = a.get(f"/api/executions/{execution['id']}/result").json()
     asset = response["assets"][0]
     assert (
@@ -224,7 +226,7 @@ def test_non_native_formats_remain_cataloged_and_attachment_only(clients, kind, 
     source = BytesGateway(mime)
     install_bytes_gateway(gateway, source, [output(kind=kind, mime=mime)])
     made = a.post(
-        "/api/image/generate", json=image_request(), headers={"X-CSRF-TOKEN": csrf}
+        "/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf}
     ).json()
     asset = a.get(f"/api/executions/{made['id']}/result").json()["assets"][0]
     assert asset["previewKind"] == "file" and source.prepares == 0
@@ -246,7 +248,7 @@ def test_role_conflict_does_not_mutate_durable_catalog_and_other_source_not_disp
         gateway, source, [output(port="audio", role="audio", role_index=0)]
     )
     made = a.post(
-        "/api/image/generate", json=image_request(), headers={"X-CSRF-TOKEN": csrf}
+        "/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf}
     ).json()
     asset = a.get(f"/api/executions/{made['id']}/result").json()["assets"][0]
     install_bytes_gateway(
@@ -450,7 +452,7 @@ def test_login_revoked_during_first_range_read_cannot_publish_media(clients):
     source = BytesGateway()
     install_bytes_gateway(gateway, source, [output()])
     made = a.post(
-        "/api/image/generate", json=image_request(), headers={"X-CSRF-TOKEN": csrf}
+        "/api/generation/image/jobs", json=image_request(), headers={"X-CSRF-TOKEN": csrf}
     ).json()
     asset = a.get(f"/api/executions/{made['id']}/result").json()["assets"][0]
     with factory() as db:
