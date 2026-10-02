@@ -1,6 +1,7 @@
 """Graph-free Image descriptors, role mapping and exact integer seed domains."""
 
 import math
+import json
 import re
 import secrets
 
@@ -21,6 +22,7 @@ ROLES = {
     "initial_image": "referenceInputId",
 }
 SPEC_FIELDS = {
+    "max_bytes",
     "type",
     "role",
     "required",
@@ -84,6 +86,9 @@ def validate_value(spec, value):
                 ):
                     raise ValueError("unsupported_parameter")
     elif kind != "managed_input":
+        raise ValueError("unsupported_parameter")
+    if "max_bytes" in spec and len(json.dumps(value, ensure_ascii=False, allow_nan=False,
+                                              separators=(",", ":")).encode()) > spec["max_bytes"]:
         raise ValueError("unsupported_parameter")
     if kind in {"integer", "number"}:
         if value < spec.get("minimum", -math.inf) or value > spec.get(
@@ -184,7 +189,7 @@ def normalize_descriptor(raw):
         for field in ("minimum", "maximum"):
             if field in spec and (type(spec[field]) not in (int, float) or not math.isfinite(spec[field])):
                 raise ValueError("unsupported_parameter")
-        for field in ("min_length", "max_length", "min_items", "max_items"):
+        for field in ("min_length", "max_length", "min_items", "max_items", "max_bytes"):
             if field in spec and (type(spec[field]) is not int or not 0 <= spec[field] <= 20000):
                 raise ValueError("unsupported_parameter")
         for field in ("required",):

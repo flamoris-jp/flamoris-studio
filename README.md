@@ -54,6 +54,9 @@ infrastructure are ready. Attach, detach and replace preserve the prompt draft;
 expired references require reselection. Local upload remains follow-up scope;
 #30 records its original requirement but is not evidence that upload is implemented.
 See [Workflow Image operation](docs/WORKFLOW_IMAGE_OPERATION.md).
+The opt-in [Image v3 route](docs/IMAGE_V3_OPERATION.md) also selects exact ready
+pinned Image wrappers through this editor, preserving per-user execution and Asset
+access. Multiple components and other media remain gated.
 
 Examples include:
 

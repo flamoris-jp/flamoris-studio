@@ -107,7 +107,7 @@ class WorkflowImageRequest(ImageRequest):
     sampler: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_]+$", max_length=80)
     scheduler: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_]+$", max_length=80)
     workflowId: str = Field(min_length=1, max_length=128)
-    workflowKind: str = Field(pattern="^(builtin|definition)$")
+    workflowKind: str = Field(pattern="^(builtin|definition|v3)$")
     definitionVersion: int | None = Field(default=None, ge=1, strict=True)
     definitionDigest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     referenceInputId: uuid.UUID | None = None
@@ -527,7 +527,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         selected = next((item for item in discovery.get("workflows", []) if item["id"] == input.workflowId), None)
         if not discovery["available"] or not selected or not selected["selectable"] or selected["kind"] != input.workflowKind:
             raise HTTPException(409, "Workflow unavailable; select a ready Workflow")
-        if selected["kind"] == "definition" and (selected["definitionVersion"] != input.definitionVersion or selected["definitionDigest"] != input.definitionDigest):
+        if selected["kind"] in {"definition", "v3"} and (selected["definitionVersion"] != input.definitionVersion or selected["definitionDigest"] != input.definitionDigest):
             raise HTTPException(409, "Workflow changed; select its current ready version")
         needs_input = selected["image"].get("mode") == "img2img"
         if needs_input and (not discovery.get("managedInputReady") or not reference):
@@ -551,6 +551,10 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             values.update(width=dimensions["width"], height=dimensions["height"])
         snapshot = {**values, "snapshotVersion": 2,
                     "normalizedParameters": {k:v for k,v in parameters.items() if selected["parameters"][k].get("type") != "managed_input"}}
+        if selected["kind"] == "v3":
+            snapshot["generationContract"] = {"schemaVersion": 3, "compilerRevision": 2,
+                                               "adapterRevision": 1, "profile": "image-generate-v1",
+                                               "profileRevision": 1}
         quota_guard(db)
         if reference:
             db.refresh(reference)

@@ -176,3 +176,44 @@ test('optional scalar defaults are materialized in payload; required and invalid
   expect(workflowPayload(form, selected)).toBeNull()
   expect(form.steps).toBe('')
 })
+
+
+test('a ready pinned Image v3 wrapper submits through the existing editor without reference or native selectors', async () => {
+  const { source: _source, strength: _strength, ...parameters } = workflow.parameters
+  const wrapped: Workflow = { ...workflow, id: 'v3:image-parent', kind: 'v3', name: 'Composed image',
+    image: { mode: 'txt2img', profile: 'image-v1', dimensions: { mode: 'parameters' } }, parameters }
+  const submit = await show({ ...discovery, managedInputReady: false, workflows: [wrapped] })
+  const select = host.querySelector('select')!
+  await act(async () => { select.value = wrapped.id; select.dispatchEvent(new Event('change', { bubbles: true })) })
+  expect(button('Generate image').disabled).toBe(false)
+  expect(button('Choose from Assets').disabled).toBe(true)
+  await click('Generate image')
+  expect(submit.mock.calls[0][0]).toMatchObject({ workflowId: wrapped.id, workflowKind: 'v3', definitionVersion: 1,
+    definitionDigest: wrapped.definitionDigest, positivePrompt: 'keep this prompt' })
+  expect(submit.mock.calls[0][0].sampler).toBeUndefined()
+  expect(submit.mock.calls[0][0].scheduler).toBeUndefined()
+  expect(api.createInput).not.toHaveBeenCalled()
+})
+
+test('restored v3 settings keep the draft and require reselection when the exact root changes', async () => {
+  const { source: _source, strength: _strength, ...parameters } = workflow.parameters
+  const wrapped: Workflow = { ...workflow, id: 'v3:image-parent', kind: 'v3', name: 'Composed image',
+    definitionVersion: 2, image: { mode: 'txt2img', profile: 'image-v1', dimensions: { mode: 'parameters' } }, parameters }
+  function Editor() {
+    const [form, setForm] = useState(() => restoreImageDraft(initialImageDraft('model'), {
+      positivePrompt: 'my restored prompt', workflowId: wrapped.id, workflowKind: 'v3', definitionVersion: 1,
+      definitionDigest: wrapped.definitionDigest, seed: 8 }))
+    return <ImageEditor discovery={{ ...discovery, workflows: [wrapped] }} form={form} setForm={setForm} busy={false} csrf="csrf" onSubmit={vi.fn()} />
+  }
+  await act(async () => root.render(<Editor />))
+  expect(button('Generate image').disabled).toBe(true)
+  expect(host.querySelector('textarea')?.value).toBe('my restored prompt')
+  expect(host.querySelector('select')?.value).toBe('__stale')
+})
+
+test('v3 text domains enforce the declared UTF-8 JSON byte bound', () => {
+  const spec = { type: 'string', max_bytes: 10 }
+  expect(validValue(spec, 'cats')).toBe(true)
+  expect(validValue(spec, '猫猫猫猫')).toBe(false)
+  expect(validValue(spec, '"'.repeat(5))).toBe(false)
+})
