@@ -30,6 +30,7 @@ from .input_thumbnails import InputThumbnails
 from .transfer import CHUNK_BYTES, MAX_TRANSFER_BYTES, PreviewAdmission, chunk, metadata, read_with_retry
 from .result_contract import normalize_outputs, output_role, preview_kind
 from .range_transfer import representation_response
+from .assistant import mount_assistant
 
 # 512 KiB of raw image data stays below a 1 MiB SSE event even after base64
 # encoding and the MCP JSON envelope. Unknown sizes take the bounded route.
@@ -225,6 +226,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     app.state.download_slots = asyncio.Semaphore(2)
     app.state.preview_admission = PreviewAdmission(app.state.download_slots)
     app.state.prepare_slots = asyncio.Semaphore(1)
+    mount_assistant(app)
     login_attempts = defaultdict(deque)
 
     @app.exception_handler(GatewayError)
@@ -246,7 +248,11 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 require_csrf(request)
             except HTTPException:
                 return JSONResponse({"error": "Invalid request token."}, status_code=403)
-        return await call_next(request)
+        response = await call_next(request)
+        if request.url.path.startswith("/api/assistant/"):
+            response.headers["Cache-Control"] = "private, no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
 
     @app.get("/api/session")
     def session(request: Request, response: Response, db: Session = Depends(database)):

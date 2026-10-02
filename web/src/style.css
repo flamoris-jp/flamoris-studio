@@ -1,4 +1,11 @@
 :root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #eeeaf4; background: #101019; }
+.image-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(270px, .6fr); gap: 22px; align-items: start; }
+.assistant-panel { min-width: 0; position: sticky; top: 20px; }
+.assistant-panel button { margin: 4px 6px 4px 0; }
+.assistant-attach { display: flex; align-items: center; margin-top: 18px; }
+.assistant-attach input { width: auto; }
+.assistant-answer { white-space: pre-wrap; overflow-wrap: anywhere; }
+@media(max-width:1100px) { .image-workspace { grid-template-columns: 1fr; } .assistant-panel { position: static; } }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
 button, input, select, textarea { font: inherit; }
