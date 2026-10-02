@@ -40,7 +40,7 @@ async function assistantAsk(payload: unknown, csrf: string): Promise<AssistantAn
       headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify(payload) })
   } catch { throw new AssistantFailure('Assistant outcome could not be confirmed.', true) }
   if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
+    const body = await response.json().catch(() => { throw new AssistantFailure('Assistant outcome could not be confirmed.', true) })
     const message = typeof body.detail === 'string' ? body.detail : 'Assistant request failed.'
     throw new AssistantFailure(message, response.status >= 500 || response.status === 401 || /already recorded|result withheld/.test(message))
   }

@@ -19,7 +19,7 @@ The reviewed source baselines for this batch are:
 | Repository | Source baseline | Delivered boundary |
 | --- | --- | --- |
 | Generation | `63022b2dc6e1564f68b4b51e07cc9ca6b1702d10` ([#47–50](https://github.com/flamoris-jp/flamoris-generation-mcp/pull/50)) | Immutable workflow/composition contracts, explicit provider bindings, output roles, internal single-provider graph lowering |
-| Agent | `52cc30d5eaacd443a0d7d7fc47058a01c7bf035a` ([#26–29](https://github.com/flamoris-jp/flamoris-ai-agent/pull/29)) | Persisted principals, authenticated scoped HTTP, opt-in local-only Intelligence MCP, Image context and availability |
+| Agent | `e3e05a71d3627bfa3dabb65ecc520e5dacbb003d` ([#26–31](https://github.com/flamoris-jp/flamoris-ai-agent/pull/31)) | Persisted principals, authenticated scoped HTTP, local-only Intelligence MCP, Image context/availability and explicit owner binding retirement |
 | Intelligence | `043b39b064fbedf9ed9a3e9e9eb57c6856efbb5c` | Existing synchronous inference/discovery contract inspected for the Agent adapter |
 | Runtime | `4db0147165c6c0493806c6b0c0d0a8c688f9288b` ([#20](https://github.com/flamoris-jp/flamoris-ai-runtime/pull/20)) | Reviewed composition bridge design; no executable bridge delivered |
 | Studio | `bfc93db0ebb2e76a957df9451e55c5890d036f00` ([#41](https://github.com/flamoris-jp/flamoris-studio/pull/41)) | Additive multimedia catalog and owner-scoped verified media retrieval |
@@ -55,7 +55,10 @@ remain backend-only. Choose small outputs within configured byte/time limits.
 Agent checks require its separate operator DB migration, exact principal grants,
 private authenticated HTTP configuration and an approved Intelligence target.
 Apply `db/migrations/002_principal_sessions.sql` through the Agent's established
-owner operations path; it provisions no grants. Follow Agent
+owner operations path; it provisions no grants. Then apply 003 and configure
+explicit bounded owner maintenance following Agent PRINCIPAL_RETENTION.md.
+Apply Studio migration 20261003_05 and review [SCOPED_ASSISTANT.md](SCOPED_ASSISTANT.md)
+for the exact direct Agent endpoint/token and Studio-account mapping. Follow Agent
 [PRINCIPAL_SESSIONS.md](https://github.com/flamoris-jp/flamoris-ai-agent/blob/52cc30d5eaacd443a0d7d7fc47058a01c7bf035a/docs/PRINCIPAL_SESSIONS.md),
 [INTELLIGENCE_MCP.md](https://github.com/flamoris-jp/flamoris-ai-agent/blob/52cc30d5eaacd443a0d7d7fc47058a01c7bf035a/docs/INTELLIGENCE_MCP.md)
 and [STUDIO_CONTEXT_V1.md](https://github.com/flamoris-jp/flamoris-ai-agent/blob/52cc30d5eaacd443a0d7d7fc47058a01c7bf035a/docs/STUDIO_CONTEXT_V1.md).
@@ -106,13 +109,13 @@ including all transmitted personality/history/context. Remote data flow is absen
 Only run steps 5–8 when genuine provider outputs/contracts exist. Otherwise record
 them as blocked. Ten-byte CI fixtures are not live audio/video or quality evidence.
 
-## Agent service acceptance, independently of Studio UI
+## Agent service acceptance, then Studio account integration
 
 The delivered Agent HTTP catalog in shared mode is exactly `health`,
 `sessions.open`, `ask_scoped`, `ask_availability`; fixed mode remains `health`,
 `ask`. Do not expose the delegator Bearer credential to a browser. Studio's actual
-account mapping/context panel is still pending, so direct authenticated service
-acceptance cannot be reported as end-to-end Studio assistance.
+account mapping/context panel has a delivered optional text/Image slice, but direct
+service acceptance alone cannot be reported as end-to-end Studio assistance.
 
 1. Open two exactly granted Human/Agent/Project tuples through the trusted test
    delegator. Missing/disabled grants and another caller's UUID must fail closed.
@@ -135,10 +138,24 @@ acceptance cannot be reported as end-to-end Studio assistance.
    appear. Keep the original request identity for an uncertain result.
 
 Sessions are retained at most 128 globally / 32 per delegator, including expired
-and revoked bindings. This batch intentionally supplies no automatic GC/refresh.
-Use a disposable acceptance database; do not delete live bindings/conversations or
-reset duplicate fences to make capacity tests pass. A reviewed retention procedure
-and actual Studio-account mapping remain shared-service deployment gates.
+and revoked bindings. Migration 003 supplies explicit owner-only retirement after
+expiry and closed-runtime grace; it preserves all history/request fences. There
+is no automatic GC/refresh. Use a disposable acceptance database and the guarded
+procedure; never reset history/fences or force uncertain lifecycle completion to
+make capacity tests pass. Maintenance cadence remains an operator deployment gate.
+
+After the service scenarios pass, configure two existing Studio accounts to
+distinct exactly granted principal tuples. In each private browser session open
+the Image assistant or Intelligence view, verify fresh availability, send one text
+turn and explicitly attach a small Image draft. Confirm safe public provenance,
+escaped advice and no Generation job. Cross-account continuation handles must
+fail; unavailable/stale observations preserve the unsent question and disable
+send. During a throttled ask revoke the login or change the private mapping;
+the answer must be withheld and the durable request fence retained. Refresh must
+not replay an uncertain turn with a new request UUID. Explicit Start new
+conversation clears the old question before a new send. On account/session change
+private advice/parent views must clear. Verify the Studio references contain no
+question/draft/answer transcript and survive a Studio restart for duplicate denial.
 
 ## Open gates before complete multimodal acceptance
 
@@ -147,7 +164,7 @@ and actual Studio-account mapping remain shared-service deployment gates.
 | Generation #25/#31 | Exact deployed YuE2/SheetSage/Irodori upstream revision, real HTTP/CLI request/result contract and sanitized actual smoke; qualified adapters remain absent |
 | Generation #45 | Real exported/validated Comfy graphs and approved bindings; managed non-image inputs and production lowering/execution integration remain pending |
 | Runtime #19 | Executable Generation–Runtime bridge, authoritative lifecycle/cancel/restart/admission observations and live acceptance; reviewed design alone cannot run it |
-| Agent #18/#24 | Reviewed retention, Studio-account delegation/context UI, deployed two-principal acceptance; remote target policy/proposals are separate future slices |
+| Agent #18/#24 | Actual operator maintenance/mapping setup and deployed two-principal acceptance; remote targets, asset/Workflow contexts and proposals remain separate slices |
 | Studio #39 | Ready profile-specific Music/Speech/Video editors, managed inputs, structured result presentation and runtime/composition integration |
 
 For each blocker, record the missing contract or implementation and its owning

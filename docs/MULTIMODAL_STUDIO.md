@@ -86,11 +86,18 @@ Picker filters by actual profile support, not just media kind. Source audio and 
 
 ## Right-side Agent panel
 
+Implemented text-advice slice: [SCOPED_ASSISTANT.md](SCOPED_ASSISTANT.md) specifies
+the optional Image panel and standalone Intelligence assistant, private account
+mapping, exact scoped Agent catalog, fresh availability, explicit scalar draft
+attachment and owner-scoped request/reference fences. Operator rollout and actual
+two-user acceptance remain separate. The broader selection/asset/proposal behavior
+below remains planned unless that delivered contract explicitly covers it.
+
 Every editor mounts one reusable contextual Agent panel; it collapses into a drawer on narrow screens. Standalone Assistant uses the same gateway/session component. Controls select an allowed Agent and conversation, not a provider URL/key. Optional model-target selection is an Agent-owned policy feature exposed through an approved Agent contract, not a Studio provider registry.
 
 User explicitly chooses Attach current draft, selected assets and Workflow metadata. Backend constructs a bounded context envelope from authorized product state. It contains category/operation, draft revision and permitted public fields, selected exact Workflow identity and selected asset safe metadata. Raw binaries are not sent by default. Context export policy covers the Agent's selected previous transcript as well as the current attachments/question; permitting a new remote question cannot implicitly export earlier local-only history. The Agent checks the complete assembled request under its owning policy. Attachment retrieval for Agent tools requires a scoped approved gateway; no arbitrary URL/path or opaque ID is ambient authority. Retention is explicit: context may become Agent conversation content but is not automatically promoted to long-term Memory.
 
-Current Agent ask accepts text and an optional closed parent only. Structured context/proposals/availability are extensions requiring Agent-owned schema review. Do not pass new fields to current ask or smuggle authority inside prompt text. A context-as-untrusted-text compatibility path could only serve an explicitly scoped fixed-principal deployment; it is not the shared production integration.
+The reviewed shared Agent catalog supports bounded Image context v1 and principal-owned ask availability. Studio uses that exact scoped contract for this delivered slice. Fixed ask remains text/closed-parent only and is refused by the shared assistant gateway. Proposals, extra media and attachment retrieval remain separate extensions requiring Agent-owned schema review.
 
 AI Agent #18 is mandatory before multi-user sharing. Studio's authenticated user maps through an authorized server-side account/principal binding. Agent validates human/agent/project membership and binds it immutably at session establishment. Service credentials do not identify the human; browser-supplied principals cannot impersonate users. UI conversation handles are Studio-scoped mappings, and every continuation/status/proposal access checks both Studio ownership and Agent principal. Do not share one upstream principal/session across Studio users.
 

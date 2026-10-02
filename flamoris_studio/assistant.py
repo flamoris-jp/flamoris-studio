@@ -1,4 +1,5 @@
 """Authenticated Studio mappings and frozen one-shot advice, not Agent transcript authority."""
+
 import asyncio
 import hashlib
 import json
@@ -56,30 +57,52 @@ class AdviceRequest(BaseModel):
 
 def configured_actor(user_id):
     try:
-        rows = json.loads(os.getenv("STUDIO_AGENT_BINDINGS", "[]"))
+        configured = os.getenv("STUDIO_AGENT_BINDINGS", "[]")
+        if len(configured.encode()) > 65536:
+            raise ValueError()
+        rows = json.loads(configured)
         if type(rows) is not list or len(rows) > 128:
             raise ValueError()
         users, principals, selected = set(), set(), None
         for row in rows:
-            if type(row) is not dict or set(row) != {"user_id", "human", "agent", "project"}:
+            if type(row) is not dict or set(row) != {
+                "user_id",
+                "human",
+                "agent",
+                "project",
+            }:
                 raise ValueError()
             uid = str(uuid.UUID(row["user_id"]))
             keys = {k: row[k] for k in ("human", "agent", "project")}
             principal = tuple(keys.values())
-            if (uid != row["user_id"] or uid in users or principal in principals or
-                    any(type(v) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", v) for v in principal)):
+            if (
+                uid != row["user_id"]
+                or uid in users
+                or principal in principals
+                or any(
+                    type(v) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", v)
+                    for v in principal
+                )
+            ):
                 raise ValueError()
             users.add(uid)
             principals.add(principal)
             if uid == str(user_id):
                 selected = keys
-        endpoint, token = os.getenv("STUDIO_AGENT_ENDPOINT", ""), os.getenv("STUDIO_AGENT_TOKEN", "")
+        endpoint, token = (
+            os.getenv("STUDIO_AGENT_ENDPOINT", ""),
+            os.getenv("STUDIO_AGENT_TOKEN", ""),
+        )
         if selected is None or not endpoint or not token:
             raise ValueError()
-        stamp = hashlib.sha256(json.dumps([endpoint, token, selected], sort_keys=True).encode()).hexdigest()
+        stamp = hashlib.sha256(
+            json.dumps([endpoint, token, selected], sort_keys=True).encode()
+        ).hexdigest()
         return selected, endpoint, token, stamp
     except (ValueError, TypeError, KeyError, AttributeError):
-        raise HTTPException(503, "Assistant is not configured for this account") from None
+        raise HTTPException(
+            503, "Assistant is not configured for this account"
+        ) from None
 
 
 def reauthorize(request, db, user, actor):
@@ -92,7 +115,11 @@ def reauthorize(request, db, user, actor):
 
 async def session_for(request, db, user, actor, gateway):
     cached = db.get(AssistantSession, user)
-    if cached and cached.binding_digest == actor[3] and cached.expires_at > now() + timedelta(seconds=20):
+    if (
+        cached
+        and cached.binding_digest == actor[3]
+        and cached.expires_at > now() + timedelta(seconds=20)
+    ):
         return cached
     db.rollback()
     upstream, expiry = await gateway.open(actor[0])
@@ -100,8 +127,16 @@ async def session_for(request, db, user, actor, gateway):
     if not now() + timedelta(seconds=20) < expiry <= now() + timedelta(hours=1):
         raise AgentError()
     db.rollback()
-    cached = db.scalar(select(AssistantSession).where(AssistantSession.user_id == user).with_for_update())
-    if cached and cached.binding_digest == actor[3] and cached.expires_at > now() + timedelta(seconds=20):
+    cached = db.scalar(
+        select(AssistantSession)
+        .where(AssistantSession.user_id == user)
+        .with_for_update()
+    )
+    if (
+        cached
+        and cached.binding_digest == actor[3]
+        and cached.expires_at > now() + timedelta(seconds=20)
+    ):
         return cached
     if cached is None:
         cached = AssistantSession(user_id=user)
@@ -113,21 +148,52 @@ async def session_for(request, db, user, actor, gateway):
     except IntegrityError:
         db.rollback()
         cached = db.get(AssistantSession, user)
-        if cached is None or cached.binding_digest != actor[3] or cached.expires_at <= now() + timedelta(seconds=20):
+        if (
+            cached is None
+            or cached.binding_digest != actor[3]
+            or cached.expires_at <= now() + timedelta(seconds=20)
+        ):
             raise AgentError() from None
     return cached
 
 
+async def bounded_body(request, limit):
+    body = bytearray()
+    try:
+        async with asyncio.timeout(5):
+            async for part in request.stream():
+                body.extend(part)
+                if len(body) > limit:
+                    raise HTTPException(413, "Assistant request too large")
+    except TimeoutError:
+        raise HTTPException(408, "Assistant request timed out") from None
+    return bytes(body)
+
+
 def mount_assistant(app):
     router = APIRouter(prefix="/api/assistant")
-    app.state.agent_gateway_factory = lambda endpoint, token: AgentGateway(endpoint, token)
+    app.state.agent_gateway_factory = lambda endpoint, token: AgentGateway(
+        endpoint, token
+    )
     app.state.assistant_probe_slots = asyncio.Semaphore(2)
     app.state.assistant_ask_slots = asyncio.Semaphore(1)
 
     @router.post("/availability")
-    async def availability(request: Request, response: Response, db: Session = Depends(database),
-                           user: uuid.UUID = Depends(current_user)):
+    async def availability(
+        request: Request,
+        response: Response,
+        db: Session = Depends(database),
+        user: uuid.UUID = Depends(current_user),
+    ):
         response.headers["Cache-Control"] = "private, no-store"
+        raw = await bounded_body(request, 1024)
+        try:
+            if raw and json.loads(raw) != {}:
+                raise ValueError()
+        except ValueError:
+            raise HTTPException(
+                422, "Availability takes no identity arguments"
+            ) from None
         try:
             actor = configured_actor(user)
         except HTTPException:
@@ -141,63 +207,92 @@ def mount_assistant(app):
             async with asyncio.timeout(40):
                 gateway = app.state.agent_gateway_factory(actor[1], actor[2])
                 binding = await session_for(request, db, user, actor, gateway)
-                session_key, upstream, expiry = binding.id, str(binding.upstream_session_id), binding.expires_at
+                session_key, upstream, expiry = (
+                    binding.id,
+                    str(binding.upstream_session_id),
+                    binding.expires_at,
+                )
                 db.rollback()
                 state = await gateway.availability(upstream)
                 reauthorize(request, db, user, actor)
                 current = db.get(AssistantSession, user)
                 if not current or current.id != session_key or expiry <= now():
                     raise AgentError()
-                return {**state, "sessionKey": str(session_key), "sessionExpiresAt": expiry.isoformat()}
+                return {
+                    **state,
+                    "sessionKey": str(session_key),
+                    "sessionExpiresAt": expiry.isoformat(),
+                }
         except (AgentError, TimeoutError):
             return {"available": False, "state": "unavailable"}
         finally:
             slots.release()
 
     @router.post("/ask")
-    async def ask(request: Request, response: Response, db: Session = Depends(database),
-                  user: uuid.UUID = Depends(current_user)):
+    async def ask(
+        request: Request,
+        response: Response,
+        db: Session = Depends(database),
+        user: uuid.UUID = Depends(current_user),
+    ):
         response.headers["Cache-Control"] = "private, no-store"
-        body = bytearray()
-        try:
-            async with asyncio.timeout(5):
-                async for part in request.stream():
-                    body.extend(part)
-                    if len(body) > 36 * 1024:
-                        raise HTTPException(413, "Assistant request too large")
-        except TimeoutError:
-            raise HTTPException(408, "Assistant request timed out") from None
+        body = await bounded_body(request, 36 * 1024)
         try:
             advice = AdviceRequest.model_validate_json(bytes(body))
         except ValueError:
             raise HTTPException(422, "Invalid assistant request") from None
         actor = configured_actor(user)
         binding = db.get(AssistantSession, user)
-        if (binding is None or binding.id != advice.sessionKey or binding.binding_digest != actor[3] or
-                binding.expires_at <= now() + timedelta(seconds=5)):
-            raise HTTPException(409, "Assistant session expired or changed; refresh before sending")
+        if (
+            binding is None
+            or binding.id != advice.sessionKey
+            or binding.binding_digest != actor[3]
+            or binding.expires_at <= now() + timedelta(seconds=5)
+        ):
+            raise HTTPException(
+                409, "Assistant session expired or changed; refresh before sending"
+            )
         parent = None
         if advice.previousHandle:
-            previous = db.scalar(select(AssistantRequest).where(AssistantRequest.id == advice.previousHandle,
-                                                              AssistantRequest.user_id == user))
-            if (previous is None or previous.state != "completed" or
-                    previous.session_id != binding.id or previous.binding_digest != actor[3]):
+            previous = db.scalar(
+                select(AssistantRequest).where(
+                    AssistantRequest.id == advice.previousHandle,
+                    AssistantRequest.user_id == user,
+                )
+            )
+            if (
+                previous is None
+                or previous.state != "completed"
+                or previous.session_id != binding.id
+                or previous.binding_digest != actor[3]
+            ):
                 raise HTTPException(404, "Assistant conversation unavailable")
             parent = str(previous.upstream_conversation_id)
-        payload = {"session_id": str(binding.upstream_session_id), "request_id": str(advice.requestId),
-                   "text": advice.text}
+        payload = {
+            "session_id": str(binding.upstream_session_id),
+            "request_id": str(advice.requestId),
+            "text": advice.text,
+        }
         if parent:
             payload["previous_conversation_id"] = parent
         if advice.draft is not None:
-            context = {"revision": 1, "category": "image", "operation": "image.generate",
-                       "product_context_id": str(binding.id), "draft_revision": advice.draftRevision,
-                       "draft": advice.draft.model_dump(exclude_none=True), "assets": []}
+            context = {
+                "revision": 1,
+                "category": "image",
+                "operation": "image.generate",
+                "product_context_id": str(binding.id),
+                "draft_revision": advice.draftRevision,
+                "draft": advice.draft.model_dump(exclude_none=True),
+                "assets": [],
+            }
             if len(json.dumps(context, ensure_ascii=False).encode()) > 16384:
                 raise HTTPException(422, "Attached draft too large")
             payload["context"] = context
         # Freeze in memory; Studio persists references/hash only, never a transcript.
         payload = json.loads(json.dumps(payload, ensure_ascii=False))
-        fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        fingerprint = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
+        ).hexdigest()
         session_key = binding.id
         db.rollback()
         slots = app.state.assistant_ask_slots
@@ -211,20 +306,31 @@ def mount_assistant(app):
             state = await gateway.availability(payload["session_id"])
             reauthorize(request, db, user, actor)
             if not state["available"]:
-                raise HTTPException(409, "Assistant is not ready; question was not sent")
+                raise HTTPException(
+                    409, "Assistant is not ready; question was not sent"
+                )
             current = db.get(AssistantSession, user)
             if not current or current.id != session_key or current.expires_at <= now():
                 raise HTTPException(409, "Assistant session changed")
-            record = AssistantRequest(user_id=user, request_id=advice.requestId, session_id=session_key,
-                                      binding_digest=actor[3], request_digest=fingerprint, state="uncertain")
+            record = AssistantRequest(
+                user_id=user,
+                request_id=advice.requestId,
+                session_id=session_key,
+                binding_digest=actor[3],
+                request_digest=fingerprint,
+                state="uncertain",
+            )
             db.add(record)
             try:
                 db.commit()
             except IntegrityError:
                 db.rollback()
-                raise HTTPException(409, "Request already recorded; no replay was made") from None
+                raise HTTPException(
+                    409, "Request already recorded; no replay was made"
+                ) from None
             handle = record.id
             db.rollback()
+
             async def before_dispatch():
                 if await request.is_disconnected():
                     raise AgentError("uncertain")
@@ -240,14 +346,25 @@ def mount_assistant(app):
             if not current or current.id != session_key or current.expires_at <= now():
                 raise HTTPException(409, "Assistant session changed; result withheld")
             record = db.get(AssistantRequest, handle)
-            record.upstream_conversation_id, record.state = uuid.UUID(result["conversation_id"]), "completed"
+            record.upstream_conversation_id, record.state = (
+                uuid.UUID(result["conversation_id"]),
+                "completed",
+            )
             db.commit()
-            return {"requestHandle": str(handle), "sessionKey": str(session_key),
-                    "text": result["text"], "provenance": result["provenance"]}
+            return {
+                "requestHandle": str(handle),
+                "sessionKey": str(session_key),
+                "text": result["text"],
+                "provenance": result["provenance"],
+            }
         except AgentError as exc:
             if record is not None:
-                raise HTTPException(503, "Assistant outcome could not be confirmed. No replay was made.") from None
-            raise HTTPException(503, "Assistant is unavailable; question was not sent") from exc
+                raise HTTPException(
+                    503, "Assistant outcome could not be confirmed. No replay was made."
+                ) from None
+            raise HTTPException(
+                503, "Assistant is unavailable; question was not sent"
+            ) from exc
         finally:
             slots.release()
 

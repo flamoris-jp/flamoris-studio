@@ -155,6 +155,8 @@ For a generic Docker/Compose deployment, see [docs/DEPLOYMENT.md](docs/DEPLOYMEN
 
 [Real-machine acceptance](docs/REAL_MACHINE_ACCEPTANCE.md) records the reviewed source baselines, two-user Image/result retrieval checks, independent Agent-service checks and the remaining provider/runtime/Studio integration gates. CI success and merged source do not certify a deployment or live provider result.
 
+The optional [scoped Image assistant](docs/SCOPED_ASSISTANT.md) connects authenticated accounts to operator-granted Agent principals for text advice and explicit Image draft attachment. Apply migration `20261003_05` and configure the private endpoint/token/account mapping before enabling it. Agent owns conversations/inference; the panel does not submit generation or apply edits.
+
 ## Architecture
 
 Phase 1 architecture and implementation boundaries are defined in [docs/STUDIO_ARCHITECTURE.md](docs/STUDIO_ARCHITECTURE.md).
