@@ -153,6 +153,8 @@ Later, `flamoris-studio-client` will make large desktop-local projects and media
 
 For a generic Docker/Compose deployment, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). The public setup does not assume a particular FLAMORIS host. PostgreSQL, thumbnail storage, bind address/port, Generation MCP, reverse proxy, and secrets are supplied by the deployment environment.
 
+[Real-machine acceptance](docs/REAL_MACHINE_ACCEPTANCE.md) records the reviewed source baselines, two-user Image/result retrieval checks, independent Agent-service checks and the remaining provider/runtime/Studio integration gates. CI success and merged source do not certify a deployment or live provider result.
+
 ## Architecture
 
 Phase 1 architecture and implementation boundaries are defined in [docs/STUDIO_ARCHITECTURE.md](docs/STUDIO_ARCHITECTURE.md).
