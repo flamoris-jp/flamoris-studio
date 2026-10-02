@@ -103,3 +103,15 @@ test('account remount clears private answers and unsent questions', async () => 
   expect(host.textContent).not.toContain('private first account')
   expect(host.querySelector('textarea')!.value).toBe('')
 })
+
+test('expired login clears private advice and parent reference on probe', async () => {
+  const { HTTPFailure } = await import('./api')
+  const availability = vi.spyOn(api, 'assistantAvailability').mockImplementation(async () => ready())
+  vi.spyOn(api, 'assistantAsk').mockResolvedValue({ requestHandle: 'owned', sessionKey: 'studio-session', text: 'private advice', provenance: { model: 'local', provider: 'approved' } })
+  await show(); await type('first'); await click('Send question'); await type('keep unsent')
+  availability.mockRejectedValue(new HTTPFailure('Session expired.', 401))
+  await click('Check availability')
+  expect(host.textContent).not.toContain('private advice')
+  expect(host.querySelector('textarea')!.value).toBe('keep unsent')
+  expect(button('Send question').disabled).toBe(true)
+})

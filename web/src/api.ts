@@ -18,8 +18,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { credentials: 'same-origin', ...options })
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
-    if (response.status === 401) throw new Error('Session expired. Refresh and sign in again.')
-    throw new Error(body.message || body.error || `Request failed (${response.status}).`)
+    if (response.status === 401) throw new HTTPFailure('Session expired. Refresh and sign in again.', 401)
+    throw new HTTPFailure(body.message || body.error || `Request failed (${response.status}).`, response.status)
   }
   const text = await response.text()
   return (text ? JSON.parse(text) : undefined) as T
@@ -27,6 +27,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 const post = <T>(path: string, body: unknown, csrf: string) => request<T>(path, {
   method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify(body),
 })
+export class HTTPFailure extends Error {
+  status: number
+  constructor(message: string, status: number) { super(message); this.status = status }
+}
 export type AssistantAvailability = { available: boolean; state: 'ready' | 'offline' | 'busy' | 'unknown' | 'unavailable'; sessionKey?: string; expiresAt?: string; sessionExpiresAt?: string }
 export type AssistantAnswer = { requestHandle: string; sessionKey: string; text: string; provenance: { model: string; provider: string; execution_id?: string } }
 export class AssistantFailure extends Error {

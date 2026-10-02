@@ -230,7 +230,7 @@ class AgentGateway:
             or data["principal_revision"] != 1
         ):
             raise AgentError()
-        return canonical(data["session_id"]), timestamp(data["expires_at"])
+        return canonical(data.get("session_id")), timestamp(data.get("expires_at"))
 
     async def availability(self, session_id):
         data = await self.call("ask_availability", {"session_id": session_id})
@@ -246,8 +246,8 @@ class AgentGateway:
         ):
             raise AgentError()
         observed, expires = (
-            timestamp(data["observed_at"]),
-            timestamp(data["expires_at"]),
+            timestamp(data.get("observed_at")),
+            timestamp(data.get("expires_at")),
         )
         now = datetime.now(timezone.utc)
         if not (

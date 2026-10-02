@@ -22,7 +22,7 @@ The reviewed source baselines for this batch are:
 | Agent | `e3e05a71d3627bfa3dabb65ecc520e5dacbb003d` ([#26–31](https://github.com/flamoris-jp/flamoris-ai-agent/pull/31)) | Persisted principals, authenticated scoped HTTP, local-only Intelligence MCP, Image context/availability and explicit owner binding retirement |
 | Intelligence | `043b39b064fbedf9ed9a3e9e9eb57c6856efbb5c` | Existing synchronous inference/discovery contract inspected for the Agent adapter |
 | Runtime | `4db0147165c6c0493806c6b0c0d0a8c688f9288b` ([#20](https://github.com/flamoris-jp/flamoris-ai-runtime/pull/20)) | Reviewed composition bridge design; no executable bridge delivered |
-| Studio | `bfc93db0ebb2e76a957df9451e55c5890d036f00` ([#41](https://github.com/flamoris-jp/flamoris-studio/pull/41)) | Additive multimedia catalog and owner-scoped verified media retrieval |
+| Studio | `bfc93db0ebb2e76a957df9451e55c5890d036f00` ([#41](https://github.com/flamoris-jp/flamoris-studio/pull/41)) plus [#44](https://github.com/flamoris-jp/flamoris-studio/pull/44), record its final merged SHA | Multimedia retrieval plus optional account-scoped text/Image advice |
 
 For every live run, record UTC time, deployed commit/container digest, clean or
 dirty checkout, database schema/migration versions, exact public MCP catalogs and

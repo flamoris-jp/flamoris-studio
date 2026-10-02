@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, AssistantFailure, type AssistantAvailability, type AssistantAnswer } from './api'
+import { api, AssistantFailure, HTTPFailure, type AssistantAvailability, type AssistantAnswer } from './api'
 import type { ImageDraft } from './App'
 
 export function attachedImageDraft(form: ImageDraft) {
@@ -52,7 +52,14 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
         }
         if (next.sessionKey) session.current = next.sessionKey
         setState(next); setClock(Date.now())
-      } catch { if (active) setState({ available: false, state: 'unavailable' }) }
+      } catch (error) {
+        if (active) {
+          setState({ available: false, state: 'unavailable' })
+          if (error instanceof HTTPFailure && error.status === 401) {
+            previous.current = undefined; setAnswer(null)
+          }
+        }
+      }
       finally { pending = false }
     }
     void check()
@@ -90,6 +97,7 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
           } catch (error) {
             if (!alive.current) return
             setNotice(error instanceof Error ? error.message : 'Assistant unavailable.')
+            previous.current = undefined; setAnswer(null)
             setUncertain(!(error instanceof AssistantFailure) || error.uncertain)
           } finally { if (alive.current) setSending(false) }
         }}>{sending ? 'Waiting for advice…' : 'Send question'}</button>
