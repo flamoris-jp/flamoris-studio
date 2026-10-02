@@ -55,6 +55,9 @@ inference schema and checks the exact approved model metadata immediately before
 admission. A changed alias/provider/domain fails before inference. Intelligence
 still owns final model/token/context validation. The bounded 120-second inference
 is sent once. MCP framing/proxy credentials remain behind the backend.
+The browser additionally bounds response receipt (including the body) to 170
+seconds. A stalled connection ends in the same uncertain locked state; this
+timeout does not claim that remote GPU work stopped or permit automatic replay.
 
 Migration adds only owner-scoped correlation UUIDs, binding/request digests,
 timestamps and presentation observations. No prompt, attachment, answer or raw
