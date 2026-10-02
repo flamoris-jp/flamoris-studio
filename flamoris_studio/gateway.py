@@ -4,6 +4,8 @@ import logging
 import re
 import time
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
+import httpx2
 from .workflow_contract import normalize_catalog
 from .image_v3_contract import normalize_v3_catalog
 from mcp import ClientSession
@@ -20,13 +22,33 @@ class GenerationGateway:
     @asynccontextmanager
     async def _connection(self):
         endpoint = os.getenv("STUDIO_GENERATION_ENDPOINT", "")
-        if not endpoint.startswith(("https://", "http://127.0.0.1:", "http://localhost:")):
+        token = os.getenv("STUDIO_GENERATION_TOKEN", "")
+        try:
+            url = urlsplit(endpoint)
+            port = url.port
+            valid = bool(url.hostname) and not (url.username or url.password or url.query or url.fragment)
+            valid = valid and (url.scheme == "https" or (
+                url.scheme == "http" and url.hostname in {"127.0.0.1", "localhost", "::1"} and port is not None))
+            valid = valid and len(token) <= 4096 and all(33 <= ord(c) <= 126 for c in token)
+        except ValueError:
+            valid = False
+        if not valid:
             raise GatewayError("unavailable")
         try:
-            async with streamable_http_client(endpoint) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    yield session
+            headers = {"Authorization": "Bearer " + token} if token else {}
+            async def reject_redirect(response):
+                # MCP can follow same-origin redirects independently of the client
+                # flag. Reject before its transport can forward a token or replay POST.
+                if 300 <= response.status_code < 400:
+                    await response.aclose()
+                    raise GatewayError("unavailable")
+            async with httpx2.AsyncClient(headers=headers, timeout=httpx2.Timeout(30, read=330),
+                                          follow_redirects=False, trust_env=False,
+                                          event_hooks={"response": [reject_redirect]}) as http:
+                async with streamable_http_client(endpoint, http_client=http) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        yield session
         except GatewayError:
             raise
         except Exception as exc:
@@ -34,16 +56,20 @@ class GenerationGateway:
 
     async def _call(self, name: str, args: dict | None = None, timeout: int = 45):
         started = time.monotonic()
+        namespace = os.getenv("STUDIO_GENERATION_NAMESPACE", "")
+        if namespace not in {"", "generation"}:
+            raise GatewayError("unavailable")
+        wire_name = f"{namespace}.{name}" if namespace else name
         try:
             async with self._connection() as session:
-                result = await session.call_tool(name, args or {}, read_timeout_seconds=timeout)
+                result = await session.call_tool(wire_name, args or {}, read_timeout_seconds=timeout)
             if result.is_error:
                 # Upstream error strings are never forwarded to browser.
                 message = " ".join(getattr(item, "text", "") for item in result.content)
                 code = "busy" if "busy" in message.lower() else "upstream_failure"
                 # The Hub uses this exact response for an unregistered tool. Do not
                 # classify arbitrary upstream text or transport failures as missing capability.
-                if name in {"assets.prepare", "assets.read"} and message.strip() == f"Unknown tool: {name}":
+                if name in {"assets.prepare", "assets.read"} and message.strip() == f"Unknown tool: {wire_name}":
                     code = "transfer_unavailable"
                 if name == "assets.get" and any(
                     marker in message.lower() for marker in ("retrieval limit", "download limit")
