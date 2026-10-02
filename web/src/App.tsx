@@ -3,8 +3,9 @@ import { api, type Session, type Discovery, type Execution, type ImageSettings, 
 import Gallery, { ResultPreview } from './Gallery'
 import { WorkflowPicker, ReferencePicker, workflowPayload, roleSpec, legalSeed } from './WorkflowImage'
 import Assistant from './Assistant'
+import Intelligence from './Intelligence'
 
-const sections = ['Image', 'Intelligence', 'Video', 'Music', 'Speech', 'Assets'] as const
+const sections = ['Image', 'Assistant', 'Intelligence', 'Video', 'Music', 'Speech', 'Assets'] as const
 type ImageForm = ImageSettings & { sampler: string; scheduler: string; denoise: number; loras: NonNullable<ImageSettings['loras']> }
 type OptionalWorkflowFields = 'steps' | 'cfg' | 'sampler' | 'scheduler' | 'denoise'
 export type ImageSubmission = Omit<ImageForm, 'seed' | OptionalWorkflowFields> & Partial<Pick<ImageForm, OptionalWorkflowFields>> & { seed?: number }
@@ -112,7 +113,8 @@ export default function App() {
     <nav aria-label="Creative domains">{sections.map(name => <button key={name} aria-current={section === name ? 'page' : undefined} onClick={() => setSection(name)}>{name}</button>)}</nav>
     <div className="account-footer"><span>{session.userName}</span><button onClick={() => setSection('Account')}>Account settings</button><button onClick={async () => { try { await api.logout(session.csrfToken); setForm(initialImageDraft()); setExecution(null); setResultSettings(null); setDiscovery(null); window.location.hash = ''; setSession(await api.session()) } catch { setError('Could not sign out.') } }}>Sign out</button></div></aside>
     <main><header><div><span className="eyebrow">CREATIVE CONTROL PLANE</span><h1>{section}</h1></div><span className="badge">PHASE 1A</span></header>
-    {section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Assets' ? <Gallery csrf={session.csrfToken} onUseSettings={useSettings} /> : section === 'Intelligence' ? <Assistant key={session.userName} csrf={session.csrfToken} initiallyOpen /> : section === 'Image' ? <div className="image-workspace"><div><p>Turn a prompt into something you can keep.</p>
+    <div hidden={section !== 'Intelligence'}><Intelligence key={session.userName} csrf={session.csrfToken} active={section === 'Intelligence'} /></div>
+    {section === 'Intelligence' ? null : section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Assets' ? <Gallery csrf={session.csrfToken} onUseSettings={useSettings} /> : section === 'Assistant' ? <Assistant key={session.userName} csrf={session.csrfToken} initiallyOpen /> : section === 'Image' ? <div className="image-workspace"><div><p>Turn a prompt into something you can keep.</p>
       {preferencesError && <p role="alert" className="error">{preferencesError}</p>}
       {discovery?.available ? <ImageEditor discovery={discovery} busy={busy} form={form} setForm={setForm} csrf={session.csrfToken} onSubmit={async form => {
         setBusy(true); setError(''); setExecution(null); setResultSettings(null)

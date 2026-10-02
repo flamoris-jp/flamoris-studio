@@ -37,6 +37,32 @@ export class AssistantFailure extends Error {
   uncertain: boolean
   constructor(message: string, uncertain: boolean) { super(message); this.uncertain = uncertain }
 }
+export type IntelligenceModel = { id: string; contextTokens: number; maxOutputTokens: number; available: boolean }
+export type IntelligenceDiscovery = { available: boolean; models: IntelligenceModel[]; capabilities: string[]; dataFlow?: string; reason?: string }
+export type IntelligenceInput = { requestId: string; modelId: string; capabilityId: string; input: string; instruction: string; maxOutputTokens: number; temperature: number }
+export type IntelligenceAnswer = { requestId: string; executionId: string; text: string; finishReason: 'stop' | 'length'; modelId: string; capabilityId: string; elapsedMs: number; usage: { input_tokens: number; output_tokens: number; total_tokens: number } | null }
+export class IntelligenceFailure extends Error {
+  constructor(message: string, readonly uncertain: boolean) { super(message) }
+}
+async function intelligenceExecute(payload: IntelligenceInput, csrf: string): Promise<IntelligenceAnswer> {
+  let response: Response
+  try {
+    response = await fetch('/api/intelligence/execute', { credentials: 'same-origin', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify(payload) })
+  } catch { throw new IntelligenceFailure('Inference outcome could not be confirmed. No automatic retry was made.', true) }
+  let body: Record<string, unknown>
+  try { body = await response.json() }
+  catch { throw new IntelligenceFailure('Inference outcome could not be confirmed. No automatic retry was made.', true) }
+  if (!response.ok) {
+    const message = typeof body.message === 'string' ? body.message : typeof body.detail === 'string' ? body.detail : 'Inference unavailable.'
+    const uncertain = typeof body.uncertain === 'boolean' ? body.uncertain : response.status >= 500 || response.status === 401 || /already recorded|result withheld/.test(message)
+    throw new IntelligenceFailure(message, uncertain)
+  }
+  if (body.requestId !== payload.requestId || body.modelId !== payload.modelId || body.capabilityId !== payload.capabilityId || typeof body.text !== 'string' || !['stop', 'length'].includes(String(body.finishReason))) {
+    throw new IntelligenceFailure('Inference result could not be confirmed.', true)
+  }
+  return body as IntelligenceAnswer
+}
 async function assistantAsk(payload: unknown, csrf: string): Promise<AssistantAnswer> {
   let response: Response
   try {
@@ -52,6 +78,8 @@ async function assistantAsk(payload: unknown, csrf: string): Promise<AssistantAn
   catch { throw new AssistantFailure('Assistant outcome could not be confirmed.', true) }
 }
 export const api = {
+  intelligenceDiscovery: () => request<IntelligenceDiscovery>('/api/intelligence/discovery'),
+  intelligenceExecute,
   assistantAvailability: (csrf: string) => post<AssistantAvailability>('/api/assistant/availability', {}, csrf),
   assistantAsk,
   session: () => request<Session>('/api/session'),
