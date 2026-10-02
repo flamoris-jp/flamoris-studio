@@ -45,23 +45,29 @@ export class IntelligenceFailure extends Error {
   constructor(message: string, readonly uncertain: boolean) { super(message) }
 }
 async function intelligenceExecute(payload: IntelligenceInput, csrf: string): Promise<IntelligenceAnswer> {
-  let response: Response
+  const controller = new AbortController()
+  // The backend's 150-second bound cannot bound a stalled browser/proxy connection.
+  // Aborting receipt is uncertain; it does not prove provider cancellation.
+  const deadline = globalThis.setTimeout(() => controller.abort(), 170000)
   try {
-    response = await fetch('/api/intelligence/execute', { credentials: 'same-origin', method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify(payload) })
-  } catch { throw new IntelligenceFailure('Inference outcome could not be confirmed. No automatic retry was made.', true) }
-  let body: Record<string, unknown>
-  try { body = await response.json() }
-  catch { throw new IntelligenceFailure('Inference outcome could not be confirmed. No automatic retry was made.', true) }
-  if (!response.ok) {
-    const message = typeof body.message === 'string' ? body.message : typeof body.detail === 'string' ? body.detail : 'Inference unavailable.'
-    const uncertain = typeof body.uncertain === 'boolean' ? body.uncertain : response.status >= 500 || response.status === 401 || /already recorded|result withheld/.test(message)
-    throw new IntelligenceFailure(message, uncertain)
-  }
-  if (body.requestId !== payload.requestId || body.modelId !== payload.modelId || body.capabilityId !== payload.capabilityId || typeof body.text !== 'string' || !['stop', 'length'].includes(String(body.finishReason))) {
-    throw new IntelligenceFailure('Inference result could not be confirmed.', true)
-  }
-  return body as IntelligenceAnswer
+    let response: Response
+    try {
+      response = await fetch('/api/intelligence/execute', { credentials: 'same-origin', method: 'POST', signal: controller.signal,
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify(payload) })
+    } catch { throw new IntelligenceFailure('Inference outcome could not be confirmed. No automatic retry was made.', true) }
+    let body: Record<string, unknown>
+    try { body = await response.json() }
+    catch { throw new IntelligenceFailure('Inference outcome could not be confirmed. No automatic retry was made.', true) }
+    if (!response.ok) {
+      const message = typeof body.message === 'string' ? body.message : typeof body.detail === 'string' ? body.detail : 'Inference unavailable.'
+      const uncertain = typeof body.uncertain === 'boolean' ? body.uncertain : response.status >= 500 || response.status === 401 || /already recorded|result withheld/.test(message)
+      throw new IntelligenceFailure(message, uncertain)
+    }
+    if (body.requestId !== payload.requestId || body.modelId !== payload.modelId || body.capabilityId !== payload.capabilityId || typeof body.text !== 'string' || !['stop', 'length'].includes(String(body.finishReason))) {
+      throw new IntelligenceFailure('Inference result could not be confirmed.', true)
+    }
+    return body as IntelligenceAnswer
+  } finally { globalThis.clearTimeout(deadline) }
 }
 async function assistantAsk(payload: unknown, csrf: string): Promise<AssistantAnswer> {
   let response: Response
