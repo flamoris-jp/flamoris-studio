@@ -41,14 +41,15 @@ for name in ("mcp.client.streamable_http", "mcp.client.session", "httpx2"):
 
 
 class BoundedStream(httpx2.AsyncByteStream):
-    def __init__(self, source):
+    def __init__(self, source, limit=256 * 1024):
         self.source = source
+        self.limit = limit
 
     async def __aiter__(self):
         size = 0
         async for part in self.source:
             size += len(part)
-            if size > 256 * 1024:
+            if size > self.limit:
                 raise AgentError()
             yield part
 
@@ -57,8 +58,9 @@ class BoundedStream(httpx2.AsyncByteStream):
 
 
 class AgentTransport(httpx2.AsyncBaseTransport):
-    def __init__(self, inner=None):
+    def __init__(self, inner=None, *, limit=256 * 1024):
         self.inner = inner or httpx2.AsyncHTTPTransport(retries=0)
+        self.limit = limit
 
     async def handle_async_request(self, request):
         response = await self.inner.handle_async_request(request)
@@ -66,11 +68,11 @@ class AgentTransport(httpx2.AsyncBaseTransport):
             300 <= response.status_code < 400
             or response.headers.get("content-encoding", "identity") != "identity"
             or response.is_stream_consumed
-            and len(response.content) > 256 * 1024
+            and len(response.content) > self.limit
         ):
             await response.aclose()
             raise AgentError()
-        response.stream = BoundedStream(response.stream)
+        response.stream = BoundedStream(response.stream, self.limit)
         return response
 
     async def aclose(self):

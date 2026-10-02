@@ -88,4 +88,5 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .lora { grid-template-columns: minmax(130px,2fr) 1fr 1fr auto auto; }
 @media(max-width:750px) { .lora { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 audio, video { max-width: 100%; }
+.intelligence-result pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; background: #14121c; border-radius: 9px; }
 .gallery-detail video { max-height: 60vh; }

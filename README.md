@@ -1,5 +1,9 @@
 # FLAMORIS Studio
 
+The dedicated [Raw Intelligence editor](docs/RAW_INTELLIGENCE.md) executes the
+reviewed synchronous Intelligence MCP contract. The standalone **Assistant**
+workspace and contextual Image panel keep Agent conversations separate.
+
 Creative control center for FLAMORIS, connecting intelligence, generative AI, and production tools.
 
 FLAMORIS Studio is the web-based creative control plane for the FLAMORIS ecosystem.

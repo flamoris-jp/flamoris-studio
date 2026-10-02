@@ -31,6 +31,7 @@ from .transfer import CHUNK_BYTES, MAX_TRANSFER_BYTES, PreviewAdmission, chunk, 
 from .result_contract import normalize_outputs, output_role, preview_kind
 from .range_transfer import representation_response
 from .assistant import mount_assistant
+from .intelligence import mount_intelligence
 
 # 512 KiB of raw image data stays below a 1 MiB SSE event even after base64
 # encoding and the MCP JSON envelope. Unknown sizes take the bounded route.
@@ -227,6 +228,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     app.state.preview_admission = PreviewAdmission(app.state.download_slots)
     app.state.prepare_slots = asyncio.Semaphore(1)
     mount_assistant(app)
+    mount_intelligence(app)
     login_attempts = defaultdict(deque)
 
     @app.exception_handler(GatewayError)
@@ -249,7 +251,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             except HTTPException:
                 return JSONResponse({"error": "Invalid request token."}, status_code=403)
         response = await call_next(request)
-        if request.url.path.startswith("/api/assistant/"):
+        if request.url.path.startswith(("/api/assistant/", "/api/intelligence/")):
             response.headers["Cache-Control"] = "private, no-store"
             response.headers["X-Content-Type-Options"] = "nosniff"
         return response
