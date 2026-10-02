@@ -12,6 +12,10 @@ Phase 1 uses a Python FastAPI backend with PostgreSQL-backed local accounts and 
 
 **Current main already contains the authenticated multi-user shell, the Image generation vertical slice, and the per-user Generated results catalog with metadata/details, download, and confirmed deletion.** Phase 1 remains open while large-asset transfer, managed inputs, account/session hardening, and the next capability integrations are completed.
 
+## Proposed integration design
+
+[Multimodal Studio and contextual Agent](docs/MULTIMODAL_STUDIO.md) records the proposed media/Workflow/Agent integration coordinated by [FLAMORIS AI #15](https://github.com/flamoris-jp/flamoris-ai/issues/15). It is a design proposal, not a claim that new providers, composed execution or shared-user Agent assistance are implemented. Existing public contracts and readiness gates remain authoritative.
+
 ## Direction
 
 Studio grows through complete vertical slices rather than broad placeholder scaffolding.
