@@ -11,6 +11,14 @@ with `FLAMORIS_WORKFLOW_V3_ENABLED=true` and replacing the Hub's runtime Generat
 catalog using `_generation-v3.example.yaml`. The Studio flag defaults to false;
 legacy Image discovery/build remains unchanged. An enabled but unavailable or
 incompatible v3 catalog fails closed without falling back to a different route.
+For a direct Generation endpoint, leave `STUDIO_GENERATION_NAMESPACE` empty.
+For a Hub endpoint, set it explicitly to `generation`; all Generation tool names,
+including job/asset transfers, then use the Hub's advertised namespace. Set the
+private backend `STUDIO_GENERATION_TOKEN` for an endpoint requiring Bearer auth.
+It is never returned to the browser. HTTPS or a trusted loopback HTTP tunnel is
+required; credential-bearing URLs and redirects are rejected. No namespace or
+endpoint fallback/replay occurs after failure. The Hub token authenticates Studio's
+backend client group; per-user Execution/Asset authorization stays in Studio.
 No new DB migration is needed: existing source-discriminated execution and immutable
 request snapshots retain the v3 Workflow kind, expected schema/compiler/adapter/profile
 revisions and exact root version/digest. These are checked against the build reply;
