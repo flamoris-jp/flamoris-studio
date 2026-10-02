@@ -18,7 +18,7 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from .auth import COOKIE, CSRF_COOKIE, clear_session, current_user, database, digest, hasher, new_csrf, require_csrf, start_session
+from .auth import COOKIE, CSRF_COOKIE, authenticated_user, clear_session, current_user, database, digest, hasher, new_csrf, require_csrf, start_session
 from .db import Asset, Execution, ImagePreference, ImageStyle, LoginSession, User, make_session_factory, now
 from .gateway import GatewayError, GenerationGateway
 from .media import Thumbnails, filename, inspect_image
@@ -322,13 +322,13 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.post("/api/auth/logout")
     def logout(request: Request, response: Response, db: Session = Depends(database),
-               _: uuid.UUID = Depends(current_user)):
+               _: uuid.UUID = Depends(authenticated_user)):
         clear_session(response, db, request.cookies.get(COOKIE, ""))
         return {"ok": True}
 
     @app.post("/api/account/email")
     def change_email(input: EmailChange, db: Session = Depends(database),
-                     user_id: uuid.UUID = Depends(current_user)):
+                     user_id: uuid.UUID = Depends(authenticated_user)):
         user = db.get(User, user_id)
         try:
             valid = hasher.verify(user.password_hash, input.currentPassword)
@@ -349,7 +349,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.post("/api/account/password")
     def change_password(input: PasswordChange, request: Request, db: Session = Depends(database),
-                        user_id: uuid.UUID = Depends(current_user)):
+                        user_id: uuid.UUID = Depends(authenticated_user)):
         if input.newPassword != input.confirmPassword:
             raise HTTPException(422, "New passwords do not match")
         # Serialize account password changes and revoke other sessions in the
@@ -384,11 +384,11 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         return {"healthy": True, "service": "studio"}
 
     @app.get("/api/generation/image/discovery")
-    async def discovery(_: uuid.UUID = Depends(current_user)):
+    async def discovery(_: uuid.UUID = Depends(authenticated_user)):
         return await app.state.gateway.discover()
 
     @app.get("/api/generation/image/preferences")
-    def get_image_preferences(db: Session = Depends(database), user_id: uuid.UUID = Depends(current_user)):
+    def get_image_preferences(db: Session = Depends(database), user_id: uuid.UUID = Depends(authenticated_user)):
         preference = db.get(ImagePreference, user_id)
         if preference is None:
             return {"width": 512, "height": 512, "steps": 20, "cfg": 7}
@@ -396,7 +396,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.put("/api/generation/image/preferences")
     def put_image_preferences(input: ImagePreferencesInput, db: Session = Depends(database),
-                              user_id: uuid.UUID = Depends(current_user)):
+                              user_id: uuid.UUID = Depends(authenticated_user)):
         preference = db.get(ImagePreference, user_id)
         if preference is None:
             preference = ImagePreference(owner_user_id=user_id)
@@ -408,13 +408,13 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         return input.model_dump()
 
     @app.get("/api/generation/image/styles")
-    def list_styles(db: Session = Depends(database), user_id: uuid.UUID = Depends(current_user)):
+    def list_styles(db: Session = Depends(database), user_id: uuid.UUID = Depends(authenticated_user)):
         return {"items": [style_view(style) for style in db.scalars(select(ImageStyle)
                 .where(ImageStyle.owner_user_id == user_id).order_by(ImageStyle.name, ImageStyle.id)).all()]}
 
     @app.post("/api/generation/image/styles", status_code=201)
     def create_style(input: StyleInput, db: Session = Depends(database),
-                     user_id: uuid.UUID = Depends(current_user)):
+                     user_id: uuid.UUID = Depends(authenticated_user)):
         return save_style(db, ImageStyle(owner_user_id=user_id, name=input.name,
                           positive_prompt=input.positivePrompt, negative_prompt=input.negativePrompt))
 
@@ -427,12 +427,12 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.get("/api/generation/image/styles/{style_id}")
     def get_style(style_id: uuid.UUID, db: Session = Depends(database),
-                  user_id: uuid.UUID = Depends(current_user)):
+                  user_id: uuid.UUID = Depends(authenticated_user)):
         return style_view(owned_style(db, style_id, user_id))
 
     @app.put("/api/generation/image/styles/{style_id}")
     def update_style(style_id: uuid.UUID, input: StyleInput, db: Session = Depends(database),
-                     user_id: uuid.UUID = Depends(current_user)):
+                     user_id: uuid.UUID = Depends(authenticated_user)):
         style = owned_style(db, style_id, user_id)
         style.name, style.positive_prompt, style.negative_prompt = input.name, input.positivePrompt, input.negativePrompt
         style.updated_at = now()
@@ -440,7 +440,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.post("/api/generation/image/styles/{style_id}/duplicate", status_code=201)
     def duplicate_style(style_id: uuid.UUID, input: StyleDuplicate, db: Session = Depends(database),
-                        user_id: uuid.UUID = Depends(current_user)):
+                        user_id: uuid.UUID = Depends(authenticated_user)):
         source = owned_style(db, style_id, user_id)
         return save_style(db, ImageStyle(owner_user_id=user_id, name=input.name,
                           positive_prompt=source.positive_prompt, negative_prompt=source.negative_prompt,
@@ -450,14 +450,14 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.delete("/api/generation/image/styles/{style_id}")
     def delete_style(style_id: uuid.UUID, db: Session = Depends(database),
-                     user_id: uuid.UUID = Depends(current_user)):
+                     user_id: uuid.UUID = Depends(authenticated_user)):
         db.delete(owned_style(db, style_id, user_id))
         db.commit()
         return {"ok": True}
 
     @app.post("/api/generation/inputs", status_code=201)
     async def new_input(body: InputCreate, request: Request, db: Session = Depends(database),
-                        user_id: uuid.UUID = Depends(current_user)):
+                        user_id: uuid.UUID = Depends(authenticated_user)):
         asset = db.scalar(select(Asset).where(Asset.id == body.assetId, Asset.user_id == user_id,
                                              Asset.availability != "deleted"))
         if asset is None:
@@ -473,7 +473,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.get("/api/generation/inputs/{input_id}")
     async def get_input(input_id: uuid.UUID, db: Session = Depends(database),
-                        user_id: uuid.UUID = Depends(current_user)):
+                        user_id: uuid.UUID = Depends(authenticated_user)):
         row = owned_input(db, input_id, user_id)
         if usable(row):
             try:
@@ -484,7 +484,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.delete("/api/generation/inputs/{input_id}")
     async def delete_input(input_id: uuid.UUID, db: Session = Depends(database),
-                           user_id: uuid.UUID = Depends(current_user)):
+                           user_id: uuid.UUID = Depends(authenticated_user)):
         row = owned_input(db, input_id, user_id)
         quota_guard(db)
         if protected(db, row.id):
@@ -507,7 +507,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.get("/api/generation/inputs/{input_id}/thumbnail")
     def input_thumbnail(input_id: uuid.UUID, db: Session = Depends(database),
-                        user_id: uuid.UUID = Depends(current_user)):
+                        user_id: uuid.UUID = Depends(authenticated_user)):
         row = owned_input(db, input_id, user_id)
         terminal = min(row.expires_at, row.terminal_at) if row.terminal_at else row.expires_at
         if terminal + timedelta(hours=24) <= now():
@@ -574,7 +574,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         return view(execution, db)
 
     @app.post("/api/generation/image/jobs", status_code=201)
-    async def submit(input: WorkflowImageRequest | ImageRequest, db: Session = Depends(database), user_id: uuid.UUID = Depends(current_user)):
+    async def submit(input: WorkflowImageRequest | ImageRequest, db: Session = Depends(database), user_id: uuid.UUID = Depends(authenticated_user)):
         if isinstance(input, WorkflowImageRequest):
             return await selected_submit(input, db, user_id)
         capability = await app.state.gateway.discover()
@@ -600,7 +600,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     def list_generated_assets(limit: int = Query(default=24, ge=1, le=48),
                               offset: int = Query(default=0, ge=0, le=100000),
                               db: Session = Depends(database),
-                              user_id: uuid.UUID = Depends(current_user)):
+                              user_id: uuid.UUID = Depends(authenticated_user)):
         rows = db.execute(select(Asset, Execution).join(Execution, Asset.execution_id == Execution.id)
                           .where(Asset.user_id == user_id, Execution.user_id == user_id,
                                  Asset.availability != "deleted")
@@ -611,7 +611,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.get("/api/assets/{asset_id}")
     async def generated_asset_detail(asset_id: uuid.UUID, db: Session = Depends(database),
-                               user_id: uuid.UUID = Depends(current_user)):
+                               user_id: uuid.UUID = Depends(authenticated_user)):
         row = db.execute(select(Asset, Execution).join(Execution, Asset.execution_id == Execution.id)
                          .where(Asset.id == asset_id, Asset.user_id == user_id,
                                 Execution.user_id == user_id, Asset.availability != "deleted")).first()
@@ -649,7 +649,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.post("/api/assets/delete")
     async def delete_generated_assets(input: DeleteAssetsRequest, db: Session = Depends(database),
-                                      user_id: uuid.UUID = Depends(current_user)):
+                                      user_id: uuid.UUID = Depends(authenticated_user)):
         def cleanup_thumbnail(asset: Asset) -> None:
             # Preserve the locator until cleanup succeeds so a retry can finish it.
             if asset.thumbnail_locator is None:
@@ -695,7 +695,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.get("/api/executions/{execution_id}")
     async def execution_status(execution_id: uuid.UUID, db: Session = Depends(database),
-                               user_id: uuid.UUID = Depends(current_user)):
+                               user_id: uuid.UUID = Depends(authenticated_user)):
         execution = owned(db, execution_id, user_id)
         if execution.source != "generation":
             raise HTTPException(404)
@@ -706,7 +706,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.get("/api/executions/{execution_id}/result")
     async def result(execution_id: uuid.UUID, db: Session = Depends(database),
-                     user_id: uuid.UUID = Depends(current_user)):
+                     user_id: uuid.UUID = Depends(authenticated_user)):
         execution = owned(db, execution_id, user_id)
         if execution.source != "generation":
             raise HTTPException(404)
@@ -758,7 +758,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.post("/api/executions/{execution_id}/cancel")
     async def cancel(execution_id: uuid.UUID, db: Session = Depends(database),
-                     user_id: uuid.UUID = Depends(current_user)):
+                     user_id: uuid.UUID = Depends(authenticated_user)):
         execution = owned(db, execution_id, user_id)
         if execution.source != "generation":
             raise HTTPException(404)
@@ -836,7 +836,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     @app.get("/api/executions/{execution_id}/assets/{asset_id}/thumbnail")
     async def thumbnail(execution_id: uuid.UUID, asset_id: uuid.UUID, request: Request, db: Session = Depends(database),
-                        user_id: uuid.UUID = Depends(current_user)):
+                        user_id: uuid.UUID = Depends(authenticated_user)):
         owned(db, execution_id, user_id)
         db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution_id})
         asset = owned_asset(db, execution_id, asset_id, user_id)
@@ -858,7 +858,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     @app.get("/api/executions/{execution_id}/assets/{asset_id}/content")
     @app.get("/api/executions/{execution_id}/assets/{asset_id}/download")
     async def asset_content(execution_id: uuid.UUID, asset_id: uuid.UUID, request: Request,
-                            db: Session = Depends(database), user_id: uuid.UUID = Depends(current_user)):
+                            db: Session = Depends(database), user_id: uuid.UUID = Depends(authenticated_user)):
         owned(db, execution_id, user_id)
         db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution_id})
         asset = owned_asset(db, execution_id, asset_id, user_id)

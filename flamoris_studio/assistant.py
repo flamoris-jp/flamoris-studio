@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .agent_gateway import AgentError, AgentGateway
-from .auth import current_user, database
+from .auth import authenticated_user, current_user, database
 from .db import AssistantRequest, AssistantSession, now
 
 
@@ -183,7 +183,7 @@ def mount_assistant(app):
         request: Request,
         response: Response,
         db: Session = Depends(database),
-        user: uuid.UUID = Depends(current_user),
+        user: uuid.UUID = Depends(authenticated_user),
     ):
         response.headers["Cache-Control"] = "private, no-store"
         raw = await bounded_body(request, 1024)
@@ -233,7 +233,7 @@ def mount_assistant(app):
         request: Request,
         response: Response,
         db: Session = Depends(database),
-        user: uuid.UUID = Depends(current_user),
+        user: uuid.UUID = Depends(authenticated_user),
     ):
         response.headers["Cache-Control"] = "private, no-store"
         body = await bounded_body(request, 36 * 1024)
