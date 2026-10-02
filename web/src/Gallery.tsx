@@ -27,8 +27,28 @@ function RetryingImage({ url, alt, lazy, unavailable }: {
 }
 
 function Thumbnail({ item }: { item: Asset }) {
+  if (renderer(item) !== 'image') return <span>{item.mediaKind === 'unknown' ? 'File' : item.mediaKind} · Download available</span>
   if (item.sizeBytes !== null && item.sizeBytes > 64 * 1024 * 1024) return <span>Preview unavailable</span>
   return <RetryingImage key={item.thumbnailUrl} url={item.thumbnailUrl} alt="" lazy unavailable="Preview unavailable" />
+}
+
+function renderer(item: Asset): 'image' | 'audio' | 'video' | 'file' {
+  if (item.mediaKind === 'image' && ['image/png', 'image/jpeg', 'image/webp'].includes(item.mimeType)) return 'image'
+  if (item.mediaKind === 'audio' && ['audio/wav', 'audio/mpeg'].includes(item.mimeType)) return 'audio'
+  if (item.mediaKind === 'video' && item.mimeType === 'video/mp4') return 'video'
+  return 'file'
+}
+
+export function ResultPreview({ item }: { item: Asset }) {
+  const [failed, setFailed] = useState(false)
+  useEffect(() => setFailed(false), [item.id, item.previewUrl])
+  const kind = renderer(item)
+  if (kind === 'image') return <ImagePreview item={item} />
+  if (kind === 'file') return <p>{item.mediaKind === 'midi' ? 'MIDI file; playback is unavailable.' : 'File preview is unavailable.'} Download is available below.</p>
+  if (failed) return <p>Preview unavailable; download may still work. <button onClick={() => setFailed(false)}>Reload preview</button></p>
+  return kind === 'audio'
+    ? <audio controls preload="metadata" src={item.previewUrl} onError={() => setFailed(true)} aria-label={item.displayName} />
+    : <video controls preload="metadata" src={item.previewUrl} onError={() => setFailed(true)} aria-label={item.displayName} />
 }
 
 export function ImagePreview({ item }: { item: Asset }) {
@@ -88,10 +108,11 @@ export default function Gallery({ csrf, onUseSettings }: { csrf: string; onUseSe
       catch { setError('Could not load more results.') }
     }}>Load more</button>}
     {detail && <div className="gallery-overlay" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDetail(null) }}><div className="panel gallery-detail" role="dialog" aria-modal="true" aria-label={`Details for ${detail.displayName}`} onKeyDown={event => { if (event.key === 'Escape') setDetail(null) }}><div className="row"><h3>{detail.displayName}</h3><button autoFocus onClick={() => setDetail(null)}>Close</button></div>
-      {detail.mediaKind === 'image' && <ImagePreview key={detail.id} item={detail} />}
+      <ResultPreview key={detail.id} item={detail} />
+      {detail.outputRole && <p>{detail.outputRole.role} · {detail.outputRole.port} · {detail.outputRole.index + 1}</p>}
       <p>{new Date(detail.createdAt).toLocaleString()} · {detail.mimeType} · {detail.sizeBytes === null ? 'Size unknown' : `${(detail.sizeBytes / 1024 / 1024).toFixed(1)} MB`}{detail.width && detail.height ? ` · ${detail.width} × ${detail.height}` : ''}</p>
       <dl>{Object.entries(detail.settings).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{Array.isArray(value) ? value.map((lora, index) => `${index + 1}. ${lora.name} (model ${lora.strengthModel}, CLIP ${lora.strengthClip})`).join('\n') || 'None' : String(value)}</dd></div>)}</dl>
-      <div className="row"><a href={detail.downloadUrl}>Download ↓</a>{onUseSettings && <button onClick={() => onUseSettings(detail.settings)}>Use settings ↗</button>}<button disabled={working} onClick={() => remove([detail.id])}>Delete this result</button></div>
+      <div className="row"><a href={detail.downloadUrl}>Download ↓</a>{onUseSettings && renderer(detail) === 'image' && <button onClick={() => onUseSettings(detail.settings)}>Use settings ↗</button>}<button disabled={working} onClick={() => remove([detail.id])}>Delete this result</button></div>
     </div></div>}
   </section>
 }

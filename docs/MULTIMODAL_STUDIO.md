@@ -4,6 +4,11 @@ Status: proposed product/integration design, 2026-10-02. Coordination: [FLAMORIS
 
 ## Baseline and responsibility
 
+Implemented result foundation: [MULTIMEDIA_RESULTS.md](MULTIMEDIA_RESULTS.md)
+specifies additive role/media/source DTO metadata, controlled audio/video and
+bounded immutable single-range/attachment retrieval. The remaining editor,
+Agent mapping and orchestration sections below still describe gated work.
+
 Main `f8301ae6b900c367f67e4aaf4f25c0aa2be5db0e` already has multi-user accounts/sessions, Image generation, Styles/preferences, ready graph-free Workflow discovery, authorized reference-image snapshots, Generated catalog and bounded transfers. Keep these working. Current Image-specific DTOs and public roles are not a universal multi-media contract.
 
 Studio owns editor drafts, per-user request/catalog mappings and presentation. Generation owns media workflow/job/input/asset validation and readiness; Agent owns persistent assistant identity/conversations/policy; Intelligence owns raw inference; Runtime and GPU Node Manager retain execution/resource/lifecycle authority. Browser code speaks Studio DTOs, never MCP or provider transport.
