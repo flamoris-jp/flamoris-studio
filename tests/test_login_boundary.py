@@ -1,5 +1,6 @@
 from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -8,7 +9,7 @@ from sqlalchemy import select
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from flamoris_studio.app import create_app
-from flamoris_studio.auth import DUMMY_PASSWORD_HASH, digest
+from flamoris_studio.auth import DUMMY_PASSWORD_HASH, digest, hasher as account_hasher
 from flamoris_studio.db import LoginThrottle, now
 from flamoris_studio.login_throttle import admit_login
 from flamoris_studio.server import trusted_proxy_ips
@@ -19,6 +20,11 @@ from test_studio import clients, register
 def test_proxy_configuration_rejects_implicit_trust(value):
     with pytest.raises(ValueError):
         trusted_proxy_ips(value)
+
+
+def test_dummy_hash_is_valid_and_matches_account_hash_parameters():
+    assert account_hasher.verify(DUMMY_PASSWORD_HASH, "studio-dummy-no-account-login-verification")
+    assert account_hasher.check_needs_rehash(DUMMY_PASSWORD_HASH) is False
 
 
 @pytest.mark.asyncio
@@ -64,9 +70,9 @@ def test_unknown_known_and_locked_passwords_each_verify_once(clients, monkeypatc
 
     def reject(encoded, password):
         calls.append(encoded)
-        return False
+        return account_hasher.verify(encoded, password)
 
-    monkeypatch.setattr("flamoris_studio.app.hasher.verify", reject)
+    monkeypatch.setattr("flamoris_studio.app.hasher", SimpleNamespace(verify=reject))
     for address in ["missing@example.test"] + ["known@example.test"] * 6:
         response = b.post("/api/auth/login", json={"email": address, "password": "Wrong-Password-123"},
                           headers={"X-CSRF-TOKEN": csrf})
@@ -77,7 +83,7 @@ def test_unknown_known_and_locked_passwords_each_verify_once(clients, monkeypatc
 
 def test_login_admission_survives_new_app_and_ignores_untrusted_headers(clients, monkeypatch):
     a, _, gateway, factory = clients
-    monkeypatch.setattr("flamoris_studio.app.hasher.verify", lambda *args: False)
+    monkeypatch.setattr("flamoris_studio.app.hasher", SimpleNamespace(verify=lambda *args: False))
     csrf = a.get("/api/session").json()["csrfToken"]
     credentials = {"email": "missing@example.test", "password": "Wrong-Password-123"}
     for index in range(10):

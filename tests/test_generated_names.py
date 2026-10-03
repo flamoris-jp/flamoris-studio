@@ -11,6 +11,7 @@ from test_studio import clients, image_request, register
 def test_duplicate_provider_names_have_stable_distinct_catalog_and_download_names(clients):
     a, b, gateway, factory = clients
     csrf = register(a, "names@example.test")
+    register(b, "other-names@example.test")
 
     async def outputs(job):
         return [{"asset_id": f"private-{index}", "filename": "000.png",
