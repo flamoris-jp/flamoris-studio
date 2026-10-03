@@ -162,13 +162,14 @@ export default function App() {
     <div hidden={section !== 'Music'}><Music key={session.accountKey ?? session.userName} csrf={session.csrfToken} accountKey={session.accountKey ?? session.userName ?? ''} execution={musicExecution} onExecution={setMusicExecution} authorized={() => !signingOut.current} /></div>
     {section === 'Intelligence' || section === 'Speech' || section === 'Music' ? null : section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Assets' ? <Gallery csrf={session.csrfToken} onUseSettings={useSettings} /> : section === 'Assistant' ? <Assistant key={session.userName} csrf={session.csrfToken} initiallyOpen /> : section === 'Image' ? <div className="image-workspace"><div><p>Turn a prompt into something you can keep.</p>
       {preferencesError && <p role="alert" className="error">{preferencesError}</p>}
-      {discovery?.available ? <ImageEditor discovery={discovery} busy={busy} form={form} setForm={setForm} csrf={session.csrfToken} onSubmit={async form => {
+      {!discovery?.available && <section className="panel"><h2>Image generation unavailable</h2><p>You can prepare a reference below. Generation requires an available image service.</p><button onClick={() => { const version = accountEpoch.current; api.discovery().then(value => { if (currentAccount(version)) setDiscovery(value) }).catch(() => { if (currentAccount(version)) setError('Service unavailable.') }) }}>Check again</button></section>}
+      <ImageEditor discovery={discovery ?? { available: false, checkpoints: [], loras: [], templates: [] }} busy={busy} form={form} setForm={setForm} csrf={session.csrfToken} onSubmit={async form => {
         const version = accountEpoch.current
         setBusy(true); setError(''); setExecution(null); setResultSettings(null)
         try { const created = await api.submit(form, session.csrfToken); if (currentAccount(version)) { setExecution(created); window.location.hash = `execution/${created.id}` } }
         catch (e) { if (currentAccount(version)) { setError(e instanceof Error ? e.message : 'Generation failed.'); api.discovery().then(value => { if (currentAccount(version)) setDiscovery(value) }).catch(() => {}) } }
         finally { if (currentAccount(version)) setBusy(false) }
-      }} /> : <section className="panel"><h2>Image generation unavailable</h2><p>The configured generation service has no available image capability.</p><button onClick={() => { const version = accountEpoch.current; api.discovery().then(value => { if (currentAccount(version)) setDiscovery(value) }).catch(() => { if (currentAccount(version)) setError('Service unavailable.') }) }}>Check again</button></section>}
+      }} />
       {error && <p role="alert" className="error">{error}</p>}
       {execution && execution.category !== 'speech' && <section className="panel results"><div className="row"><div><span className="eyebrow">CURRENT EXECUTION</span><h2>Result</h2></div><span className="badge">{execution.state.replace('_', ' ')}</span></div>
         {['queued', 'running', 'submitting', 'cancel_requested'].includes(execution.state) && <button onClick={async () => { const version = accountEpoch.current; try { const value = await api.cancel(execution.id, session.csrfToken); if (currentAccount(version)) setExecution(value) } catch (e) { if (currentAccount(version)) setError(e instanceof Error ? e.message : 'Cancellation failed.') } }}>Request cancellation</button>}
@@ -261,7 +262,7 @@ export function ImageEditor({ discovery, onSubmit, busy, form, setForm, csrf }: 
   const fixed = selected?.image.dimensions.mode === 'fixed' ? selected.image.dimensions : undefined
   useEffect(() => { api.styles().then(page => setStyles(page.items)).catch(() => setStyleError('Could not load Styles.')) }, [])
   const set = <K extends keyof ImageDraft>(key: K, value: ImageDraft[K]) => setForm(old => ({ ...old, [key]: value }))
-  const valid = !referenceBusy && (!form.referenceInputId || needsReference) && exactSelection && payload !== null && (!needsReference || (referenceEnabled && referenceValid)) && discovery.checkpoints.some(item => item.name === form.checkpoint) &&
+  const valid = discovery.available && !referenceBusy && (!form.referenceInputId || needsReference) && exactSelection && payload !== null && (!needsReference || (referenceEnabled && referenceValid)) && discovery.checkpoints.some(item => item.name === form.checkpoint) &&
     form.loras.every(lora => discovery.loras.some(item => item.name === lora.name))
   const style = styles.find(item => item.id === selectedStyle)
   async function styleAction(action: 'save' | 'update' | 'duplicate' | 'delete') {
@@ -284,7 +285,7 @@ export function ImageEditor({ discovery, onSubmit, busy, form, setForm, csrf }: 
     } catch (e) { setStyleError(e instanceof Error ? e.message : 'Style operation failed.') }
     finally { setStyleBusy(false) }
   }
-  return <form className="panel editor" onSubmit={event => { event.preventDefault(); if (valid && payload) onSubmit(payload) }}><div className="row"><div><span className="eyebrow">IMAGE GENERATOR</span><h2>Compose your image</h2></div><span className="badge">Ready</span></div>
+  return <form className="panel editor" onSubmit={event => { event.preventDefault(); if (valid && payload) onSubmit(payload) }}><div className="row"><div><span className="eyebrow">IMAGE GENERATOR</span><h2>Compose your image</h2></div><span className="badge">{discovery.available ? 'Ready' : 'Unavailable'}</span></div>
     <WorkflowPicker discovery={discovery} form={form} setForm={setForm} />
     {form.workflowId && !exactSelection && <p role="alert">This Workflow changed or is unavailable. Preserve your draft and select a current ready version.</p>}
     <label>Model<select required value={form.checkpoint} onChange={e => set('checkpoint', e.target.value)}><option value="">Choose a model</option>{form.checkpoint && !checkpoints.some(x => x.name === form.checkpoint) && <option value={form.checkpoint} disabled>{form.checkpoint} (unavailable for this Workflow)</option>}{checkpoints.map(x => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>
