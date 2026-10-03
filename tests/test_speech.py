@@ -150,7 +150,7 @@ def test_unknown_submit_returns_persisted_owned_fence_without_replay(clients, mo
 
 
 def test_unavailable_or_mismatched_build_cannot_submit_and_speech_rejects_wrong_output(clients, monkeypatch):
-    a, _, gateway, factory, csrf, _, submissions = setup_speech(clients, monkeypatch)
+    a, _, gateway, factory, csrf, builds, submissions = setup_speech(clients, monkeypatch)
 
     async def wrong(parameters):
         raise GatewayError("validation")
@@ -167,6 +167,7 @@ def test_unavailable_or_mismatched_build_cannot_submit_and_speech_rejects_wrong_
                   headers={"X-CSRF-TOKEN": csrf}).status_code == 503
 
     async def correct(parameters):
+        builds.append(dict(parameters))
         return "a" * 32
 
     monkeypatch.setenv("STUDIO_SPEECH_ENABLED", "true")

@@ -12,8 +12,10 @@ from starlette.requests import ClientDisconnect
 from test_studio import clients as studio_clients
 from test_studio import image_request, register
 
+from flamoris_studio.app import create_app
 from flamoris_studio.auth import COOKIE, authenticated_user
 from flamoris_studio.gateway import GatewayError
+from flamoris_studio.media import Thumbnails
 from flamoris_studio.range_transfer import representation_response
 from flamoris_studio.transfer import CHUNK_BYTES
 
@@ -152,6 +154,23 @@ async def connected_receive():
     return {"type": "http.request", "body": b"", "more_body": False}
 
 
+def download_endpoint(app):
+    return next(
+        route.endpoint
+        for route in app.routes
+        if getattr(route, "path", None)
+        == "/api/executions/{execution_id}/assets/{asset_id}/download"
+    )
+
+
+def test_download_fixture_finds_production_route_without_postgres(tmp_path):
+    app = create_app(
+        session_factory=object(), gateway=object(), thumbnails=Thumbnails(str(tmp_path))
+    )
+    # Recent FastAPI also keeps included router objects without a .path here.
+    assert download_endpoint(app).__name__ == "asset_content"
+
+
 async def download_response(owner, db, asset):
     # TestClient buffers streamed bodies. Call the registered route with its real
     # cookie/DB authentication instead, so the consumer can inspect each yield.
@@ -171,11 +190,7 @@ async def download_response(owner, db, asset):
         receive=connected_receive,
     )
     user_id = authenticated_user(request, db)
-    endpoint = next(
-        route.endpoint
-        for route in owner.app.routes
-        if route.path == "/api/executions/{execution_id}/assets/{asset_id}/download"
-    )
+    endpoint = download_endpoint(owner.app)
     execution_id = uuid.UUID(asset["downloadUrl"].split("/")[3])
     return await endpoint(execution_id, uuid.UUID(asset["id"]), request, db, user_id)
 
