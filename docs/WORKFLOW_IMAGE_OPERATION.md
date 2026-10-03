@@ -36,7 +36,9 @@ are checked before upstream calls. One transfer per process is admitted immediat
 (additional requests receive 429), with a 90-second body/publication bound,
 at most five additional seconds for compensating cleanup, and a
 100-second browser deadline. The gateway reuses one MCP connection, bounded to
-75 seconds, using 256 KiB begin/write/finish chunks with 15 seconds per RPC.
+75 seconds, using 128 KiB begin/write/finish chunks with 15 seconds per RPC.
+The smaller chunks leave room for base64 and the existing 256 KiB signed Hub
+envelope, while the Generation upload RPC itself accepts up to 256 KiB raw.
 There is no automatic upload retry. No caller filename/path or raw MCP ID enters
 the public request/response contract. Generation fully decodes the matching image
 before returning its immutable input receipt. Uploads create no generated Asset.

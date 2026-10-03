@@ -191,7 +191,9 @@ class GenerationGateway:
                 or not 0 <= offset <= len(data)):
                 raise GatewayError("validation")
             while offset < len(data):
-                part = data[offset:offset + 256 * 1024]
+                # Base64 plus a signed Hub context must fit its existing
+                # 256 KiB canonical-envelope bound; the owning RPC allows 256 KiB raw.
+                part = data[offset:offset + 128 * 1024]
                 raw = await call("inputs.upload.write", {
                     "upload_id": upload_id, "offset": offset,
                     "data_base64": base64.b64encode(part).decode("ascii"),

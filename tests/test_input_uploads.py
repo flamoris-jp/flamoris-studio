@@ -64,7 +64,7 @@ async def test_gateway_chunks_private_image_on_one_connection_without_retry(monk
             raw = {"upload_id": key, "offset": 0}
         elif name.endswith("write"):
             part = base64.b64decode(args["data_base64"], validate=True)
-            assert 0 < len(part) <= 256 * 1024 and args["offset"] == len(assembled)
+            assert 0 < len(part) <= 128 * 1024 and args["offset"] == len(assembled)
             assert args["chunk_sha256"] == hashlib.sha256(part).hexdigest()
             assembled.extend(part)
             raw = {"upload_id": key, "offset": len(assembled)}
@@ -80,7 +80,7 @@ async def test_gateway_chunks_private_image_on_one_connection_without_retry(monk
     monkeypatch.setattr(gateway, "_connection", connection)
     assert await gateway.upload_input(key, data, "image/png") == {"input_id": key}
     assert len(connections) == 1
-    assert calls == [prefix + "inputs.upload.begin", *[prefix + "inputs.upload.write"] * 3, prefix + "inputs.upload.finish"]
+    assert calls == [prefix + "inputs.upload.begin", *[prefix + "inputs.upload.write"] * 5, prefix + "inputs.upload.finish"]
 
 
 @pytest.mark.asyncio
