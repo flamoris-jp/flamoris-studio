@@ -1,0 +1,71 @@
+{
+  "id": "speech-no-reference",
+  "name": "Irodori speech without reference audio",
+  "description": "Configured native Japanese speech; no reference audio or voice cloning",
+  "kind": "native",
+  "metadata_schema_version": 2,
+  "schema_version": 4,
+  "version": 1,
+  "provider_id": "irodori",
+  "capability_id": "speech.generate",
+  "parameters": {
+    "text": {
+      "type": "string",
+      "min_length": 1,
+      "max_length": 512,
+      "max_bytes": 2048,
+      "role": "text",
+      "required": true
+    },
+    "caption": {
+      "default": "",
+      "type": "string",
+      "max_length": 512,
+      "max_bytes": 2048,
+      "role": "caption",
+      "required": false
+    },
+    "seconds": {
+      "default": 10,
+      "maximum": 30,
+      "minimum": 0.5,
+      "type": "number",
+      "role": "seconds",
+      "required": false
+    },
+    "steps": {
+      "default": 40,
+      "maximum": 80,
+      "minimum": 1,
+      "type": "integer",
+      "role": "steps",
+      "required": false
+    },
+    "seed": {
+      "default": 0,
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer",
+      "role": "seed",
+      "required": false
+    }
+  },
+  "input_roles": [],
+  "output_roles": [
+    {
+      "port": "audio",
+      "role": "audio",
+      "media_kind": "audio"
+    }
+  ],
+  "qualification": "configured-local-resources",
+  "speech": {
+    "profile": "irodori-no-reference-v1",
+    "source_revision": "89f9d8fbd4d51ea019867ee1197725ede1df13c5",
+    "reference_audio": false,
+    "candidates": 1
+  },
+  "readiness": {
+    "status": "not-attested"
+  }
+}

@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, type Session, type Discovery, type Execution, type ImageSettings, type ImageStyle, type ImagePreferences, type Workflow } from './api'
 import Gallery, { ResultPreview } from './Gallery'
 import { WorkflowPicker, ReferencePicker, workflowPayload, roleSpec, legalSeed } from './WorkflowImage'
 import Assistant from './Assistant'
 import Intelligence from './Intelligence'
+import Speech, { initialSpeechDraft, type SpeechDraft } from './Speech'
 
 const sections = ['Image', 'Assistant', 'Intelligence', 'Video', 'Music', 'Speech', 'Assets'] as const
 type ImageForm = ImageSettings & { sampler: string; scheduler: string; denoise: number; loras: NonNullable<ImageSettings['loras']> }
@@ -62,10 +63,27 @@ export default function App() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [form, setForm] = useState<ImageDraft>(() => initialImageDraft())
+  const [speechForm, setSpeechForm] = useState<SpeechDraft>(() => initialSpeechDraft())
+  const [speechExecution, setSpeechExecution] = useState<Execution | null>(null)
   const [preferencesReady, setPreferencesReady] = useState(false)
   const [preferencesError, setPreferencesError] = useState('')
+  const accountEpoch = useRef(0)
+  const signingOut = useRef(false)
+  const currentAccount = (version: number) => accountEpoch.current === version && !signingOut.current
+  useEffect(() => {
+    signingOut.current = false
+    accountEpoch.current += 1
+    return () => { accountEpoch.current += 1 }
+  }, [session?.authenticated, session?.accountKey ?? session?.userName])
   useEffect(() => { api.session().then(setSession).catch(() => setError('Studio is unavailable.')) }, [])
-  useEffect(() => { if (session?.authenticated) api.discovery().then(setDiscovery).catch(() => setDiscovery({ available: false, checkpoints: [], loras: [], templates: [] })) }, [session?.authenticated])
+  useEffect(() => {
+    if (!session?.authenticated) return
+    let active = true
+    const version = accountEpoch.current
+    api.discovery().then(value => { if (active && currentAccount(version)) setDiscovery(value) })
+      .catch(() => { if (active && currentAccount(version)) setDiscovery({ available: false, checkpoints: [], loras: [], templates: [] }) })
+    return () => { active = false }
+  }, [session?.authenticated, session?.accountKey ?? session?.userName])
   useEffect(() => { if (discovery?.checkpoints.length) setForm(old => old.checkpoint ? old : { ...old, checkpoint: discovery.checkpoints[0].name }) }, [discovery])
   useEffect(() => {
     if (!session?.authenticated) { setPreferencesReady(false); return }
@@ -96,43 +114,65 @@ export default function App() {
   }
   useEffect(() => {
     if (!session?.authenticated) return
+    let active = true
+    const version = accountEpoch.current
     const id = window.location.hash.match(/^#execution\/([0-9a-f-]{36})$/)?.[1]
-    if (id) api.result(id).then(setExecution).catch(() => { window.location.hash = ''; setError('Saved execution is unavailable.') })
-  }, [session?.authenticated])
+    if (id) api.result(id).then(value => {
+      if (!active || !currentAccount(version)) return
+      if (value.category === 'speech') { setSpeechExecution(value); setSection('Speech') }
+      else setExecution(value)
+    }).catch(() => {
+      if (active && currentAccount(version)) { window.location.hash = ''; setError('Saved execution is unavailable.') }
+    })
+    return () => { active = false }
+  }, [session?.authenticated, session?.accountKey ?? session?.userName])
   useEffect(() => {
     if (!execution || ['completed', 'failed', 'cancelled', 'busy', 'submission_unknown'].includes(execution.state)) return
+    let active = true, inflight = false
+    const version = accountEpoch.current
     const timer = window.setInterval(() => {
-      if (document.hidden) return
-      api.execution(execution.id).then(view => {
-        setExecution(view)
-        if (view.state === 'completed') api.result(view.id).then(setExecution).catch(() => setError('Result is temporarily unavailable.'))
-      }).catch(() => setError('Status is temporarily unavailable.'))
+      if (document.hidden || inflight || !currentAccount(version)) return
+      inflight = true
+      api.execution(execution.id).then(async value => {
+        if (!active || !currentAccount(version)) return
+        if (value.state === 'completed') {
+          try {
+            const result = await api.result(value.id)
+            if (active && currentAccount(version)) setExecution(result)
+          } catch {
+            if (active && currentAccount(version)) { setExecution(value); setError('Result is temporarily unavailable.') }
+          }
+        } else setExecution(value)
+      }).catch(() => { if (active && currentAccount(version)) setError('Status is temporarily unavailable.') })
+        .finally(() => { inflight = false })
     }, 2500)
-    return () => clearInterval(timer)
-  }, [execution?.id, execution?.state])
+    return () => { active = false; clearInterval(timer) }
+  }, [execution?.id, execution?.state, session?.authenticated, session?.accountKey ?? session?.userName])
   if (!session) return <div className="center"><h1>FLAMORIS Studio</h1><p>{error || 'Connecting…'}</p></div>
   if (!session.authenticated) return <Account allowRegistration={session.allowRegistration} onReady={setSession} />
   return <div className="layout"><aside><div className="brand">✦ <strong>FLAMORIS</strong><small>STUDIO</small></div><p className="eyebrow">WORKSPACE</p>
     <nav aria-label="Creative domains">{sections.map(name => <button key={name} aria-current={section === name ? 'page' : undefined} onClick={() => setSection(name)}>{name}</button>)}</nav>
-    <div className="account-footer"><span>{session.userName}</span><button onClick={() => setSection('Account')}>Account settings</button><button onClick={async () => { try { await api.logout(session.csrfToken); setForm(initialImageDraft()); setExecution(null); setResultSettings(null); setDiscovery(null); window.location.hash = ''; setSession(await api.session()) } catch { setError('Could not sign out.') } }}>Sign out</button></div></aside>
+    <div className="account-footer"><span>{session.userName}</span><button onClick={() => setSection('Account')}>Account settings</button><button onClick={async () => { signingOut.current = true; try { await api.logout(session.csrfToken); accountEpoch.current += 1; try { sessionStorage.removeItem(`flamoris.speech.pending:${session.accountKey ?? session.userName ?? ''}`) } catch {} setForm(initialImageDraft()); setSpeechForm(initialSpeechDraft()); setSpeechExecution(null); setExecution(null); setResultSettings(null); setDiscovery(null); setBusy(false); setError(''); window.location.hash = ''; setSession(await api.session()) } catch { signingOut.current = false; setError('Could not sign out.') } }}>Sign out</button></div></aside>
     <main><header><div><span className="eyebrow">CREATIVE CONTROL PLANE</span><h1>{section}</h1></div><span className="badge">PHASE 1A</span></header>
     <div hidden={section !== 'Intelligence'}><Intelligence key={session.userName} csrf={session.csrfToken} active={section === 'Intelligence'} /></div>
-    {section === 'Intelligence' ? null : section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Assets' ? <Gallery csrf={session.csrfToken} onUseSettings={useSettings} /> : section === 'Assistant' ? <Assistant key={session.userName} csrf={session.csrfToken} initiallyOpen /> : section === 'Image' ? <div className="image-workspace"><div><p>Turn a prompt into something you can keep.</p>
+    <div hidden={section !== 'Speech'}><Speech key={session.accountKey ?? session.userName} csrf={session.csrfToken} accountKey={session.accountKey ?? session.userName ?? ''} form={speechForm} setForm={setSpeechForm} execution={speechExecution} onExecution={setSpeechExecution} authorized={() => !signingOut.current} /></div>
+    {section === 'Intelligence' || section === 'Speech' ? null : section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Assets' ? <Gallery csrf={session.csrfToken} onUseSettings={useSettings} /> : section === 'Assistant' ? <Assistant key={session.userName} csrf={session.csrfToken} initiallyOpen /> : section === 'Image' ? <div className="image-workspace"><div><p>Turn a prompt into something you can keep.</p>
       {preferencesError && <p role="alert" className="error">{preferencesError}</p>}
       {discovery?.available ? <ImageEditor discovery={discovery} busy={busy} form={form} setForm={setForm} csrf={session.csrfToken} onSubmit={async form => {
+        const version = accountEpoch.current
         setBusy(true); setError(''); setExecution(null); setResultSettings(null)
-        try { const created = await api.submit(form, session.csrfToken); setExecution(created); window.location.hash = `execution/${created.id}` }
-        catch (e) { setError(e instanceof Error ? e.message : 'Generation failed.'); api.discovery().then(setDiscovery).catch(() => {}) }
-        finally { setBusy(false) }
-      }} /> : <section className="panel"><h2>Image generation unavailable</h2><p>The configured generation service has no available image capability.</p><button onClick={() => api.discovery().then(setDiscovery).catch(() => setError('Service unavailable.'))}>Check again</button></section>}
+        try { const created = await api.submit(form, session.csrfToken); if (currentAccount(version)) { setExecution(created); window.location.hash = `execution/${created.id}` } }
+        catch (e) { if (currentAccount(version)) { setError(e instanceof Error ? e.message : 'Generation failed.'); api.discovery().then(value => { if (currentAccount(version)) setDiscovery(value) }).catch(() => {}) } }
+        finally { if (currentAccount(version)) setBusy(false) }
+      }} /> : <section className="panel"><h2>Image generation unavailable</h2><p>The configured generation service has no available image capability.</p><button onClick={() => { const version = accountEpoch.current; api.discovery().then(value => { if (currentAccount(version)) setDiscovery(value) }).catch(() => { if (currentAccount(version)) setError('Service unavailable.') }) }}>Check again</button></section>}
       {error && <p role="alert" className="error">{error}</p>}
-      {execution && <section className="panel results"><div className="row"><div><span className="eyebrow">CURRENT EXECUTION</span><h2>Result</h2></div><span className="badge">{execution.state.replace('_', ' ')}</span></div>
-        {['queued', 'running', 'submitting', 'cancel_requested'].includes(execution.state) && <button onClick={async () => { try { setExecution(await api.cancel(execution.id, session.csrfToken)) } catch (e) { setError(e instanceof Error ? e.message : 'Cancellation failed.') } }}>Request cancellation</button>}
+      {execution && execution.category !== 'speech' && <section className="panel results"><div className="row"><div><span className="eyebrow">CURRENT EXECUTION</span><h2>Result</h2></div><span className="badge">{execution.state.replace('_', ' ')}</span></div>
+        {['queued', 'running', 'submitting', 'cancel_requested'].includes(execution.state) && <button onClick={async () => { const version = accountEpoch.current; try { const value = await api.cancel(execution.id, session.csrfToken); if (currentAccount(version)) setExecution(value) } catch (e) { if (currentAccount(version)) setError(e instanceof Error ? e.message : 'Cancellation failed.') } }}>Request cancellation</button>}
         {execution.state === 'submission_unknown' && <p>Submission could not be confirmed. No automatic retry was made.</p>}
         {execution.state === 'completed' && <div className="assets">{execution.assets.length ? execution.assets.map(asset => <article key={asset.id}>
           <div><ResultPreview item={asset} /></div>
           <div><strong>{asset.displayName}</strong><small>{asset.mimeType} · {asset.sizeBytes === null ? 'Size pending' : `${(asset.sizeBytes / 1024 / 1024).toFixed(1)} MB`}</small>
-            <a href={asset.downloadUrl}>Download ↓</a>{asset.origin !== 'external' && asset.mediaKind === 'image' && ['image/png','image/jpeg','image/webp'].includes(asset.mimeType) && <><button onClick={async () => { try { const detail = await api.asset(asset.id); if (!Object.keys(detail.settings).length) { setError('Saved Image settings are unavailable.'); return } setResultSettings(detail.settings) } catch { setError('Could not load settings.') } }}>View settings</button><button onClick={async () => { try { const detail = await api.asset(asset.id); useSettings(detail.settings) } catch { setError('Could not restore settings.') } }}>Use settings ↗</button></>}</div></article>) : <p>No files were returned.</p>}</div>}
+            <a href={asset.downloadUrl}>Download ↓</a>{asset.origin !== 'external' && asset.mediaKind === 'image' && ['image/png','image/jpeg','image/webp'].includes(asset.mimeType) && <><button onClick={async () => { const version = accountEpoch.current; try { const detail = await api.asset(asset.id); if (!currentAccount(version)) return; if (!Object.keys(detail.settings).length) { setError('Saved Image settings are unavailable.'); return } setResultSettings(detail.settings) } catch { if (currentAccount(version)) setError('Could not load settings.') } }}>View settings</button><button onClick={async () => { const version = accountEpoch.current; try { const detail = await api.asset(asset.id); if (currentAccount(version)) useSettings(detail.settings) } catch { if (currentAccount(version)) setError('Could not restore settings.') } }}>Use settings ↗</button></>}</div></article>) : <p>No files were returned.</p>}</div>}
         {resultSettings && <dl className="settings-list">{Object.entries(resultSettings).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{Array.isArray(value) ? value.map((lora, index) => `${index + 1}. ${lora.name} (model ${lora.strengthModel}, CLIP ${lora.strengthClip})`).join('\n') || 'None' : String(value)}</dd></div>)}</dl>}
       </section>}
     </div><Assistant key={session.userName} csrf={session.csrfToken} draft={form} /></div> : <section className="panel"><span className="eyebrow">COMING LATER</span><h2>{section} is unavailable</h2><p>This editor will connect when its MCP capability is ready.</p></section>}</main></div>

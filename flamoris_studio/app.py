@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 
 from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select, text
@@ -27,11 +27,12 @@ from .workflow_contract import ROLES, map_parameters
 from .input_thumbnails import InputThumbnails
 from .transfer import CHUNK_BYTES, MAX_TRANSFER_BYTES, PreviewAdmission, chunk, metadata, read_with_retry
 from .result_contract import normalize_outputs, output_role, preview_kind
-from .range_transfer import representation_response
+from .range_transfer import OwnedStreamingResponse, representation_response
 from .assistant import mount_assistant
 from .intelligence import mount_intelligence
 from .login_throttle import admit_login
 from .external_import import catalog_guard, mount_external_import
+from .speech import mount_speech
 
 # 512 KiB of raw image data stays below a 1 MiB SSE event even after base64
 # encoding and the MCP JSON envelope. Unknown sizes take the bounded route.
@@ -231,6 +232,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     mount_assistant(app)
     mount_intelligence(app)
     mount_external_import(app, view)
+    mount_speech(app, view, set_status)
 
     @app.exception_handler(GatewayError)
     async def gateway_error(_, exc: GatewayError):
@@ -252,7 +254,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             except HTTPException:
                 return JSONResponse({"error": "Invalid request token."}, status_code=403)
         response = await call_next(request)
-        if request.url.path.startswith(("/api/assistant/", "/api/intelligence/")):
+        if request.url.path.startswith(("/api/assistant/", "/api/intelligence/", "/api/generation/speech/", "/api/generation/external-import")):
             response.headers["Cache-Control"] = "private, no-store"
             response.headers["X-Content-Type-Options"] = "nosniff"
         return response
@@ -268,6 +270,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         csrf = new_csrf(response, request.cookies.get(CSRF_COOKIE))
         response.headers["Cache-Control"] = "no-store"
         return {"authenticated": user is not None, "userName": user.email if user else None,
+                "accountKey": digest(f"speech-owner:{user.id}") if user else None,
                 "csrfToken": csrf, "allowRegistration": os.getenv("STUDIO_ALLOW_REGISTRATION") == "1"}
 
     @app.post("/api/auth/register")
@@ -734,6 +737,10 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 return {**cached, "catalogSync": "unavailable"}
             raise
         outputs = normalize_outputs(listing)
+        if execution.category == "speech" and (
+                len(outputs) != 1 or outputs[0].media_kind != "audio" or outputs[0].mime_type != "audio/wav" or
+                outputs[0].role != {"port": "audio", "role": "audio", "index": 0}):
+            raise GatewayError("validation")
         catalog_guard(db)
         # Lock the parent row to serialize concurrent catalog updates across processes.
         db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution.id})
@@ -919,6 +926,14 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 await asyncio.wait_for(slots.acquire(), timeout=0.01)
             except TimeoutError:
                 raise HTTPException(429, "Too many active downloads") from None
+            released = False
+
+            def release():
+                nonlocal released
+                if not released:
+                    released = True
+                    slots.release()
+
             try:
                 owned_asset(db, execution_id, asset_id, user_id)
                 prepared = await prepare_owned_asset(asset, db, request, user_id)
@@ -935,7 +950,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                     return await read_with_retry(attempt)
                 first = await read_at(0)
             except BaseException:
-                slots.release()
+                release()
                 raise
 
             async def stream():
@@ -953,8 +968,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                             break
                         data = await read_at(offset)
                 finally:
-                    slots.release()
-            return StreamingResponse(stream(), media_type=asset.mime_type, headers={
+                    release()
+            return OwnedStreamingResponse(stream(), release=release, media_type=asset.mime_type, headers={
                 "Content-Length": str(size), "Cache-Control": "private, no-store",
                 "X-Content-Type-Options": "nosniff",
                 "Content-Security-Policy": "default-src 'none'; sandbox",
