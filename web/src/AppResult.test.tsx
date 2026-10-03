@@ -28,6 +28,34 @@ afterEach(async () => {
   vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); sessionStorage.clear()
 })
 
+test('offline image service still allows reference upload and recheck preserves the attached draft', async () => {
+  window.location.hash = ''
+  vi.spyOn(api, 'styles').mockResolvedValue({ items: [] })
+  vi.spyOn(api, 'uploadInput').mockResolvedValue({ id: 'uploaded', available: true, thumbnailUrl: '/private-upload-thumb' })
+  vi.spyOn(api, 'input').mockResolvedValue({ id: 'uploaded', available: true, thumbnailUrl: '/private-upload-thumb' })
+  vi.spyOn(api, 'submit').mockResolvedValue({ id: 'unused', state: 'queued', assets: [], submittedAt: '' })
+  await act(async () => root.render(<App />))
+  const fileInput = host.querySelector<HTMLInputElement>('input[aria-label="Reference image file"]')!
+  expect(fileInput).not.toBeNull()
+  const prompt = [...host.querySelectorAll('textarea')].find(input => input.closest('label')?.textContent?.startsWith('Positive prompt'))!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(prompt, 'keep my reference draft')
+    prompt.dispatchEvent(new Event('input', { bubbles: true }))
+    Object.defineProperty(fileInput, 'files', { value: [new File(['fixture'], 'character.png', { type: 'image/png' })] })
+    fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  const generate = () => [...host.querySelectorAll('button')].find(button => button.textContent?.startsWith('Generate image'))!
+  expect(generate().disabled).toBe(true)
+  expect(api.uploadInput).toHaveBeenCalledOnce()
+  vi.mocked(api.discovery).mockResolvedValue({ available: true, templates: ['text-to-image'], checkpoints: [{ id: 'm', name: 'test' }], loras: [] })
+  await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Check again')!.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+  expect(prompt.value).toBe('keep my reference draft')
+  expect(host.querySelector('img[src="/private-upload-thumb"]')).not.toBeNull()
+  expect(host.textContent).toContain('or remove the reference')
+  expect(generate().disabled).toBe(true)
+  expect(api.submit).not.toHaveBeenCalled()
+})
+
 test.each(['external', 'studio'] as const)('owned %s execution hash preserves correct settings actions', async origin => {
   vi.spyOn(api, 'result').mockResolvedValue({ id: asset.executionId, state: 'completed',
     submittedAt: '', assets: [{ ...asset, origin }] })

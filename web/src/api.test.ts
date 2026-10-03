@@ -70,3 +70,35 @@ test('completed inference clears its browser deadline', async () => {
   expect(await api.intelligenceExecute(inference, 'csrf')).toEqual(answer)
   expect(vi.getTimerCount()).toBe(0)
 })
+
+test('reference upload sends the original bounded file with CSRF and no filename or base64 wrapper', async () => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify({ id: 'private-handle', available: true }) })
+  vi.stubGlobal('fetch', fetch)
+  const file = new File(['fixture'], 'private-name.png', { type: 'image/png' })
+  await api.uploadInput(file, 'upload-csrf')
+  expect(fetch).toHaveBeenCalledWith('/api/generation/inputs/upload', expect.objectContaining({
+    method: 'POST', credentials: 'same-origin', body: file,
+    headers: { 'Content-Type': 'image/png', 'X-CSRF-TOKEN': 'upload-csrf' }, signal: expect.any(AbortSignal),
+  }))
+  expect(fetch).toHaveBeenCalledTimes(1)
+})
+
+test('invalid local references do not send an upload request', async () => {
+  const fetch = vi.fn(); vi.stubGlobal('fetch', fetch)
+  await expect(api.uploadInput(new File([], 'x.png', { type: 'image/png' }), 'csrf')).rejects.toThrow('8 MiB')
+  await expect(api.uploadInput(new File(['x'], 'x.svg', { type: 'image/svg+xml' }), 'csrf')).rejects.toThrow('PNG')
+  expect(fetch).not.toHaveBeenCalled()
+})
+
+test('upload deadline bounds a stalled response body and never replays the file', async () => {
+  vi.useFakeTimers()
+  const fetch = vi.fn().mockImplementation(async (_url: string, options: RequestInit) => ({ ok: true,
+    text: () => new Promise((_resolve, reject) => options.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))),
+  }))
+  vi.stubGlobal('fetch', fetch)
+  const result = api.uploadInput(new File(['x'], 'x.png', { type: 'image/png' }), 'csrf').catch(error => error)
+  await vi.advanceTimersByTimeAsync(100000)
+  expect(await result).toBeInstanceOf(Error)
+  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(vi.getTimerCount()).toBe(0)
+})
