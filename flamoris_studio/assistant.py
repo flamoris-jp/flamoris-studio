@@ -9,7 +9,15 @@ import uuid
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    field_validator,
+)
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -84,7 +92,8 @@ def configured_actor(user_id):
                     or len(v) > 64
                     or not re.fullmatch(
                         r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*"
-                        if k == "project" else r"[A-Za-z0-9_-]{1,64}",
+                        if k == "project"
+                        else r"[A-Za-z0-9_-]{1,64}",
                         v,
                     )
                     for k, v in keys.items()
@@ -119,16 +128,28 @@ def reauthorize(request, db, user, actor):
         raise HTTPException(409, "Assistant binding changed; refresh before sending")
 
 
-async def session_for(request, db, user, actor, gateway):
+async def session_for(request, db, user, actor, gateway, *, selection=None):
     cached = db.get(AssistantSession, user)
     if (
-        cached
+        selection is None
+        and cached
         and cached.binding_digest == actor[3]
         and cached.expires_at > now() + timedelta(seconds=20)
     ):
         return cached
+    if selection is None and os.getenv("STUDIO_AGENT_SETTINGS_ENABLED") == "1":
+        raise HTTPException(409, "Select a model and start a conversation first")
     db.rollback()
-    upstream, expiry = await gateway.open(actor[0])
+    keys = (
+        actor[0]
+        if selection is None
+        else {
+            **actor[0],
+            "model_id": selection.modelId,
+            "remote_consent": selection.remoteConsent,
+        }
+    )
+    upstream, expiry = await gateway.open(keys)
     reauthorize(request, db, user, actor)
     if not now() + timedelta(seconds=20) < expiry <= now() + timedelta(hours=1):
         raise AgentError()
@@ -139,7 +160,8 @@ async def session_for(request, db, user, actor, gateway):
         .with_for_update()
     )
     if (
-        cached
+        selection is None
+        and cached
         and cached.binding_digest == actor[3]
         and cached.expires_at > now() + timedelta(seconds=20)
     ):
@@ -149,6 +171,8 @@ async def session_for(request, db, user, actor, gateway):
         db.add(cached)
     cached.id, cached.upstream_session_id = uuid.uuid4(), uuid.UUID(upstream)
     cached.binding_digest, cached.expires_at = actor[3], expiry
+    cached.model_id = selection.modelId if selection else None
+    cached.remote_consent = selection.remoteConsent if selection else False
     try:
         db.commit()
     except IntegrityError:
@@ -176,6 +200,45 @@ async def bounded_body(request, limit):
     return bytes(body)
 
 
+class ModelSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    modelId: StrictStr = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+    remoteConsent: StrictBool = False
+
+
+class PersonalitySection(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    title: StrictStr = Field(min_length=1, max_length=80)
+    content: StrictStr = Field(min_length=1, max_length=32768)
+
+
+class PersonalityUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sessionKey: uuid.UUID
+    requestId: uuid.UUID
+    expectedRevision: StrictInt = Field(ge=1, le=256)
+    displayName: StrictStr = Field(min_length=1, max_length=128)
+    sections: list[PersonalitySection] = Field(min_length=1, max_length=16)
+
+
+def settings_enabled():
+    if os.getenv("STUDIO_AGENT_SETTINGS_ENABLED") != "1":
+        raise HTTPException(503, "Assistant settings are unavailable")
+
+
+def owned_binding(db, user, actor, session_key=None):
+    binding = db.get(AssistantSession, user)
+    if (
+        binding is None
+        or binding.binding_digest != actor[3]
+        or binding.expires_at <= now()
+        or session_key is not None
+        and binding.id != session_key
+    ):
+        raise HTTPException(409, "Assistant session changed; reload before editing")
+    return binding
+
+
 def mount_assistant(app):
     router = APIRouter(prefix="/api/assistant")
     app.state.agent_gateway_factory = lambda endpoint, token: AgentGateway(
@@ -183,6 +246,193 @@ def mount_assistant(app):
     )
     app.state.assistant_probe_slots = asyncio.Semaphore(2)
     app.state.assistant_ask_slots = asyncio.Semaphore(1)
+    app.state.assistant_settings_slots = asyncio.Semaphore(2)
+
+    async def settings_slot():
+        slots = app.state.assistant_settings_slots
+        try:
+            await asyncio.wait_for(slots.acquire(), 0.01)
+        except TimeoutError:
+            raise HTTPException(429, "Assistant settings are busy") from None
+        try:
+            yield
+        finally:
+            slots.release()
+
+    @router.post("/models", dependencies=[Depends(settings_slot)])
+    async def models(
+        request: Request,
+        response: Response,
+        db: Session = Depends(database),
+        user: uuid.UUID = Depends(authenticated_user),
+    ):
+        settings_enabled()
+        response.headers["Cache-Control"] = "private, no-store"
+        raw = await bounded_body(request, 1024)
+        if raw and raw != b"{}":
+            raise HTTPException(422, "Model discovery takes no identity arguments")
+        actor = configured_actor(user)
+        try:
+            result = await app.state.agent_gateway_factory(actor[1], actor[2]).models(
+                actor[0]
+            )
+            reauthorize(request, db, user, actor)
+            return result
+        except AgentError:
+            raise HTTPException(503, "Model catalog unavailable") from None
+
+    @router.post("/start", dependencies=[Depends(settings_slot)])
+    async def start(
+        request: Request,
+        response: Response,
+        db: Session = Depends(database),
+        user: uuid.UUID = Depends(authenticated_user),
+    ):
+        settings_enabled()
+        response.headers["Cache-Control"] = "private, no-store"
+        try:
+            selection = ModelSelection.model_validate_json(
+                await bounded_body(request, 1024)
+            )
+        except ValueError:
+            raise HTTPException(422, "Invalid model selection") from None
+        actor = configured_actor(user)
+        gateway = app.state.agent_gateway_factory(actor[1], actor[2])
+        try:
+            catalog = await gateway.models(actor[0])
+            reauthorize(request, db, user, actor)
+            chosen = next(
+                (m for m in catalog["models"] if m["id"] == selection.modelId), None
+            )
+            if not chosen:
+                raise HTTPException(403, "Model is not permitted")
+            if (
+                chosen["data_flow"] == "remote_authorized"
+                and not selection.remoteConsent
+            ):
+                raise HTTPException(422, "Confirm remote context transmission")
+            binding = await session_for(
+                request, db, user, actor, gateway, selection=selection
+            )
+            return {
+                "sessionKey": str(binding.id),
+                "modelId": selection.modelId,
+                "remoteConsent": selection.remoteConsent,
+            }
+        except AgentError:
+            raise HTTPException(
+                503, "Could not start selected conversation; no retry was made"
+            ) from None
+
+    async def personality_read(operation, request, response, db, user):
+        settings_enabled()
+        response.headers["Cache-Control"] = "private, no-store"
+        actor = configured_actor(user)
+        body = await bounded_body(request, 1024)
+        try:
+            raw = json.loads(body or b"{}")
+            if type(raw) is not dict or set(raw) - {"beforeRevision"}:
+                raise ValueError()
+            before = raw.get("beforeRevision")
+            if before is not None and (
+                type(before) is not int or not 1 <= before <= 257
+            ):
+                raise ValueError()
+        except ValueError:
+            raise HTTPException(422, "Invalid personality history request") from None
+        binding = owned_binding(db, user, actor)
+        session_key, upstream = binding.id, str(binding.upstream_session_id)
+        db.rollback()
+        payload = {"session_id": upstream}
+        if before is not None:
+            payload["before_revision"] = before
+        try:
+            result = await app.state.agent_gateway_factory(
+                actor[1], actor[2]
+            ).personality(operation, payload)
+            reauthorize(request, db, user, actor)
+            owned_binding(db, user, actor, session_key)
+            return {**result, "sessionKey": str(session_key)}
+        except AgentError as exc:
+            raise HTTPException(
+                403 if exc.code == "personality_forbidden" else 503,
+                "Personality unavailable",
+            ) from None
+
+    @router.post("/personality", dependencies=[Depends(settings_slot)])
+    async def personality_get(
+        request: Request,
+        response: Response,
+        db: Session = Depends(database),
+        user: uuid.UUID = Depends(authenticated_user),
+    ):
+        return await personality_read("get", request, response, db, user)
+
+    @router.post("/personality/history", dependencies=[Depends(settings_slot)])
+    async def personality_history(
+        request: Request,
+        response: Response,
+        db: Session = Depends(database),
+        user: uuid.UUID = Depends(authenticated_user),
+    ):
+        return await personality_read("history", request, response, db, user)
+
+    @router.post("/personality/save", dependencies=[Depends(settings_slot)])
+    async def personality_save(
+        request: Request,
+        response: Response,
+        db: Session = Depends(database),
+        user: uuid.UUID = Depends(authenticated_user),
+    ):
+        settings_enabled()
+        response.headers["Cache-Control"] = "private, no-store"
+        try:
+            update = PersonalityUpdate.model_validate_json(
+                await bounded_body(request, 64 * 1024)
+            )
+        except ValueError:
+            raise HTTPException(422, "Invalid personality update") from None
+        if sum(len(s.content.encode()) for s in update.sections) > 32768:
+            raise HTTPException(422, "Personality exceeds context size limit")
+        actor = configured_actor(user)
+        binding = owned_binding(db, user, actor, update.sessionKey)
+        session_key, upstream = binding.id, str(binding.upstream_session_id)
+        db.rollback()
+
+        async def before_dispatch():
+            if await request.is_disconnected():
+                raise AgentError("uncertain")
+            reauthorize(request, db, user, actor)
+            owned_binding(db, user, actor, session_key)
+            db.rollback()
+
+        payload = {
+            "session_id": upstream,
+            "request_id": str(update.requestId),
+            "expected_revision": update.expectedRevision,
+            "display_name": update.displayName,
+            "sections": [s.model_dump() for s in update.sections],
+        }
+        try:
+            result = await app.state.agent_gateway_factory(
+                actor[1], actor[2]
+            ).personality("save", payload, before_dispatch=before_dispatch)
+            reauthorize(request, db, user, actor)
+            owned_binding(db, user, actor, session_key)
+            return result
+        except AgentError as exc:
+            if exc.code == "revision_conflict":
+                raise HTTPException(
+                    409, "Personality changed. Your unsaved draft was not overwritten."
+                ) from None
+            if exc.code == "personality_forbidden":
+                raise HTTPException(
+                    403, "Personality editing is not permitted"
+                ) from None
+            raise HTTPException(
+                503,
+                "Save outcome unconfirmed. Keep the same update identity when checking or retrying.",
+            ) from None
 
     @router.post("/availability")
     async def availability(
@@ -228,6 +478,8 @@ def mount_assistant(app):
                     **state,
                     "sessionKey": str(session_key),
                     "sessionExpiresAt": expiry.isoformat(),
+                    "modelId": current.model_id,
+                    "remoteConsent": current.remote_consent,
                 }
         except (AgentError, TimeoutError):
             return {"available": False, "state": "unavailable"}

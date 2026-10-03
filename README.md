@@ -16,6 +16,8 @@ Phase 1 uses a Python FastAPI backend with PostgreSQL-backed local accounts and 
 
 **Current main contains the authenticated multi-user shell, Image generation, opt-in native Speech and Music slices, and the per-user Generated results catalog with metadata/details, download, and confirmed deletion.** Runtime/model qualification and additional provider contracts remain separate acceptance gates.
 
+See [assistant settings and model integration](docs/ASSISTANT_SETTINGS.md) for the opt-in extension and migration gates.
+
 ## Proposed integration design
 
 [Multimodal Studio and contextual Agent](docs/MULTIMODAL_STUDIO.md) records the proposed media/Workflow/Agent integration coordinated by [FLAMORIS AI #15](https://github.com/flamoris-jp/flamoris-ai/issues/15). It is a design proposal, not a claim that new providers, composed execution or shared-user Agent assistance are implemented. Existing public contracts and readiness gates remain authoritative.

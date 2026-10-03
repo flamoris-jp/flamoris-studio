@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, AssistantFailure, HTTPFailure, type AssistantAvailability, type AssistantAnswer } from './api'
 import type { ImageDraft } from './App'
+import type { AgentModel } from './api'
+import PersonalityEditor from './Personality'
 
 export function attachedImageDraft(form: ImageDraft) {
   const draft: Record<string, string | number> = { positive_prompt: form.positivePrompt, negative_prompt: form.negativePrompt }
@@ -20,6 +22,11 @@ export function attachedImageDraft(form: ImageDraft) {
 }
 
 export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf: string; draft?: ImageDraft; initiallyOpen?: boolean }) {
+  const [models, setModels] = useState<AgentModel[]>([])
+  const [modelId, setModelId] = useState('')
+  const [remoteConsent, setRemoteConsent] = useState(false)
+  const [modelLocked, setModelLocked] = useState(false)
+  const [selecting, setSelecting] = useState(false)
   const [open, setOpen] = useState(initiallyOpen)
   const [state, setState] = useState<AssistantAvailability>({ available: false, state: 'unknown' })
   const [question, setQuestion] = useState('')
@@ -68,6 +75,14 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
     document.addEventListener('visibilitychange', visibility)
     return () => { active = false; clearInterval(poll); document.removeEventListener('visibilitychange', visibility) }
   }, [open, sending, refresh, csrf])
+  useEffect(() => {
+    if (!open) return
+    let active = true
+    api.assistantModels(csrf).then(result => { if (active) { setModels(result.models); setModelId(old => old || result.defaultModelId || '') } }).catch(() => { if (active) setModels([]) })
+    return () => { active = false }
+  }, [open, csrf])
+  const selectionMatches = !models.length || state.modelId === modelId && (!remoteConsent || state.remoteConsent === true)
+  const remote = models.find(m => m.id === modelId)?.data_flow === 'remote_authorized'
   const capturedDraft = draft ? attachedImageDraft(draft) : null
   const ready = state.available && state.state === 'ready' && !!state.sessionKey &&
     !!state.expiresAt && Date.parse(state.expiresAt) > clock
@@ -76,6 +91,18 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
     <div className="row"><h2>Agent assistant</h2><button aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? 'Collapse' : 'Ask Agent'}</button></div>
     {open && <><p role="status">{ready ? 'Ready' : state.state === 'ready' ? 'Checking availability' : state.state}</p>
       <button disabled={sending} onClick={() => setRefresh(value => value + 1)}>Check availability</button>
+      {models.length > 0 && <section aria-label="Assistant model selection">
+        <label>Conversation model<select value={modelId} disabled={sending || selecting || modelLocked || uncertain} onChange={e => { setModelId(e.target.value); setRemoteConsent(false) }}><option value="">Select a model</option>{models.map(m => <option key={m.id} value={m.id}>{m.display_name} · {m.data_flow === 'local_only' ? 'Internal LLM' : 'OpenAI API'}</option>)}</select></label>
+        {remote && <label><input type="checkbox" checked={remoteConsent} disabled={sending || selecting || modelLocked || uncertain} onChange={e => setRemoteConsent(e.target.checked)} />Allow this conversation's personality, previous turns, question and explicitly attached draft to be sent to OpenAI</label>}
+        {modelLocked && <p>Model is fixed for this conversation. Start a new conversation before changing it.</p>}
+        <button disabled={!modelId || remote && !remoteConsent || sending || selecting || modelLocked || uncertain} onClick={async () => {
+          setSelecting(true); setNotice('')
+          try { const result = await api.assistantStart(modelId, remoteConsent, csrf); if (!alive.current) return; previous.current = undefined; setAnswer(null); session.current = result.sessionKey; setState({ available: false, state: 'unknown', sessionKey: result.sessionKey, modelId: result.modelId, remoteConsent }); setNotice('Selected model started. Your unsent question is preserved.'); setRefresh(v => v + 1) }
+          catch (error) { if (alive.current) setNotice(error instanceof Error ? error.message : 'Model selection could not be confirmed.') }
+          finally { if (alive.current) setSelecting(false) }
+        }}>Start selected model</button>
+      </section>}
+      {state.modelId && <p>Active conversation model: {models.find(m => m.id === state.modelId)?.display_name ?? state.modelId}</p>}
       <p>Text advice. Sending does not change your draft or generate media.</p>
       {draft && <><label className="assistant-attach"><input type="checkbox" checked={attach} disabled={sending || uncertain} onChange={event => setAttach(event.target.checked)} />Attach current Image draft</label>
         {attach && <p>Includes prompts, size, steps, guidance, denoise and an explicit seed. The attached snapshot becomes Agent conversation content.</p>}
@@ -83,13 +110,13 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
       <label>Question<textarea value={question} maxLength={16384} disabled={sending || uncertain} onChange={event => setQuestion(event.target.value)} /></label>
       {notice && <p role="alert">{notice}</p>}
       {uncertain && <p role="alert">The outcome is unconfirmed. No automatic retry was made. Start a new conversation explicitly to send a new question.</p>}
-      <button className="primary" disabled={!ready || !validQuestion || sending || uncertain || attach && !capturedDraft}
+      <button className="primary" disabled={!ready || !selectionMatches || !validQuestion || sending || selecting || uncertain || attach && !capturedDraft}
         onClick={async () => {
           if (!state.sessionKey || !ready || sending || uncertain) return
           const payload = JSON.parse(JSON.stringify({ requestId: crypto.randomUUID(), sessionKey: state.sessionKey,
             text: question, previousHandle: previous.current,
             ...(attach && capturedDraft ? { draft: capturedDraft, draftRevision: revision } : {}) }))
-          setSending(true); setNotice('')
+          setModelLocked(true); setSending(true); setNotice('')
           try {
             const result = await api.assistantAsk(payload, csrf)
             if (!alive.current) return
@@ -101,7 +128,8 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
             setUncertain(!(error instanceof AssistantFailure) || error.uncertain)
           } finally { if (alive.current) setSending(false) }
         }}>{sending ? 'Waiting for advice…' : 'Send question'}</button>
-      <button disabled={sending} onClick={() => { previous.current = undefined; setAnswer(null); setQuestion(''); setNotice(''); setUncertain(false); setAttach(false); setRefresh(value => value + 1) }}>Start new conversation</button>
+      <button disabled={sending || selecting} onClick={() => { previous.current = undefined; setAnswer(null); setQuestion(''); setNotice(''); setUncertain(false); setModelLocked(false); setAttach(false); setRefresh(value => value + 1) }}>Start new conversation</button>
+      {models.length > 0 && <PersonalityEditor csrf={csrf} sessionKey={session.current} />}
       {answer && <div className="assistant-answer"><p>{answer.text}</p><small>{answer.provenance.model} · {answer.provenance.provider}</small></div>}
     </>}
   </section>

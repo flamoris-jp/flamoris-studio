@@ -36,7 +36,9 @@ export class HTTPFailure extends Error {
   status: number
   constructor(message: string, status: number) { super(message); this.status = status }
 }
-export type AssistantAvailability = { available: boolean; state: 'ready' | 'offline' | 'busy' | 'unknown' | 'unavailable'; sessionKey?: string; expiresAt?: string; sessionExpiresAt?: string }
+export type AgentModel = { id: string; display_name: string; data_flow: "local_only" | "remote_authorized" }
+export type Personality = { revision: number; display_name: string; sections: { title: string; content: string }[]; can_edit: boolean; scope: "shared_agent"; updated_at: string; sessionKey: string }
+export type AssistantAvailability = { available: boolean; state: 'ready' | 'offline' | 'busy' | 'unknown' | 'unavailable'; sessionKey?: string; expiresAt?: string; sessionExpiresAt?: string; modelId?: string; remoteConsent?: boolean }
 export type AssistantAnswer = { requestHandle: string; sessionKey: string; text: string; provenance: { model: string; provider: string; execution_id?: string } }
 export class AssistantFailure extends Error {
   uncertain: boolean
@@ -91,6 +93,11 @@ async function assistantAsk(payload: unknown, csrf: string): Promise<AssistantAn
 export const api = {
   intelligenceDiscovery: () => request<IntelligenceDiscovery>('/api/intelligence/discovery'),
   intelligenceExecute,
+  assistantModels: (csrf: string) => post<{ models: AgentModel[]; defaultModelId?: string }>('/api/assistant/models', {}, csrf),
+  assistantStart: (modelId: string, remoteConsent: boolean, csrf: string) => post<{ sessionKey: string; modelId: string }>('/api/assistant/start', { modelId, remoteConsent }, csrf),
+  personality: (csrf: string) => post<Personality>('/api/assistant/personality', {}, csrf),
+  personalityHistory: (csrf: string, beforeRevision?: number) => post<{ versions: Personality[]; beforeRevision: number | null }>('/api/assistant/personality/history', { ...(beforeRevision ? { beforeRevision } : {}) }, csrf),
+  personalitySave: (payload: unknown, csrf: string) => post<{ revision: number; duplicate: boolean }>('/api/assistant/personality/save', payload, csrf),
   assistantAvailability: (csrf: string) => post<AssistantAvailability>('/api/assistant/availability', {}, csrf),
   assistantAsk,
   session: () => request<Session>('/api/session'),
