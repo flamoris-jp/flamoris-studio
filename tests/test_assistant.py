@@ -288,7 +288,12 @@ def fixture_tool_result(data):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fixed", [False, True])
-async def test_real_mcp_negotiation_catalog_and_bearer_are_private(fixed):
+@pytest.mark.parametrize("settings", [False, True])
+async def test_real_mcp_negotiation_catalog_and_bearer_are_private(
+    fixed, settings, monkeypatch
+):
+    if settings:
+        monkeypatch.setenv("STUDIO_AGENT_SETTINGS_ENABLED", "1")
     schemas = {
         "sessions.open": {"human": {}, "agent": {}, "project": {}},
         "ask_availability": {"session_id": {}},
@@ -303,6 +308,25 @@ async def test_real_mcp_negotiation_catalog_and_bearer_are_private(fixed):
             )
         },
     }
+    if settings:
+        schemas["sessions.open"].update({"model_id": {}, "remote_consent": {}})
+        schemas.update(
+            {
+                "models.allowed": {"human": {}, "agent": {}, "project": {}},
+                "personality.get": {"session_id": {}, "before_revision": {}},
+                "personality.history": {"session_id": {}, "before_revision": {}},
+                "personality.save": {
+                    k: {}
+                    for k in (
+                        "session_id",
+                        "request_id",
+                        "expected_revision",
+                        "display_name",
+                        "sections",
+                    )
+                },
+            }
+        )
     server = MCPServer("fixture")
     sid, conversation = str(uuid.uuid4()), str(uuid.uuid4())
     calls = []
@@ -340,6 +364,32 @@ async def test_real_mcp_negotiation_catalog_and_bearer_are_private(fixed):
                     "observed_at": observed.isoformat(),
                     "expires_at": (observed + timedelta(seconds=5)).isoformat(),
                 }
+            elif name == "models.allowed":
+                data = {
+                    "ok": True,
+                    "models": [
+                        {
+                            "id": "approved",
+                            "display_name": "Internal",
+                            "data_flow": "local_only",
+                        }
+                    ],
+                    "default_model_id": "approved",
+                }
+            elif name == "personality.save":
+                data = {"ok": True, "revision": 2, "duplicate": False}
+            elif name.startswith("personality."):
+                data = {
+                    "ok": True,
+                    "revision": 1,
+                    "display_name": "Helper",
+                    "sections": [{"title": "Identity", "content": "synthetic"}],
+                    "can_edit": True,
+                    "scope": "shared_agent",
+                    "updated_at": now().isoformat(),
+                }
+                if name == "personality.history":
+                    data = {"ok": True, "versions": [data], "before_revision": None}
             else:
                 data = {
                     "ok": True,
@@ -390,12 +440,33 @@ async def test_real_mcp_negotiation_catalog_and_bearer_are_private(fixed):
         request = {"session_id": sid, "request_id": str(uuid.uuid4()), "text": "help"}
         result = await gateway.ask(request)
         assert result["conversation_id"] == conversation
+        if settings:
+            assert (
+                await gateway.models(
+                    {"human": "first", "agent": "helper", "project": "project"}
+                )
+            )["models"][0]["id"] == "approved"
+            assert (await gateway.personality("get", {"session_id": sid}))[
+                "revision"
+            ] == 1
+            assert (
+                await gateway.personality(
+                    "save",
+                    {
+                        "session_id": sid,
+                        "request_id": str(uuid.uuid4()),
+                        "expected_revision": 1,
+                        "display_name": "Helper",
+                        "sections": [{"title": "Identity", "content": "new"}],
+                    },
+                )
+            )["revision"] == 2
     assert all(h.get(b"authorization") == b"Bearer " + b"x" * 40 for h in headers)
     assert [name for name, _ in calls] == [
         "sessions.open",
         "ask_availability",
         "ask_scoped",
-    ]
+    ] + (["models.allowed", "personality.get", "personality.save"] if settings else [])
 
 
 @pytest.mark.asyncio

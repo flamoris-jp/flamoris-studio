@@ -4,7 +4,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, BigInteger, String, Text, UniqueConstraint, create_engine
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, BigInteger, String, Text, UniqueConstraint, create_engine
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
@@ -43,6 +43,8 @@ class LoginThrottle(Base):
 
 class AssistantSession(Base):
     __tablename__ = "assistant_sessions"
+    model_id: Mapped[str | None] = mapped_column(String(128))
+    remote_consent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), primary_key=True)
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True, nullable=False)
     upstream_session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -14,6 +15,12 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 CATALOG = {"health", "sessions.open", "ask_scoped", "ask_availability"}
+SETTINGS_TOOLS = {
+    "models.allowed",
+    "personality.get",
+    "personality.history",
+    "personality.save",
+}
 PRIVATE = ContextVar("studio_agent_transport", default=False)
 
 
@@ -124,10 +131,13 @@ class AgentGateway:
         ):
             raise AgentError()
         self.endpoint, self.token = endpoint, token
+        self.settings_enabled = os.getenv("STUDIO_AGENT_SETTINGS_ENABLED") == "1"
         self.transport_factory = transport_factory or AgentTransport
 
     async def call(self, name, request, timeout=20, *, before_dispatch=None):
-        if len(json.dumps(request, ensure_ascii=False).encode()) > 36 * 1024:
+        if len(json.dumps(request, ensure_ascii=False).encode()) > (
+            72 * 1024 if name == "personality.save" else 36 * 1024
+        ):
             raise AgentError("invalid_input")
         marker = PRIVATE.set(True)
         try:
@@ -150,8 +160,14 @@ class AgentGateway:
                             tools = await session.list_tools()
                             if (
                                 tools.next_cursor is not None
-                                or {x.name for x in tools.tools} != CATALOG
-                                or len(tools.tools) != 4
+                                or {x.name for x in tools.tools}
+                                != (
+                                    CATALOG | SETTINGS_TOOLS
+                                    if self.settings_enabled
+                                    else CATALOG
+                                )
+                                or len(tools.tools)
+                                != (8 if self.settings_enabled else 4)
                             ):
                                 raise AgentError()
                             expected = {
@@ -165,6 +181,31 @@ class AgentGateway:
                                     "context",
                                 },
                             }
+                            if self.settings_enabled:
+                                expected["sessions.open"] |= {
+                                    "model_id",
+                                    "remote_consent",
+                                }
+                                expected.update(
+                                    {
+                                        "models.allowed": {"human", "agent", "project"},
+                                        "personality.get": {
+                                            "session_id",
+                                            "before_revision",
+                                        },
+                                        "personality.history": {
+                                            "session_id",
+                                            "before_revision",
+                                        },
+                                        "personality.save": {
+                                            "session_id",
+                                            "request_id",
+                                            "expected_revision",
+                                            "display_name",
+                                            "sections",
+                                        },
+                                    }
+                                )
                             for tool in tools.tools:
                                 if tool.name == "health":
                                     continue
@@ -214,6 +255,14 @@ class AgentGateway:
                                         "input_too_large",
                                         "conversation_unavailable",
                                         "duplicate_request",
+                                        "revision_conflict",
+                                        "personality_forbidden",
+                                        "personality_unavailable",
+                                        "personality_capacity",
+                                        "update_identity_mismatch",
+                                        "model_forbidden",
+                                        "model_selection_changed",
+                                        "remote_consent_required",
                                     }
                                     else "uncertain"
                                 )
@@ -224,6 +273,96 @@ class AgentGateway:
             raise AgentError() from None
         finally:
             PRIVATE.reset(marker)
+
+    async def models(self, keys):
+        data = await self.call("models.allowed", keys)
+        rows = data.get("models")
+        if type(rows) is not list or len(rows) > 16:
+            raise AgentError()
+        seen = set()
+        for row in rows:
+            if type(row) is not dict or set(row) != {"id", "display_name", "data_flow"}:
+                raise AgentError()
+            if (
+                type(row["id"]) is not str
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", row["id"])
+                or row["id"] in seen
+                or type(row["display_name"]) is not str
+                or not 1 <= len(row["display_name"]) <= 128
+                or row["data_flow"] not in {"local_only", "remote_authorized"}
+            ):
+                raise AgentError()
+            seen.add(row["id"])
+        default = data.get("default_model_id")
+        if default is not None and (type(default) is not str or default not in seen):
+            raise AgentError()
+        return {"models": rows, "defaultModelId": default}
+
+    async def personality(self, operation, payload, *, before_dispatch=None):
+        data = await self.call(
+            "personality." + operation, payload, before_dispatch=before_dispatch
+        )
+        if operation == "save":
+            if (
+                type(data.get("revision")) is not int
+                or not 1 <= data["revision"] <= 256
+                or type(data.get("duplicate")) is not bool
+            ):
+                raise AgentError("uncertain")
+            return {"revision": data["revision"], "duplicate": data["duplicate"]}
+        rows = data.get("versions") if operation == "history" else [data]
+        if type(rows) is not list or len(rows) > 20:
+            raise AgentError()
+        normalized = []
+        for row in rows:
+            if (
+                type(row) is not dict
+                or type(row.get("revision")) is not int
+                or not 1 <= row["revision"] <= 256
+                or type(row.get("can_edit")) is not bool
+                or row.get("scope") != "shared_agent"
+                or type(row.get("display_name")) is not str
+                or not 1 <= len(row["display_name"]) <= 128
+                or type(row.get("sections")) is not list
+                or not 1 <= len(row["sections"]) <= 16
+            ):
+                raise AgentError()
+            size = 0
+            for section in row["sections"]:
+                if (
+                    type(section) is not dict
+                    or set(section) != {"title", "content"}
+                    or type(section["title"]) is not str
+                    or not 1 <= len(section["title"]) <= 80
+                    or type(section["content"]) is not str
+                    or not section["content"].strip()
+                ):
+                    raise AgentError()
+                size += len(section["content"].encode())
+            if size > 32768:
+                raise AgentError()
+            timestamp(row.get("updated_at"))
+            normalized.append(
+                {
+                    k: row[k]
+                    for k in (
+                        "revision",
+                        "display_name",
+                        "sections",
+                        "can_edit",
+                        "scope",
+                        "updated_at",
+                    )
+                }
+            )
+        before = data.get("before_revision")
+        if before is not None and (type(before) is not int or not 1 <= before <= 257):
+            raise AgentError()
+        return (
+            {"versions": normalized, "beforeRevision": before}
+            if operation == "history"
+            else normalized[0]
+        )
 
     async def open(self, keys):
         data = await self.call("sessions.open", keys)
