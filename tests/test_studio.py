@@ -217,7 +217,7 @@ def test_multi_user_generation_and_private_assets(clients):
         assert b.get(path).status_code == 404
         assert a.get(path).status_code == 200
     assert a.get(f"/api/executions/{execution_id}/assets/{asset_id}/download").headers[
-        "content-disposition"] == 'attachment; filename="photo.png"'
+        "content-disposition"] == f'attachment; filename="{result.json()["assets"][0]["displayName"]}"'
     # Reconstruct the service with the same DB: ownership and asset lookup remain durable.
     again = create_app(factory, gateway, a.app.state.thumbnails)
     with TestClient(again) as other_process:

@@ -117,7 +117,22 @@ paths. Validate the nginx configuration before reloading it.
 
 The default container port is loopback-only so a local reverse proxy can be the
 external entry point. The proxy must pass the public Host and HTTPS scheme for
-CSRF origin checks.
+CSRF origin checks. Set `STUDIO_TRUSTED_PROXY_IPS` to the exact source IP or
+reviewed CIDR from which the proxy connects **as seen by the container**. Host
+nginx published through Docker commonly uses a bridge gateway IP; loopback
+defaults alone will not trust that proxy. Empty disables forwarded headers;
+wildcards and arbitrary hostnames are rejected. Keep direct access restricted.
+
+Apply migration `20261003_07` before running this source. Login admission is
+shared in PostgreSQL across workers and restarts: at most ten admitted attempts
+per client address in a fixed five-minute window, with 10,000 active address
+rows. Only expired rows are removed, in bounded batches. Capacity/lock contention
+returns 429 and never resets another client's active protection. Address hashes
+and counters are temporary admission metadata; passwords are not stored there.
+`STUDIO_WORKERS` may be set from 1 to 16. Account failure/lockout updates are
+serialized separately from the global admission transaction, and unknown,
+known and locked accounts each perform one Argon2 verification. Responses remain
+generic. Keep the example nginx edge rate limit as an additional boundary.
 
 Do not expose port 5087 directly to untrusted networks or set
 `STUDIO_DEV_INSECURE_COOKIE=1` in production.

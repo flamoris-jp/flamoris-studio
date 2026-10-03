@@ -2,6 +2,7 @@ import io
 import os
 import re
 import uuid
+from datetime import timezone
 from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
@@ -13,6 +14,17 @@ Image.MAX_IMAGE_PIXELS = 32_000_000
 def filename(raw: str | None) -> str:
     leaf = (raw or "image").replace("\\", "/").split("/")[-1]
     return re.sub(r"[^\w.\-]", "", leaf, flags=re.ASCII)[:100].strip(".") or "image"
+
+
+def generated_filename(asset_id: uuid.UUID, submitted_at, index: int, kind: str, mime: str) -> str:
+    """Name a new catalog row from Studio metadata, independent of provider names."""
+    extension = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp",
+                 "image/vnd.adobe.photoshop": ".psd", "audio/wav": ".wav",
+                 "audio/mpeg": ".mp3", "video/mp4": ".mp4", "audio/midi": ".mid",
+                 "application/json": ".json"}.get(mime, ".bin")
+    label = kind if kind in {"image", "audio", "video", "midi", "metadata"} else "file"
+    stamp = submitted_at.astimezone(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    return filename(f"{label}_{stamp}_{index:02d}_{asset_id.hex[:12]}{extension}")
 
 
 def inspect_image(data: bytes, mime: str) -> tuple[int, int]:

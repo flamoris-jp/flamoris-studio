@@ -21,4 +21,4 @@ RUN pip install --no-cache-dir . && \
 COPY --from=web /build/web/dist/ ./web/dist/
 USER 10001:10001
 EXPOSE 5087
-CMD ["uvicorn", "flamoris_studio.app:production_app", "--factory", "--host", "0.0.0.0", "--port", "5087", "--proxy-headers", "--forwarded-allow-ips", "*"]
+CMD ["python", "-m", "flamoris_studio.server"]

@@ -4,8 +4,6 @@ import secrets
 import asyncio
 import hashlib
 import uuid
-import time
-from collections import defaultdict, deque
 from datetime import timedelta
 from contextlib import asynccontextmanager
 
@@ -18,10 +16,10 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from .auth import COOKIE, CSRF_COOKIE, authenticated_user, clear_session, current_user, database, digest, hasher, new_csrf, require_csrf, start_session
+from .auth import COOKIE, CSRF_COOKIE, DUMMY_PASSWORD_HASH, authenticated_user, clear_session, current_user, database, digest, hasher, new_csrf, require_csrf, start_session
 from .db import Asset, Execution, ImagePreference, ImageStyle, LoginSession, User, make_session_factory, now
 from .gateway import GatewayError, GenerationGateway
-from .media import Thumbnails, filename, inspect_image
+from .media import Thumbnails, filename, generated_filename, inspect_image
 from .logging_setup import configure_logging
 from .managed_inputs import (Limits, owned_input, usable, input_view, reserve, check_input,
     create_snapshot, maintenance, prune, protected, quota_guard)
@@ -32,6 +30,7 @@ from .result_contract import normalize_outputs, output_role, preview_kind
 from .range_transfer import representation_response
 from .assistant import mount_assistant
 from .intelligence import mount_intelligence
+from .login_throttle import admit_login
 
 # 512 KiB of raw image data stays below a 1 MiB SSE event even after base64
 # encoding and the MCP JSON envelope. Unknown sizes take the bounded route.
@@ -229,7 +228,6 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     app.state.prepare_slots = asyncio.Semaphore(1)
     mount_assistant(app)
     mount_intelligence(app)
-    login_attempts = defaultdict(deque)
 
     @app.exception_handler(GatewayError)
     async def gateway_error(_, exc: GatewayError):
@@ -287,23 +285,18 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     @app.post("/api/auth/login")
     def login(input: Credentials, request: Request, response: Response, db: Session = Depends(database)):
         address = request.client.host if request.client else "unknown"
-        attempts = login_attempts[address]
-        while attempts and attempts[0] < time.monotonic() - 300:
-            attempts.popleft()
-        if len(attempts) >= 10:
-            raise HTTPException(429)
-        attempts.append(time.monotonic())
-        if len(login_attempts) > 10_000:
-            login_attempts.clear()  # bounded memory, deployment should also rate-limit at the edge
-        user = db.scalar(select(User).where(User.email == normalized_email(input.email)))
-        if user and user.locked_until and user.locked_until > now():
-            raise HTTPException(401)
+        admit_login(db, address)
+        # Serialize per-account failure counters across workers while performing
+        # exactly one verification for known, unknown and locked accounts.
+        user = db.scalar(select(User).where(User.email == normalized_email(input.email)).with_for_update())
+        locked = bool(user and user.locked_until and user.locked_until > now())
         try:
-            valid = bool(user) and hasher.verify(user.password_hash, input.password)
+            verified = hasher.verify(user.password_hash if user else DUMMY_PASSWORD_HASH, input.password)
+            valid = bool(user) and verified and not locked
         except VerificationError:
             valid = False
         if not valid:
-            if user:
+            if user and not locked:
                 user.failed_logins += 1
                 if user.failed_logins >= 5:
                     user.locked_until = now() + timedelta(minutes=15)
@@ -753,9 +746,12 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 if size is not None:
                     existing.size_bytes = size
                 continue
-            asset = Asset(user_id=user_id, execution_id=execution.id, upstream_asset_id=upstream,
+            asset_id = uuid.uuid4()
+            asset = Asset(id=asset_id, user_id=user_id, execution_id=execution.id, upstream_asset_id=upstream,
                          storage_locator=upstream, original_filename=item.display_name,
-                         display_name=item.display_name, media_kind=item.media_kind, mime_type=item.mime_type,
+                         display_name=generated_filename(asset_id, execution.submitted_at,
+                             len(known) + 1, item.media_kind, item.mime_type),
+                         media_kind=item.media_kind, mime_type=item.mime_type,
                          size_bytes=size, extra_metadata={"output_role": item.role} if item.role else {})
             db.add(asset)
             known[upstream] = asset
