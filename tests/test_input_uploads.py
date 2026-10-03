@@ -4,6 +4,7 @@ import hashlib
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -15,7 +16,7 @@ from test_studio import image_request, register
 from test_managed_inputs import prepare_gateway
 from test_workflow_contract import descriptor
 
-from flamoris_studio.db import Execution, LoginSession, ManagedInput
+from flamoris_studio.db import Execution, LoginSession, ManagedInput, now
 from flamoris_studio.gateway import GatewayError, GenerationGateway
 from flamoris_studio.input_uploads import publish_upload
 from flamoris_studio.managed_inputs import Limits
@@ -158,6 +159,13 @@ def test_upload_owner_csrf_private_preview_and_no_generated_asset(clients):
         row = db.get(ManagedInput, uuid.UUID(value["id"]))
         assert row.accounted_bytes >= len(gateway.image) and row.upstream_input_id not in response.text
     assert a.delete(path, headers={"X-CSRF-TOKEN": ca}).status_code == 200
+    assert not a.get(path).json()["available"]
+    # Retain the owner-only historical preview during the existing 24h grace.
+    assert a.get(value["thumbnailUrl"]).status_code == 200
+    with factory() as db:
+        row = db.get(ManagedInput, uuid.UUID(value["id"]))
+        row.terminal_at = now() - timedelta(hours=25)
+        db.commit()
     assert a.get(value["thumbnailUrl"]).status_code == 404
 
 
@@ -242,7 +250,7 @@ def test_uploaded_reference_keeps_exact_workflow_infrastructure_and_active_delet
     assert gateway.submit_count == 0
     gate["managedInputReady"] = True
     result = a.post("/api/generation/image/jobs", json=body, headers={"X-CSRF-TOKEN": csrf})
-    assert result.status_code == 202, result.text
+    assert result.status_code == 201, result.text
     with factory() as db:
         row = db.get(ManagedInput, uuid.UUID(value["id"]))
         execution = db.get(Execution, uuid.UUID(result.json()["id"]))
