@@ -80,8 +80,14 @@ def configured_actor(user_id):
                 or uid in users
                 or principal in principals
                 or any(
-                    type(v) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", v)
-                    for v in principal
+                    type(v) is not str
+                    or len(v) > 64
+                    or not re.fullmatch(
+                        r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*"
+                        if k == "project" else r"[A-Za-z0-9_-]{1,64}",
+                        v,
+                    )
+                    for k, v in keys.items()
                 )
             ):
                 raise ValueError()
