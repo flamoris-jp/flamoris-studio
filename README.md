@@ -14,7 +14,7 @@ Studio is **multi-user by design**. Authenticated users must be isolated from on
 
 Phase 1 uses a Python FastAPI backend with PostgreSQL-backed local accounts and secure, server-side cookie sessions. React, TypeScript, and Vite provide the browser UI. Studio-owned user/execution/asset catalog metadata is stored in PostgreSQL; generated media binaries remain outside the database.
 
-**Current main contains the authenticated multi-user shell, Image generation, an opt-in native Speech slice, and the per-user Generated results catalog with metadata/details, download, and confirmed deletion.** Runtime/model qualification and additional provider contracts remain separate acceptance gates.
+**Current main contains the authenticated multi-user shell, Image generation, opt-in native Speech and Music slices, and the per-user Generated results catalog with metadata/details, download, and confirmed deletion.** Runtime/model qualification and additional provider contracts remain separate acceptance gates.
 
 ## Proposed integration design
 
@@ -38,8 +38,8 @@ Phase 1 covers:
 - generated-result preview and user download
 - multi-user authentication/session boundary and per-user execution/asset isolation
 
-Native no-reference Japanese Speech has a dedicated opt-in editor; Music and
-Video editors await qualified provider contracts.
+Native no-reference Japanese Speech and Music have dedicated opt-in editors;
+Video awaits its own qualified provider contracts.
 
 The UI uses dedicated editors for each generation type rather than one universal prompt form.
 
@@ -67,6 +67,14 @@ owner-scoped request identifier prevents replay after an uncertain submission;
 the browser retains only that identifier until the outcome is terminal. WAV
 playback and download use the existing owned Asset routes. Configured resources
 do not certify an actual model/GPU run or output quality.
+
+The opt-in [Music editor](docs/MUSIC_OPERATION.md) creates one WAV/ABC music
+recording or transcribes an existing owned generated WAV to MIDI and annotations.
+Each operation requires its exact configured native Generation descriptor;
+configuration does not attest model execution. Shared durable request UUIDs
+preserve uncertain outcomes across restart without replay, and safe owned Asset
+routes provide audio playback and ABC/MIDI/JSON downloads. Local file upload,
+user-supplied ABC plans and GPU controls remain outside these profiles.
 
 Examples include:
 

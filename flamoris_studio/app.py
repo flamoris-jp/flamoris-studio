@@ -33,6 +33,8 @@ from .intelligence import mount_intelligence
 from .login_throttle import admit_login
 from .external_import import catalog_guard, mount_external_import
 from .speech import mount_speech
+from .music import mount_music
+from .music_contract import checked_music_outputs
 
 # 512 KiB of raw image data stays below a 1 MiB SSE event even after base64
 # encoding and the MCP JSON envelope. Unknown sizes take the bounded route.
@@ -178,7 +180,8 @@ def view(execution: Execution, db: Session):
     return {"id": str(execution.id), "state": execution.last_known_status,
             "source": execution.source, "category": execution.category, "operation": execution.operation,
             "submittedAt": execution.submitted_at.isoformat(),
-            "assets": [asset_view(asset) for asset in assets]}
+            "assets": [asset_view(asset) for asset in assets],
+            **({"warnings": ["abc_unavailable"]} if execution.operation == "music.transcribe" and execution.last_known_status == "completed" and any(a.mime_type == "audio/midi" for a in assets) and not any(a.mime_type == "text/vnd.abc" for a in assets) else {})}
 
 
 def owned(db: Session, execution_id: uuid.UUID, user_id: uuid.UUID) -> Execution:
@@ -233,6 +236,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     mount_intelligence(app)
     mount_external_import(app, view)
     mount_speech(app, view, set_status)
+    mount_music(app, view, set_status)
 
     @app.exception_handler(GatewayError)
     async def gateway_error(_, exc: GatewayError):
@@ -254,7 +258,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             except HTTPException:
                 return JSONResponse({"error": "Invalid request token."}, status_code=403)
         response = await call_next(request)
-        if request.url.path.startswith(("/api/assistant/", "/api/intelligence/", "/api/generation/speech/", "/api/generation/external-import")):
+        if request.url.path.startswith(("/api/assistant/", "/api/intelligence/", "/api/generation/speech/", "/api/generation/music/", "/api/generation/external-import")):
             response.headers["Cache-Control"] = "private, no-store"
             response.headers["X-Content-Type-Options"] = "nosniff"
         return response
@@ -464,13 +468,18 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         if asset is None:
             raise HTTPException(404)
         owned(db, asset.execution_id, user_id)
-        if asset.mime_type not in {"image/png", "image/jpeg", "image/webp"} or asset.media_kind != "image":
-            raise HTTPException(422, "Unsupported reference image")
+        if (asset.mime_type, asset.media_kind) not in {("image/png", "image"), ("image/jpeg", "image"), ("image/webp", "image"), ("audio/wav", "audio")} or (asset.mime_type == "audio/wav" and os.getenv("STUDIO_MUSIC_ENABLED", "false").lower() != "true"):
+            raise HTTPException(422, "Unsupported reference Asset")
         row = reserve(db, user_id, asset, app.state.input_limits)
         async def source_bytes():
             current = owned_asset(db, asset.execution_id, asset.id, user_id)
             return await get_content(current, db, request, user_id)
-        return await create_snapshot(app, db, row, source_bytes)
+        result = await create_snapshot(app, db, row, source_bytes)
+        db.rollback()
+        if current_user(request, db) != user_id:
+            raise HTTPException(401)
+        owned_input(db, row.id, user_id)
+        return result
 
     @app.get("/api/generation/inputs/{input_id}")
     async def get_input(input_id: uuid.UUID, db: Session = Depends(database),
@@ -520,6 +529,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     async def selected_submit(input, db, user_id):
         reference = owned_input(db, input.referenceInputId, user_id) if input.referenceInputId else None
+        if reference and reference.mime_type not in {"image/png", "image/jpeg", "image/webp"}:
+            raise HTTPException(422, "This Workflow requires a reference image")
         if reference and not usable(reference):
             raise HTTPException(409, "Reference image unavailable; choose another Asset")
         discovery = await app.state.gateway.discover()
@@ -741,6 +752,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 len(outputs) != 1 or outputs[0].media_kind != "audio" or outputs[0].mime_type != "audio/wav" or
                 outputs[0].role != {"port": "audio", "role": "audio", "index": 0}):
             raise GatewayError("validation")
+        if execution.category == "music":
+            checked_music_outputs(outputs, execution.operation, execution.request_snapshot)
         catalog_guard(db)
         # Lock the parent row to serialize concurrent catalog updates across processes.
         db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution.id})

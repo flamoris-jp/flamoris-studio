@@ -12,7 +12,11 @@ export type ImageStyle = { id: string; name: string; positivePrompt: string; neg
 export type AssetDetail = Asset & { state: string; submittedAt: string; settings: Partial<ImageSettings>; referenceInput?: ManagedInput | null; workflowAvailable?: boolean }
 export type AssetPage = { items: Asset[]; nextOffset: number | null }
 export type Deletion = { results: { id: string; deleted: boolean; error?: string }[] }
-export type Execution = { id: string; state: string; submittedAt: string; assets: Asset[]; category?: string; operation?: string }
+export type Execution = { id: string; state: string; submittedAt: string; assets: Asset[]; category?: string; operation?: string; warnings?: string[] }
+export type MusicOperation = 'generate' | 'transcribe'
+export type MusicInput = { style: string; lyrics: string; seconds: number; steps: number; seed: number | null; lm_seed: number | null }
+export type TranscriptionInput = { referenceInputId: string; max_seconds: number; melody_only: boolean }
+export type MusicDiscovery = { generate: boolean; transcribe: boolean }
 export type SpeechInput = { text: string; caption: string; seconds: number; steps: number; seed: number | null }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -97,6 +101,9 @@ export const api = {
   changePassword: (currentPassword: string, newPassword: string, confirmPassword: string, csrf: string) =>
     post<{ ok: boolean }>('/api/account/password', { currentPassword, newPassword, confirmPassword }, csrf),
   discovery: () => request<Discovery>('/api/generation/image/discovery'),
+  musicDiscovery: () => request<MusicDiscovery>('/api/generation/music/discovery'),
+  musicSubmit: (input: MusicInput | TranscriptionInput, operation: MusicOperation, requestId: string, csrf: string) => post<Execution>(`/api/generation/music/${operation}/jobs`, { ...input, requestId }, csrf),
+  musicRequest: (requestId: string) => request<Execution>(`/api/generation/music/requests/${encodeURIComponent(requestId)}`),
   speechDiscovery: () => request<{ available: boolean }>('/api/generation/speech/discovery'),
   speechSubmit: (input: SpeechInput, requestId: string, csrf: string) => post<Execution>('/api/generation/speech/jobs', { ...input, requestId }, csrf),
   speechRequest: (requestId: string) => request<Execution>(`/api/generation/speech/requests/${encodeURIComponent(requestId)}`),

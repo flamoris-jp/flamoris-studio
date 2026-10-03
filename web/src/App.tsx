@@ -4,6 +4,7 @@ import Gallery, { ResultPreview } from './Gallery'
 import { WorkflowPicker, ReferencePicker, workflowPayload, roleSpec, legalSeed } from './WorkflowImage'
 import Assistant from './Assistant'
 import Intelligence from './Intelligence'
+import Music from './Music'
 import Speech, { initialSpeechDraft, type SpeechDraft } from './Speech'
 
 const sections = ['Image', 'Assistant', 'Intelligence', 'Video', 'Music', 'Speech', 'Assets'] as const
@@ -65,6 +66,7 @@ export default function App() {
   const [form, setForm] = useState<ImageDraft>(() => initialImageDraft())
   const [speechForm, setSpeechForm] = useState<SpeechDraft>(() => initialSpeechDraft())
   const [speechExecution, setSpeechExecution] = useState<Execution | null>(null)
+  const [musicExecution, setMusicExecution] = useState<Execution | null>(null)
   const [preferencesReady, setPreferencesReady] = useState(false)
   const [preferencesError, setPreferencesError] = useState('')
   const accountEpoch = useRef(0)
@@ -120,6 +122,7 @@ export default function App() {
     if (id) api.result(id).then(value => {
       if (!active || !currentAccount(version)) return
       if (value.category === 'speech') { setSpeechExecution(value); setSection('Speech') }
+      else if (value.category === 'music') { setMusicExecution(value); setSection('Music') }
       else setExecution(value)
     }).catch(() => {
       if (active && currentAccount(version)) { window.location.hash = ''; setError('Saved execution is unavailable.') }
@@ -152,11 +155,12 @@ export default function App() {
   if (!session.authenticated) return <Account allowRegistration={session.allowRegistration} onReady={setSession} />
   return <div className="layout"><aside><div className="brand">✦ <strong>FLAMORIS</strong><small>STUDIO</small></div><p className="eyebrow">WORKSPACE</p>
     <nav aria-label="Creative domains">{sections.map(name => <button key={name} aria-current={section === name ? 'page' : undefined} onClick={() => setSection(name)}>{name}</button>)}</nav>
-    <div className="account-footer"><span>{session.userName}</span><button onClick={() => setSection('Account')}>Account settings</button><button onClick={async () => { signingOut.current = true; try { await api.logout(session.csrfToken); accountEpoch.current += 1; try { sessionStorage.removeItem(`flamoris.speech.pending:${session.accountKey ?? session.userName ?? ''}`) } catch {} setForm(initialImageDraft()); setSpeechForm(initialSpeechDraft()); setSpeechExecution(null); setExecution(null); setResultSettings(null); setDiscovery(null); setBusy(false); setError(''); window.location.hash = ''; setSession(await api.session()) } catch { signingOut.current = false; setError('Could not sign out.') } }}>Sign out</button></div></aside>
+    <div className="account-footer"><span>{session.userName}</span><button onClick={() => setSection('Account')}>Account settings</button><button onClick={async () => { signingOut.current = true; try { await api.logout(session.csrfToken); accountEpoch.current += 1; try { sessionStorage.removeItem(`flamoris.speech.pending:${session.accountKey ?? session.userName ?? ''}`); sessionStorage.removeItem(`flamoris.music.pending:${session.accountKey ?? session.userName ?? ''}`) } catch {} setForm(initialImageDraft()); setSpeechForm(initialSpeechDraft()); setSpeechExecution(null); setMusicExecution(null); setExecution(null); setResultSettings(null); setDiscovery(null); setBusy(false); setError(''); window.location.hash = ''; setSession(await api.session()) } catch { signingOut.current = false; setError('Could not sign out.') } }}>Sign out</button></div></aside>
     <main><header><div><span className="eyebrow">CREATIVE CONTROL PLANE</span><h1>{section}</h1></div><span className="badge">PHASE 1A</span></header>
     <div hidden={section !== 'Intelligence'}><Intelligence key={session.userName} csrf={session.csrfToken} active={section === 'Intelligence'} /></div>
     <div hidden={section !== 'Speech'}><Speech key={session.accountKey ?? session.userName} csrf={session.csrfToken} accountKey={session.accountKey ?? session.userName ?? ''} form={speechForm} setForm={setSpeechForm} execution={speechExecution} onExecution={setSpeechExecution} authorized={() => !signingOut.current} /></div>
-    {section === 'Intelligence' || section === 'Speech' ? null : section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Assets' ? <Gallery csrf={session.csrfToken} onUseSettings={useSettings} /> : section === 'Assistant' ? <Assistant key={session.userName} csrf={session.csrfToken} initiallyOpen /> : section === 'Image' ? <div className="image-workspace"><div><p>Turn a prompt into something you can keep.</p>
+    <div hidden={section !== 'Music'}><Music key={session.accountKey ?? session.userName} csrf={session.csrfToken} accountKey={session.accountKey ?? session.userName ?? ''} execution={musicExecution} onExecution={setMusicExecution} authorized={() => !signingOut.current} /></div>
+    {section === 'Intelligence' || section === 'Speech' || section === 'Music' ? null : section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Assets' ? <Gallery csrf={session.csrfToken} onUseSettings={useSettings} /> : section === 'Assistant' ? <Assistant key={session.userName} csrf={session.csrfToken} initiallyOpen /> : section === 'Image' ? <div className="image-workspace"><div><p>Turn a prompt into something you can keep.</p>
       {preferencesError && <p role="alert" className="error">{preferencesError}</p>}
       {discovery?.available ? <ImageEditor discovery={discovery} busy={busy} form={form} setForm={setForm} csrf={session.csrfToken} onSubmit={async form => {
         const version = accountEpoch.current

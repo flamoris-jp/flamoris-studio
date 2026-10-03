@@ -186,6 +186,25 @@ class GenerationGateway:
         return checked_build(await self._json("workflows.build", {
             "template": TEMPLATE, "parameters": parameters}), parameters)
 
+    async def discover_music(self):
+        if os.getenv("STUDIO_MUSIC_ENABLED", "false").lower() != "true":
+            return {"generate": False, "transcribe": False}
+        from .music_contract import qualified_music
+        health = await self._json("system.health")
+        if type(health) is not dict or health.get("healthy") is not True:
+            return {"generate": False, "transcribe": False}
+        caps = await self._json("capabilities.list")
+        catalog = await self._json("workflows.list")
+        return {"generate": qualified_music(catalog, caps, "generate"),
+                "transcribe": qualified_music(catalog, caps, "transcribe") and
+                    type(health.get("managed_input_support")) is dict and
+                    health["managed_input_support"].get("ready") is True}
+
+    async def build_music(self, parameters, operation):
+        from .music_contract import contract, checked_music_build
+        return checked_music_build(await self._json("workflows.build", {
+            "template": contract(operation)["id"], "parameters": parameters}), parameters, operation)
+
     async def status(self, job_id: str):
         return await self._json("jobs.status", {"job_id": job_id})
 
