@@ -17,6 +17,11 @@ login, never from request identity fields. The operator privately configures:
 | STUDIO_AGENT_BINDINGS | JSON array of at most 128 exact `{user_id,human,agent,project}` records |
 
 Each record uses a canonical existing Studio UUID and safe Agent stable keys.
+Human and Agent keys are 1–64 ASCII letters/digits/underscores/hyphens. Project
+keys additionally permit dots separating nonempty segments, such as
+`example.project`, with the same 64-character total limit. Paths, whitespace,
+leading/trailing dots and empty segments are rejected. Keys remain exact;
+no normalization, project renaming or extra delegation grant is implied.
 Duplicate account UUIDs and duplicate complete principal tuples are refused; two
 Studio users cannot silently share the same principal/session. No email/name
 heuristic, environment principal fallback, browser identity override or runtime
