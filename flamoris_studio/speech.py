@@ -15,18 +15,13 @@ from pydantic import Field
 from .auth import authenticated_user, current_user, database
 from .db import Execution, SpeechRequestRecord
 from .gateway import GatewayError
+from .generation_requests import existing_request
 from .speech_contract import PROOF, SpeechRequest, TEMPLATE
 
 
 class SpeechSubmission(SpeechRequest):
     requestId: str = Field(pattern=r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$")
 
-
-def existing_request(db, user, request_id, request_digest=None):
-    record = db.get(SpeechRequestRecord, (user, request_id))
-    if record is not None and request_digest is not None and record.request_digest != request_digest:
-        raise HTTPException(409, "This request identifier already belongs to another speech request")
-    return db.get(Execution, record.execution_id) if record is not None else None
 
 
 def configured_route():
@@ -51,7 +46,7 @@ def mount_speech(app, view, set_status):
         original = input.model_dump(exclude={"requestId"})
         request_digest = hashlib.sha256(json.dumps(
             [original, PROOF], sort_keys=True, allow_nan=False).encode()).hexdigest()
-        cached = existing_request(db, user, request_id, request_digest)
+        cached = existing_request(db, user, request_id, request_digest, "speech.generate")
         if cached is not None:
             return view(cached, db)
         db.rollback()
@@ -77,7 +72,7 @@ def mount_speech(app, view, set_status):
             db.commit()
         except IntegrityError:
             db.rollback()
-            cached = existing_request(db, user, request_id, request_digest)
+            cached = existing_request(db, user, request_id, request_digest, "speech.generate")
             if cached is None:
                 raise HTTPException(503, "Speech request admission could not be confirmed") from None
             return view(cached, db)
@@ -112,7 +107,7 @@ def mount_speech(app, view, set_status):
     @router.get("/requests/{request_id}")
     def request_status(request_id: uuid.UUID, db: Session = Depends(database),
                        user: uuid.UUID = Depends(authenticated_user)):
-        cached = existing_request(db, user, request_id)
+        cached = existing_request(db, user, request_id, operation="speech.generate")
         if cached is None:
             raise HTTPException(404)
         return view(cached, db)

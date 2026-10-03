@@ -21,8 +21,8 @@ def generated_filename(asset_id: uuid.UUID, submitted_at, index: int, kind: str,
     extension = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp",
                  "image/vnd.adobe.photoshop": ".psd", "audio/wav": ".wav",
                  "audio/mpeg": ".mp3", "video/mp4": ".mp4", "audio/midi": ".mid",
-                 "application/json": ".json"}.get(mime, ".bin")
-    label = kind if kind in {"image", "audio", "video", "midi", "metadata"} else "file"
+                 "application/json": ".json", "text/vnd.abc": ".abc"}.get(mime, ".bin")
+    label = kind if kind in {"image", "audio", "video", "midi", "metadata", "score"} else "file"
     stamp = submitted_at.astimezone(timezone.utc).strftime("%Y%m%d_%H%M%S")
     return filename(f"{label}_{stamp}_{index:02d}_{asset_id.hex[:12]}{extension}")
 

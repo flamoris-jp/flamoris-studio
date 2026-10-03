@@ -15,6 +15,7 @@ KINDS = {
     "audio/mpeg": "audio",
     "video/mp4": "video",
     "audio/midi": "midi",
+    "text/vnd.abc": "score",
     "application/json": "metadata",
 }
 NATIVE_IMAGES = {"image/png", "image/jpeg", "image/webp"}

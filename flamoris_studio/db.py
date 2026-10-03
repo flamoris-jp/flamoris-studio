@@ -111,14 +111,17 @@ class ExternalAssetClaim(Base):
     asset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("assets.id", ondelete="RESTRICT"), unique=True)
 
 
-class SpeechRequestRecord(Base):
-    __tablename__ = "speech_requests"
+class GenerationRequestRecord(Base):
+    __tablename__ = "generation_requests"
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), primary_key=True)
     request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     execution_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("executions.id", ondelete="RESTRICT"), unique=True)
     request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
+
+# Existing Speech callers share the same durable fence after migration 10.
+SpeechRequestRecord = GenerationRequestRecord
 
 class ImageStyle(Base):
     __tablename__ = "image_styles"

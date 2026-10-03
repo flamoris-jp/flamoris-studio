@@ -101,6 +101,7 @@ def reserve(db, user_id, source, limits):
         owner_user_id=user_id,
         source_asset_id=source.id,
         source_upstream_id=source.upstream_asset_id,
+        mime_type=source.mime_type,
         state="reserved",
         accounted_bytes=THUMB_BYTES,
         expires_at=now() + timedelta(hours=24),
@@ -118,8 +119,10 @@ def validate_metadata(raw, row, *, creating=False):
         or not isinstance(raw.get("input_id"), str)
         or not re.fullmatch(r"[a-f0-9]{32}", raw["input_id"])
         or raw.get("source_asset_id") != row.source_upstream_id
-        or raw.get("mime_type") not in {"image/png", "image/jpeg", "image/webp"}
-        or raw.get("media_kind") != "image"
+        or row.mime_type is not None and raw.get("mime_type") != row.mime_type
+        or (raw.get("mime_type"), raw.get("media_kind")) not in {
+            ("image/png", "image"), ("image/jpeg", "image"), ("image/webp", "image"),
+            ("audio/wav", "audio")}
         or type(raw.get("size_bytes")) is not int
         or not 0 < raw["size_bytes"] <= 64 * 1024**2
         or not isinstance(raw.get("sha256"), str)
@@ -140,7 +143,7 @@ def validate_metadata(raw, row, *, creating=False):
 
 async def check_input(gateway, row):
     if not usable(row):
-        raise HTTPException(409, "Reference image unavailable; choose another Asset")
+        raise HTTPException(409, "Reference unavailable; choose another Asset")
     raw = await gateway.get_input(row.upstream_input_id)
     validate_metadata(raw, row)
     return row.upstream_input_id
@@ -293,6 +296,13 @@ async def create_snapshot(app, db, row, content_reader):
         db.commit()  # Preserve private identity for bounded compensation/recovery.
         locator = None
         try:
+            if row.mime_type == "audio/wav":
+                # WAV snapshots stay upstream. No full audio copy or image thumbnail.
+                row.state = "live"
+                row.thumbnail_locator = None
+                row.accounted_bytes = 0
+                db.commit()
+                return input_view(row)
             data, mime = await content_reader()
             if (
                 mime != row.mime_type
