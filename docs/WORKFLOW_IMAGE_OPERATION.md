@@ -24,18 +24,41 @@ automatically replayed. Stale selection preserves the draft and requires explici
 selection of the current version. Snapshots record public Workflow identity,
 normalized non-input parameters and the Studio input UUID. Raw upstream input IDs
 stay in the server. **Use settings** restores the same reference when still available;
-an expired, revoked or pruned reference requires choosing another owned Asset.
+an expired, revoked or pruned reference requires uploading or choosing another image.
 
 ## Owned references
 
 The picker paginates existing generated image Assets owned by the signed-in user.
-There is no local file upload; #30 records the original requirement. Its closed
-issue state does not establish local-upload acceptance. Create accepts only a Studio
-Asset UUID. Create/get/delete/thumbnail/submit check ownership before upstream calls.
+Local file selection/drop also accepts one PNG/JPEG/WebP up to 8 MiB through
+`POST /api/generation/inputs/upload` as a raw image body, with authenticated
+same-origin cookies and CSRF. MIME, advertised length and streamed byte limits
+are checked before upstream calls. One transfer per process is admitted immediately
+(additional requests receive 429), with a 90-second body/publication bound,
+at most five additional seconds for compensating cleanup, and a
+100-second browser deadline. The gateway reuses one MCP connection, bounded to
+75 seconds, using 256 KiB begin/write/finish chunks with 15 seconds per RPC.
+There is no automatic upload retry. No caller filename/path or raw MCP ID enters
+the public request/response contract. Generation fully decodes the matching image
+before returning its immutable input receipt. Uploads create no generated Asset.
+
+Asset create accepts only a Studio Asset UUID. Create/get/delete/thumbnail/submit
+check ownership before upstream calls.
 Mutation requires CSRF. The immutable Generation input is independent of subsequent
 source-Asset deletion. A missing thumbnail does not make an otherwise valid input
 unusable. Detach only removes the draft attachment; replace swaps after successful
-creation and leaves the previous immutable input to its bounded lifetime.
+creation and leaves the previous immutable input to its bounded lifetime. Failed
+upload replacement keeps the previous reference and prompt. Preparation can run
+before the independent inference readiness gates pass; generation remains blocked
+until those gates and the exact img2img selection pass. Attached references are
+preserved when switching Workflows; incompatible txt2img submission is blocked.
+
+For uploads, PostgreSQL commits a private random upstream UUID, SHA-256 and full
+payload-plus-thumbnail storage reservation before the first RPC. An unknown
+begin/finish response can therefore be reconciled/deleted by the recorded identity.
+Failed receipts trigger one bounded compensating delete; unconfirmed cleanup
+retains the mapping and charge. Final handles and previews belong only to the
+authenticated owner. Pending Generation sessions expire in ten minutes and final
+inputs in 24 hours. No new database migration is needed beyond `20261001_04`.
 
 Input thumbnails live separately in `STUDIO_THUMBNAIL_DIR/inputs`. They are at most
 512 pixels and 256 KiB. PostgreSQL reserves the only possible temporary/final locator
@@ -48,7 +71,8 @@ explicit retry or expiry reconciliation. Active/uncertain executions protect map
 The global PostgreSQL transaction advisory lock serializes reservations, deletion
 and admission. Contention rejects immediately, before `inputs.create`. Row and byte
 quotas count all states, including pending cleanup and unknown creates. A worst-case
-256 KiB reservation precedes upstream or filesystem work and is reduced only after
+256 KiB thumbnail reservation plus the original uploaded byte count (when uploading)
+precedes upstream or filesystem work and is reduced only after
 confirmed thumbnail publication or cleanup.
 
 | Environment variable | Default |
@@ -79,8 +103,9 @@ requirement delegated to a manual operator.
 
 Keep #21 and #36 open for the real installed Workflow/runtime smoke, coordinated
 catalog rollout, multi-user acceptance, expiry/reselection, independent preview
-after source deletion, quota rejection and retention evidence. Local upload remains
-follow-up scope, regardless of #30's issue state. Repository CI covers migration
+after source deletion, quota rejection and retention evidence. #58 implements local
+image upload; live upload/character-generation acceptance still requires matching
+Generation/Hub deployment and provider input retention readiness. Repository CI covers migration
 upgrade/downgrade, ownership, exact identity, seed domains, quota contention,
 ambiguous outcomes, cleanup retry,
 frontend picker/restore behavior, builds and the packaged container.

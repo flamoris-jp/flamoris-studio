@@ -20,6 +20,7 @@ beforeEach(() => {
   vi.spyOn(api, 'styles').mockResolvedValue({ items: [] })
   vi.spyOn(api, 'assets').mockResolvedValue({ items: [asset], nextOffset: null })
   vi.spyOn(api, 'createInput').mockResolvedValue({ id: 'owned', available: true, thumbnailUrl: '/input-thumb', expiresAt: '2099-01-01T00:00:00Z' })
+  vi.spyOn(api, 'uploadInput').mockResolvedValue({ id: 'uploaded', available: true, thumbnailUrl: '/input-thumb', expiresAt: '2099-01-01T00:00:00Z' })
   vi.spyOn(api, 'input').mockResolvedValue({ id: 'owned', available: true, thumbnailUrl: '/input-thumb', expiresAt: '2099-01-01T00:00:00Z' })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
@@ -57,7 +58,7 @@ test('initial selection, attach, remove and replace obey both readiness gates', 
   await click('Choose from Assets'); await click('Source.png')
   expect(button('Generate image').disabled).toBe(false)
   expect(host.querySelector('textarea')?.value).toBe('keep this prompt')
-  expect(host.querySelector('input[type="file"]')).toBeNull()
+  expect(host.querySelector('input[type="file"]')?.getAttribute('accept')).toContain('image/webp')
 })
 
 test('ready model domain and fixed dimensions remain explicit in the editor', async () => {
@@ -216,4 +217,72 @@ test('v3 text domains enforce the declared UTF-8 JSON byte bound', () => {
   expect(validValue(spec, 'cats')).toBe(true)
   expect(validValue(spec, '猫猫猫猫')).toBe(false)
   expect(validValue(spec, '"'.repeat(5))).toBe(false)
+})
+
+async function chooseFile(files: File[]) {
+  const input = host.querySelector<HTMLInputElement>('input[type="file"]')!
+  Object.defineProperty(input, 'files', { configurable: true, value: files })
+  await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })))
+}
+
+test('local upload prepares a private reference before readiness but cannot be ignored by txt2img', async () => {
+  const submit = await show()
+  const file = new File(['image fixture'], 'character.png', { type: 'image/png' })
+  await chooseFile([file])
+  expect(api.uploadInput).toHaveBeenCalledWith(file, 'csrf')
+  expect(submit).not.toHaveBeenCalled()
+  expect(button('Generate image').disabled).toBe(true)
+  expect(host.textContent).toContain('or remove the reference')
+  expect(host.querySelector('textarea')?.value).toBe('keep this prompt')
+  expect(host.querySelector('img')?.getAttribute('src')).toBe('/input-thumb')
+  await selectWorkflow()
+  expect(button('Generate image').disabled).toBe(false)
+  await click('Generate image')
+  expect(submit.mock.calls[0][0].referenceInputId).toBe('uploaded')
+})
+
+test('preparing uploads while infrastructure is offline keeps generation blocked', async () => {
+  const submit = await show({ ...discovery, available: false, managedInputReady: false }); await selectWorkflow()
+  expect(button('Upload image').disabled).toBe(false)
+  await chooseFile([new File(['fixture'], 'x.webp', { type: 'image/webp' })])
+  expect(api.uploadInput).toHaveBeenCalledTimes(1)
+  expect(button('Generate image').disabled).toBe(true)
+  expect(submit).not.toHaveBeenCalled()
+})
+
+test('upload replacement blocks generation during transfer and preserves the previous reference on failure', async () => {
+  const submit = await show(discovery, true)
+  let reject!: (error: Error) => void
+  vi.mocked(api.uploadInput).mockImplementation(() => new Promise((_resolve, fail) => { reject = fail }))
+  await chooseFile([new File(['fixture'], 'x.jpg', { type: 'image/jpeg' })])
+  expect(button('Generate image').disabled).toBe(true)
+  expect(button('Remove reference').disabled).toBe(true)
+  await act(async () => reject(new Error('network failed')))
+  expect(button('Generate image').disabled).toBe(false)
+  expect(host.textContent).toContain('No automatic retry')
+  expect(api.uploadInput).toHaveBeenCalledTimes(1)
+  await click('Generate image')
+  expect(submit.mock.calls[0][0].referenceInputId).toBe('owned')
+})
+
+test('drop accepts a single image and rejects unsupported, empty, oversized and multiple files before upload', async () => {
+  await show()
+  const file = new File(['fixture'], 'reference.png', { type: 'image/png' })
+  async function drop(files: File[]) {
+    const event = new Event('drop', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'dataTransfer', { value: { files } })
+    await act(async () => host.querySelector('[aria-label="Upload reference image"]')!.dispatchEvent(event))
+    expect(event.defaultPrevented).toBe(true)
+  }
+  await drop([file, file])
+  await drop([new File(['x'], 'x.svg', { type: 'image/svg+xml' })])
+  await drop([new File([], 'empty.png', { type: 'image/png' })])
+  const large = new File(['x'], 'large.png', { type: 'image/png' })
+  Object.defineProperty(large, 'size', { value: 8 * 1024 * 1024 + 1 })
+  await drop([large])
+  expect(api.uploadInput).not.toHaveBeenCalled()
+  await drop([file])
+  expect(api.uploadInput).toHaveBeenCalledWith(file, 'csrf')
+  await click('Remove reference')
+  expect(button('Generate image').disabled).toBe(false)
 })

@@ -32,6 +32,18 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 const post = <T>(path: string, body: unknown, csrf: string) => request<T>(path, {
   method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify(body),
 })
+export const imageUploadLimit = 8 * 1024 * 1024
+export const imageUploadTypes = ['image/png', 'image/jpeg', 'image/webp']
+async function uploadInput(file: File, csrf: string): Promise<ManagedInput> {
+  if (!imageUploadTypes.includes(file.type) || file.size < 1 || file.size > imageUploadLimit) throw new Error('Choose one PNG, JPEG or WebP image up to 8 MiB.')
+  const controller = new AbortController()
+  const deadline = globalThis.setTimeout(() => controller.abort(), 100000)
+  try {
+    return await request<ManagedInput>('/api/generation/inputs/upload', {
+      method: 'POST', headers: { 'Content-Type': file.type, 'X-CSRF-TOKEN': csrf }, body: file, signal: controller.signal,
+    })
+  } finally { clearTimeout(deadline) }
+}
 export class HTTPFailure extends Error {
   status: number
   constructor(message: string, status: number) { super(message); this.status = status }
@@ -122,6 +134,7 @@ export const api = {
   duplicateStyle: (id: string, name: string, csrf: string) => post<ImageStyle>(`/api/generation/image/styles/${encodeURIComponent(id)}/duplicate`, { name }, csrf),
   deleteStyle: (id: string, csrf: string) => request<{ ok: boolean }>(`/api/generation/image/styles/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { 'X-CSRF-TOKEN': csrf } }),
   createInput: (assetId: string, csrf: string) => post<ManagedInput>('/api/generation/inputs', { assetId }, csrf),
+  uploadInput,
   input: (id: string) => request<ManagedInput>(`/api/generation/inputs/${encodeURIComponent(id)}`),
   deleteInput: (id: string, csrf: string) => request<ManagedInput>(`/api/generation/inputs/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { 'X-CSRF-TOKEN': csrf } }),
   submit: (image: unknown, csrf: string) => post<Execution>('/api/generation/image/jobs', image, csrf),

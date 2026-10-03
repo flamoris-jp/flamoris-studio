@@ -25,6 +25,7 @@ from .managed_inputs import (Limits, owned_input, usable, input_view, reserve, c
     create_snapshot, maintenance, prune, protected, quota_guard)
 from .workflow_contract import ROLES, map_parameters
 from .input_thumbnails import InputThumbnails
+from .input_uploads import mount_input_uploads
 from .transfer import CHUNK_BYTES, MAX_TRANSFER_BYTES, PreviewAdmission, chunk, metadata, read_with_retry
 from .result_contract import normalize_outputs, output_role, preview_kind
 from .range_transfer import OwnedStreamingResponse, representation_response
@@ -229,6 +230,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     root = app.state.thumbnails.root
     app.state.input_thumbnails = InputThumbnails(str(root / "inputs") if root else "")
     app.state.input_limits = Limits.from_env()
+    mount_input_uploads(app)
     app.state.download_slots = asyncio.Semaphore(2)
     app.state.preview_admission = PreviewAdmission(app.state.download_slots)
     app.state.prepare_slots = asyncio.Semaphore(1)
@@ -258,7 +260,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             except HTTPException:
                 return JSONResponse({"error": "Invalid request token."}, status_code=403)
         response = await call_next(request)
-        if request.url.path.startswith(("/api/assistant/", "/api/intelligence/", "/api/generation/speech/", "/api/generation/music/", "/api/generation/external-import")):
+        if request.url.path.startswith(("/api/assistant/", "/api/intelligence/", "/api/generation/inputs", "/api/generation/speech/", "/api/generation/music/", "/api/generation/external-import")):
             response.headers["Cache-Control"] = "private, no-store"
             response.headers["X-Content-Type-Options"] = "nosniff"
         return response

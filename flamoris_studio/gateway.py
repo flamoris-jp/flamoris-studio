@@ -1,5 +1,8 @@
 """The only module allowed to see upstream MCP payloads and SDK objects."""
 import os
+import asyncio
+import base64
+import hashlib
 import logging
 import re
 import time
@@ -160,6 +163,44 @@ class GenerationGateway:
 
     async def create_input(self, asset_id):
         return await self._json("inputs.create", {"asset_id": asset_id})
+
+    async def upload_input(self, upload_id, data, mime_type):
+        if (not isinstance(upload_id, str) or not re.fullmatch(r"[0-9a-f]{32}", upload_id)
+            or not isinstance(data, bytes) or not 0 < len(data) <= 8 * 1024**2
+            or mime_type not in {"image/png", "image/jpeg", "image/webp"}):
+            raise GatewayError("validation")
+        namespace = os.getenv("STUDIO_GENERATION_NAMESPACE", "")
+        if namespace not in {"", "generation"}:
+            raise GatewayError("unavailable")
+        prefix = namespace + "." if namespace else ""
+        async with asyncio.timeout(75), self._connection() as session:
+            async def call(name, arguments):
+                result = await session.call_tool(prefix + name, arguments, read_timeout_seconds=15)
+                if result.is_error:
+                    raise GatewayError("upstream_failure")
+                raw = result.structured_content
+                if not isinstance(raw, dict):
+                    raise GatewayError("validation")
+                return raw
+
+            raw = await call("inputs.upload.begin", {
+                "upload_id": upload_id, "mime_type": mime_type, "size_bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest()})
+            offset = raw.get("offset")
+            if (raw.get("upload_id") != upload_id or type(offset) is not int
+                or not 0 <= offset <= len(data)):
+                raise GatewayError("validation")
+            while offset < len(data):
+                part = data[offset:offset + 256 * 1024]
+                raw = await call("inputs.upload.write", {
+                    "upload_id": upload_id, "offset": offset,
+                    "data_base64": base64.b64encode(part).decode("ascii"),
+                    "chunk_sha256": hashlib.sha256(part).hexdigest()})
+                if (raw.get("upload_id") != upload_id or type(raw.get("offset")) is not int
+                    or raw["offset"] != offset + len(part)):
+                    raise GatewayError("validation")
+                offset = raw["offset"]
+            return await call("inputs.upload.finish", {"upload_id": upload_id})
 
     async def get_input(self, input_id):
         return await self._json("inputs.get", {"input_id": input_id})

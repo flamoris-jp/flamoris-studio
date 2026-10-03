@@ -249,6 +249,7 @@ export function ImageEditor({ discovery, onSubmit, busy, form, setForm, csrf }: 
   const [styleError, setStyleError] = useState('')
   const [styleBusy, setStyleBusy] = useState(false)
   const [referenceValid, setReferenceValid] = useState(false)
+  const [referenceBusy, setReferenceBusy] = useState(false)
   const selected = discovery.workflows?.find(item => item.id === form.workflowId)
   const exactSelection = !form.workflowId || Boolean(selected?.selectable && selected.definitionVersion === form.definitionVersion && selected.definitionDigest === form.definitionDigest)
   const payload = selected ? workflowPayload(form, selected) : form.workflowId ? null : imagePayload(form)
@@ -260,7 +261,7 @@ export function ImageEditor({ discovery, onSubmit, busy, form, setForm, csrf }: 
   const fixed = selected?.image.dimensions.mode === 'fixed' ? selected.image.dimensions : undefined
   useEffect(() => { api.styles().then(page => setStyles(page.items)).catch(() => setStyleError('Could not load Styles.')) }, [])
   const set = <K extends keyof ImageDraft>(key: K, value: ImageDraft[K]) => setForm(old => ({ ...old, [key]: value }))
-  const valid = exactSelection && payload !== null && (!needsReference || (referenceEnabled && referenceValid)) && discovery.checkpoints.some(item => item.name === form.checkpoint) &&
+  const valid = !referenceBusy && (!form.referenceInputId || needsReference) && exactSelection && payload !== null && (!needsReference || (referenceEnabled && referenceValid)) && discovery.checkpoints.some(item => item.name === form.checkpoint) &&
     form.loras.every(lora => discovery.loras.some(item => item.name === lora.name))
   const style = styles.find(item => item.id === selectedStyle)
   async function styleAction(action: 'save' | 'update' | 'duplicate' | 'delete') {
@@ -293,7 +294,8 @@ export function ImageEditor({ discovery, onSubmit, busy, form, setForm, csrf }: 
       {styleError && <p role="alert" className="error">{styleError}</p>}<small>Applying a Style changes the prompts; edits afterward are your own draft.</small></div>
     <label>Positive prompt<textarea required maxLength={20000} rows={8} value={form.positivePrompt} onChange={e => set('positivePrompt', e.target.value)} placeholder="A place, a person, a moment…" /></label>
     <label>Negative prompt<textarea maxLength={20000} rows={5} value={form.negativePrompt} onChange={e => set('negativePrompt', e.target.value)} /></label>
-    <ReferencePicker enabled={referenceEnabled} needsReference={Boolean(needsReference)} inputId={form.referenceInputId} csrf={csrf} onChange={id => set("referenceInputId", id)} onValid={setReferenceValid} />
+    <ReferencePicker enabled={referenceEnabled} needsReference={Boolean(needsReference)} inputId={form.referenceInputId} csrf={csrf} onChange={id => set("referenceInputId", id)} onValid={setReferenceValid} onBusy={setReferenceBusy} />
+    {form.referenceInputId && !needsReference && <p role="alert">Select a ready img2img Workflow or remove the reference before generating.</p>}
     <div className="fields four">{(['width', 'height', 'steps', 'cfg'] as const).map(key => <label key={key}>{key}<input disabled={!supports(key) || Boolean(fixed && (key === 'width' || key === 'height'))} type="number" min={spec(key)?.minimum ?? (key === 'steps' ? 1 : key === 'cfg' ? 0 : 64)} max={spec(key)?.maximum ?? (key === 'steps' ? 150 : key === 'cfg' ? 100 : 4096)} step={spec(key)?.multiple_of ?? (key === 'cfg' ? 'any' : key === 'steps' ? 1 : 8)} value={fixed && (key === 'width' || key === 'height') ? String(fixed[key]) : form[key]} onChange={e => set(key, e.target.value)} /></label>)}</div>
     <div className="size-presets"><span>Size presets</span>{[[512, 512], [768, 1024], [768, 1152], [768, 1344]].map(([width, height]) => <button type="button" disabled={Boolean(fixed) || !supports('width') || !supports('height')} key={`${width}-${height}`} onClick={() => setForm(old => ({ ...old, width: String(width), height: String(height) }))}>{width} × {height}</button>)}</div>
     <div className="fields"><label>Seed (blank = Auto)<input disabled={!supports("seed")} type="number" min={spec("seed")?.minimum ?? 0} max={Math.min(Number.MAX_SAFE_INTEGER, spec("seed")?.maximum ?? Number.MAX_SAFE_INTEGER)} step={spec("seed")?.multiple_of ?? 1} value={form.seed} onChange={e => set('seed', e.target.value)} /></label><button type="button" disabled={!supports("seed")} onClick={() => { if (selected) { const seed = legalSeed(spec("seed")); if (seed !== null) set("seed", String(seed)) } else { const bits = new Uint32Array(2); crypto.getRandomValues(bits); setForm(old => withRandomSeed(old, bits)) } }}>Randomize seed</button><button type="button" onClick={() => set('seed', '')}>Auto seed</button></div>

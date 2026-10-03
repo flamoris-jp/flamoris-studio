@@ -53,9 +53,15 @@ snapshot and offer **Use settings** to return to the Image editor. The Workflow
 picker uses graph-free Image-v1 descriptors and only selects ready Definitions
 with exact version/digest evidence. Reference images come from the signed-in
 user's existing generated Assets when both Workflow and managed-input
-infrastructure are ready. Attach, detach and replace preserve the prompt draft;
-expired references require reselection. Local upload remains follow-up scope;
-#30 records its original requirement but is not evidence that upload is implemented.
+infrastructure are ready. The editor also accepts a local PNG/JPEG/WebP image
+through file selection or drag and drop, up to 8 MiB, with an owner-only preview
+and a 24-hour lifetime. Uploads can be prepared before Workflow/GPU readiness;
+generation still requires an exact ready img2img Workflow and managed-input
+infrastructure. Attach, detach and replace preserve the prompt draft; expired
+references require reselection. A reference attached to txt2img blocks generation
+until a compatible Workflow is selected or the reference is explicitly removed.
+Upload support implements the image portion of #30 through #58; audio upload is
+outside this contract.
 See [Workflow Image operation](docs/WORKFLOW_IMAGE_OPERATION.md).
 The opt-in [Image v3 route](docs/IMAGE_V3_OPERATION.md) also selects exact ready
 pinned Image wrappers through this editor, preserving per-user execution and Asset

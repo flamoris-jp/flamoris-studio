@@ -75,8 +75,9 @@ def input_view(row):
     }
 
 
-def reserve(db, user_id, source, limits):
+def reserve(db, user_id, source, limits, *, mime_type=None, upload_bytes=0):
     quota_guard(db)
+    charged = THUMB_BYTES + upload_bytes
     total, byte_total = db.execute(
         select(
             func.count(ManagedInput.id),
@@ -92,18 +93,20 @@ def reserve(db, user_id, source, limits):
     if (
         total >= limits.global_rows
         or owned >= limits.user_rows
-        or byte_total + THUMB_BYTES > limits.global_bytes
-        or byte_owned + THUMB_BYTES > limits.user_bytes
+        or byte_total + charged > limits.global_bytes
+        or byte_owned + charged > limits.user_bytes
     ):
         raise HTTPException(409, "Reference storage quota reached")
     row = ManagedInput(
         id=uuid.uuid4(),
         owner_user_id=user_id,
-        source_asset_id=source.id,
-        source_upstream_id=source.upstream_asset_id,
-        mime_type=source.mime_type,
+        source_asset_id=source.id if source else None,
+        source_upstream_id=source.upstream_asset_id if source else None,
+        mime_type=source.mime_type if source else mime_type,
+        upstream_input_id=uuid.uuid4().hex if source is None else None,
+        size_bytes=upload_bytes if source is None else None,
         state="reserved",
-        accounted_bytes=THUMB_BYTES,
+        accounted_bytes=charged,
         expires_at=now() + timedelta(hours=24),
     )
     # Pre-record the only possible thumbnail locator before touching the filesystem.
@@ -136,6 +139,14 @@ def validate_metadata(raw, row, *, creating=False):
         or raw["sha256"] != row.checksum
         or raw["mime_type"] != row.mime_type
         or raw["size_bytes"] != row.size_bytes
+    ):
+        raise GatewayError("validation")
+    if row.source_upstream_id is None and (
+        raw.get("source_kind") != "upload"
+        or raw["input_id"] != row.upstream_input_id
+        or raw["size_bytes"] != row.size_bytes
+        or raw["sha256"] != row.checksum
+        or raw["media_kind"] != "image"
     ):
         raise GatewayError("validation")
     return raw

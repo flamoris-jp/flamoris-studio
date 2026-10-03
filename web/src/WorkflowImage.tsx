@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { api, type Discovery, type Workflow, type ParameterSpec, type ManagedInput, type Asset } from './api'
+import { useEffect, useRef, useState } from 'react'
+import { api, imageUploadLimit, imageUploadTypes, type Discovery, type Workflow, type ParameterSpec, type ManagedInput, type Asset } from './api'
 import type { ImageDraft, ImageSubmission } from './App'
 
 const fields: Record<string, keyof ImageDraft> = { checkpoint: 'checkpoint', positive_prompt: 'positivePrompt', negative_prompt: 'negativePrompt', width: 'width', height: 'height', seed: 'seed', steps: 'steps', cfg: 'cfg', sampler: 'sampler', scheduler: 'scheduler', denoise: 'denoise' }
@@ -104,7 +104,7 @@ export function WorkflowPicker({ discovery, form, setForm }: { discovery: Discov
     const item = discovery.workflows?.find(x => x.id === event.target.value)
     setForm(old => ({ ...old, workflowId: item?.id, workflowKind: item?.kind, definitionVersion: item?.definitionVersion, definitionDigest: item?.definitionDigest,
       additionalParameters: item ? Object.fromEntries(Object.entries(item.parameters).filter(([,v]) => !v.role && v.default !== undefined).map(([k,v]) => [k,v.default])) : undefined,
-      referenceInputId: item?.image.mode === 'img2img' ? old.referenceInputId : undefined }))
+      referenceInputId: old.referenceInputId }))
   }}><option value="">Automatic builtin (LoRA aware)</option>{stale && <option value="__stale" disabled>Previous Workflow version (reselect below)</option>}
     {form.workflowId && !selected && <option value={form.workflowId} disabled>{form.workflowId} (unavailable)</option>}
     {discovery.workflows?.map(item => <option key={item.id} value={item.id} disabled={!item.selectable}>{item.name}{item.selectable ? '' : ' (unavailable)'}</option>)}
@@ -117,37 +117,61 @@ export function WorkflowPicker({ discovery, form, setForm }: { discovery: Discov
   </>
 }
 
-export function ReferencePicker({ enabled, needsReference, inputId, csrf, onChange, onValid }: { enabled: boolean; needsReference: boolean; inputId?: string | null; csrf: string; onChange: (id: string | undefined) => void; onValid: (valid: boolean) => void }) {
+export function ReferencePicker({ enabled, needsReference, inputId, csrf, onChange, onValid, onBusy }: { enabled: boolean; needsReference: boolean; inputId?: string | null; csrf: string; onChange: (id: string | undefined) => void; onValid: (valid: boolean) => void; onBusy: (busy: boolean) => void }) {
   const [input, setInput] = useState<ManagedInput | null>(null)
   const [assets, setAssets] = useState<Asset[]>([])
   const [nextOffset, setNextOffset] = useState<number | null>(null)
   const [open, setOpen] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const [missingPreview, setMissingPreview] = useState(false)
+  const picker = useRef<HTMLInputElement>(null), active = useRef(true), working = useRef(false)
+  useEffect(() => { active.current = true; return () => { active.current = false } }, [])
+  function start() {
+    if (working.current) return false
+    working.current = true; setBusy(true); onBusy(true); setError('')
+    return true
+  }
+  function finish() { working.current = false; if (active.current) { setBusy(false); onBusy(false) } }
   useEffect(() => {
     let active = true
     onValid(false); setInput(null); setMissingPreview(false)
     if (!inputId) return () => { active = false }
     const refresh = () => api.input(inputId).then(value => {
       if (active) { setInput(value); onValid(value.available && (!value.expiresAt || Date.parse(value.expiresAt) > Date.now())) }
-    }).catch(() => { if (active) { onValid(false); setError('Reference unavailable. Choose another Asset.') } })
+    }).catch(() => { if (active) { onValid(false); setError('Reference unavailable. Upload or choose another image.') } })
     refresh()
     const timer = window.setInterval(refresh, 30000)
     return () => { active = false; clearInterval(timer) }
   }, [inputId, onValid])
   async function load(offset = 0) {
-    setBusy(true); setError('')
-    try { const page = await api.assets(offset); setAssets(old => [...(offset ? old : []), ...page.items.filter(a => a.mediaKind === 'image' && ['image/png','image/jpeg','image/webp'].includes(a.mimeType))]); setNextOffset(page.nextOffset); setOpen(true) }
-    catch { setError('Could not load Assets.') } finally { setBusy(false) }
+    if (!start()) return
+    try { const page = await api.assets(offset); if (active.current) { setAssets(old => [...(offset ? old : []), ...page.items.filter(a => a.mediaKind === 'image' && imageUploadTypes.includes(a.mimeType))]); setNextOffset(page.nextOffset); setOpen(true) } }
+    catch { if (active.current) setError('Could not load Assets.') } finally { finish() }
   }
   async function attach(asset: Asset) {
-    setBusy(true); setError('')
-    try { const value = await api.createInput(asset.id, csrf); onChange(value.id); setOpen(false) }
-    catch { setError('Could not attach this Asset. No automatic retry was made.') } finally { setBusy(false) }
+    if (!start()) return
+    try { const value = await api.createInput(asset.id, csrf); if (active.current) { onChange(value.id); setOpen(false) } }
+    catch { if (active.current) setError('Could not attach this Asset. No automatic retry was made.') } finally { finish() }
+  }
+  async function upload(files: File[]) {
+    if (working.current) return
+    if (files.length !== 1 || !imageUploadTypes.includes(files[0].type) || files[0].size < 1 || files[0].size > imageUploadLimit) {
+      setError('Choose one PNG, JPEG or WebP image up to 8 MiB.'); return
+    }
+    if (!start()) return
+    try { const value = await api.uploadInput(files[0], csrf); if (active.current) { onChange(value.id); setOpen(false) } }
+    catch { if (active.current) setError('Could not upload this image. Your draft is preserved. No automatic retry was made.') }
+    finally { finish() }
   }
   return <div className="reference-note"><strong>Reference Image</strong>
-    {!needsReference ? <p>Select a ready img2img Workflow to use an initial image.</p> : !enabled ? <p>Reference images are unavailable while the Workflow or service is not ready.</p> : <p>The initial image is center-cropped and resized before generation.</p>}
-    {input && <div>{input.thumbnailUrl && !missingPreview ? <img width="128" src={input.thumbnailUrl} alt="Reference image" onError={() => setMissingPreview(true)} /> : <span>Preview unavailable</span>}{!input.available && <p>Reference expired or revoked. Choose another Asset.</p>}</div>}
-    {inputId && <button type="button" onClick={() => { onChange(undefined); onValid(false); setError('') }}>Remove reference</button>}
+    {!needsReference ? <p>Select a ready img2img Workflow to use an initial image. You can upload a reference in advance.</p> : !enabled ? <p>You can prepare a reference now. Generation requires a ready Workflow and service.</p> : <p>The initial image is center-cropped and resized before generation.</p>}
+    <div className="reference-upload" role="group" aria-label="Upload reference image" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); void upload(Array.from(event.dataTransfer.files)) }}>
+      <input ref={picker} type="file" aria-label="Reference image file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" hidden disabled={busy} onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ''; if (files.length) void upload(files) }} />
+      <button type="button" disabled={busy} onClick={() => picker.current?.click()}>{inputId ? 'Replace with upload' : 'Upload image'}</button>
+      <small>Or drop one PNG, JPEG or WebP here (up to 8 MiB). Reference images are private and expire after 24 hours.</small>
+    </div>
+    {busy && <p role="status">Preparing reference…</p>}
+    {input && <div>{input.thumbnailUrl && !missingPreview ? <img width="128" src={input.thumbnailUrl} alt="Reference image" onError={() => setMissingPreview(true)} /> : <span>Preview unavailable</span>}{!input.available && <p>Reference expired or revoked. Upload or choose another image.</p>}</div>}
+    {inputId && <button type="button" disabled={busy} onClick={() => { onChange(undefined); onValid(false); setError('') }}>Remove reference</button>}
     <button type="button" disabled={!enabled || busy} onClick={() => load()}>{inputId ? 'Replace from Assets' : 'Choose from Assets'}</button>
     {open && <div role="dialog" aria-label="Choose reference Asset">{assets.length ? assets.map(asset => <button type="button" key={asset.id} disabled={busy} onClick={() => attach(asset)}>{asset.displayName}</button>) : <p>No eligible images. Generate an image first.</p>}{nextOffset !== null && <button type="button" disabled={busy} onClick={() => load(nextOffset)}>More Assets</button>}<button type="button" onClick={() => setOpen(false)}>Close picker</button></div>}
     {error && <p role="alert">{error}</p>}
