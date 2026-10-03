@@ -116,8 +116,12 @@ Generated media must also be retrievable by the user from the Studio UI. Studio 
 
 ## Assets
 
-Result synchronization stores metadata before any binary retrieval. Gallery
-thumbnails are generated lazily through their own endpoint; a slow/failed preview
+Result synchronization stores metadata before any binary retrieval.
+New generated assets receive a persisted Studio filename containing their media
+kind, UTC submission time, output ordinal and a Studio asset suffix. Display and
+download names match across restarts; safe provider names remain metadata, and
+existing catalog names are preserved. Names contain no prompts or upstream IDs.
+Gallery thumbnails are generated lazily through their own endpoint; a slow/failed preview
 does not remove the row. Completed executions can retry metadata synchronization
 after a Studio restart. If an upstream listing is temporarily unavailable, already
 cataloged results remain visible with `catalogSync: unavailable` on the result

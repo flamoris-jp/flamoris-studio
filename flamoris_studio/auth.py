@@ -17,6 +17,9 @@ COOKIE = "flamoris.studio"
 CSRF_COOKIE = "flamoris.studio.csrf"
 SESSION_SECONDS = 30 * 24 * 60 * 60
 hasher = PasswordHasher()
+# Fixed valid Argon2id hash with the same default parameters as account hashes.
+# The dummy password grants no account/session authority.
+DUMMY_PASSWORD_HASH = "$argon2id$v=19$m=65536,t=3,p=4$5upmqB1+PuLUnVKAFXAgaw$XBsZ3UDpabDaOcvl//QNtTRA7TuprkcDEtoz5DVXPK0"
 
 
 def digest(value: str) -> str:
