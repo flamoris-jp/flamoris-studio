@@ -14,7 +14,7 @@ Studio is **multi-user by design**. Authenticated users must be isolated from on
 
 Phase 1 uses a Python FastAPI backend with PostgreSQL-backed local accounts and secure, server-side cookie sessions. React, TypeScript, and Vite provide the browser UI. Studio-owned user/execution/asset catalog metadata is stored in PostgreSQL; generated media binaries remain outside the database.
 
-**Current main already contains the authenticated multi-user shell, the Image generation vertical slice, and the per-user Generated results catalog with metadata/details, download, and confirmed deletion.** Phase 1 remains open while large-asset transfer, managed inputs, account/session hardening, and the next capability integrations are completed.
+**Current main contains the authenticated multi-user shell, Image generation, an opt-in native Speech slice, and the per-user Generated results catalog with metadata/details, download, and confirmed deletion.** Runtime/model qualification and additional provider contracts remain separate acceptance gates.
 
 ## Proposed integration design
 
@@ -23,7 +23,7 @@ Phase 1 uses a Python FastAPI backend with PostgreSQL-backed local accounts and 
 The [multimodal result catalog and bounded retrieval](docs/MULTIMEDIA_RESULTS.md)
 preserves explicit output roles and supported media metadata, renders controlled
 audio/video, and provides owner-checked immutable single ranges/attachment downloads.
-New generation editors/providers and shared-user Agent integration remain gated.
+Additional generation providers and shared-user Agent integration remain gated.
 
 ## Direction
 
@@ -38,7 +38,8 @@ Phase 1 covers:
 - generated-result preview and user download
 - multi-user authentication/session boundary and per-user execution/asset isolation
 
-Speech and Video follow in later phases.
+Native no-reference Japanese Speech has a dedicated opt-in editor; Music and
+Video editors await qualified provider contracts.
 
 The UI uses dedicated editors for each generation type rather than one universal prompt form.
 
@@ -57,6 +58,15 @@ See [Workflow Image operation](docs/WORKFLOW_IMAGE_OPERATION.md).
 The opt-in [Image v3 route](docs/IMAGE_V3_OPERATION.md) also selects exact ready
 pinned Image wrappers through this editor, preserving per-user execution and Asset
 access. Multiple components and other media remain gated.
+
+The [native Speech editor](docs/SPEECH_OPERATION.md) submits one Japanese speech
+recording with text, optional voice description, duration, steps and seed. It
+requires an independent Studio opt-in and the exact configured Irodori contract.
+Reference audio, voice cloning and model controls are unavailable. A durable
+owner-scoped request identifier prevents replay after an uncertain submission;
+the browser retains only that identifier until the outcome is terminal. WAV
+playback and download use the existing owned Asset routes. Configured resources
+do not certify an actual model/GPU run or output quality.
 
 Examples include:
 
@@ -188,6 +198,7 @@ Implemented foundations in current main include:
 - PostgreSQL-backed Studio ownership/catalog metadata;
 - MCP gateway boundary;
 - Image generation submit / status / result flow;
+- opt-in native no-reference Speech submit / status / WAV result flow;
 - media-aware image preview and generated-result catalog;
 - per-user download and confirmed deletion;
 - cross-user execution/asset isolation.
@@ -201,7 +212,7 @@ Still tracked in Phase 1:
 
 ### Phase 2
 
-- Speech
+- additional Speech profiles and reference audio, after qualified contracts
 - Video
 - prompt presets
 - history

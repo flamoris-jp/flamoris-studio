@@ -170,6 +170,22 @@ class GenerationGateway:
     async def submit(self, workflow_id: str):
         return await self._json("jobs.submit", {"workflow_id": workflow_id})
 
+    async def discover_speech(self):
+        if os.getenv("STUDIO_SPEECH_ENABLED", "false").lower() != "true":
+            return {"available": False}
+        from .speech_contract import qualified_speech
+        health = await self._json("system.health")
+        if health.get("healthy") is not True:
+            return {"available": False}
+        caps = await self._json("capabilities.list")
+        catalog = await self._json("workflows.list")
+        return {"available": qualified_speech(catalog, caps)}
+
+    async def build_speech(self, parameters):
+        from .speech_contract import TEMPLATE, checked_build
+        return checked_build(await self._json("workflows.build", {
+            "template": TEMPLATE, "parameters": parameters}), parameters)
+
     async def status(self, job_id: str):
         return await self._json("jobs.status", {"job_id": job_id})
 

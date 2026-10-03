@@ -1,4 +1,4 @@
-export type Session = { authenticated: boolean; userName: string | null; csrfToken: string; allowRegistration: boolean }
+export type Session = { authenticated: boolean; userName: string | null; csrfToken: string; allowRegistration: boolean; accountKey?: string | null }
 export type Model = { id: string; name: string }
 export type ParameterSpec = { type: string; role?: string; required?: boolean; default?: unknown; minimum?: number; maximum?: number; multiple_of?: number; enum?: (string | number | boolean)[]; pattern?: string; min_length?: number; max_length?: number; max_items?: number; min_items?: number; max_bytes?: number }
 export type Workflow = { id: string; kind: string; name: string; selectable: boolean; reason: string | null; definitionVersion: number | null; definitionDigest: string | null; image: { mode: string; profile: string; dimensions: { mode: string; width?: number; height?: number } }; parameters: Record<string, ParameterSpec> }
@@ -12,7 +12,8 @@ export type ImageStyle = { id: string; name: string; positivePrompt: string; neg
 export type AssetDetail = Asset & { state: string; submittedAt: string; settings: Partial<ImageSettings>; referenceInput?: ManagedInput | null; workflowAvailable?: boolean }
 export type AssetPage = { items: Asset[]; nextOffset: number | null }
 export type Deletion = { results: { id: string; deleted: boolean; error?: string }[] }
-export type Execution = { id: string; state: string; submittedAt: string; assets: Asset[] }
+export type Execution = { id: string; state: string; submittedAt: string; assets: Asset[]; category?: string; operation?: string }
+export type SpeechInput = { text: string; caption: string; seconds: number; steps: number; seed: number | null }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { credentials: 'same-origin', ...options })
@@ -96,6 +97,9 @@ export const api = {
   changePassword: (currentPassword: string, newPassword: string, confirmPassword: string, csrf: string) =>
     post<{ ok: boolean }>('/api/account/password', { currentPassword, newPassword, confirmPassword }, csrf),
   discovery: () => request<Discovery>('/api/generation/image/discovery'),
+  speechDiscovery: () => request<{ available: boolean }>('/api/generation/speech/discovery'),
+  speechSubmit: (input: SpeechInput, requestId: string, csrf: string) => post<Execution>('/api/generation/speech/jobs', { ...input, requestId }, csrf),
+  speechRequest: (requestId: string) => request<Execution>(`/api/generation/speech/requests/${encodeURIComponent(requestId)}`),
   imagePreferences: () => request<ImagePreferences>('/api/generation/image/preferences'),
   saveImagePreferences: (preferences: ImagePreferences, csrf: string) => request<ImagePreferences>('/api/generation/image/preferences', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify(preferences) }),
   styles: () => request<{ items: ImageStyle[] }>('/api/generation/image/styles'),

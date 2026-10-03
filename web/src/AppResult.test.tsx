@@ -20,11 +20,12 @@ beforeEach(() => {
   vi.spyOn(api, 'imagePreferences').mockResolvedValue({ width: 512, height: 512, steps: 20, cfg: 7 })
   vi.spyOn(api, 'saveImagePreferences').mockResolvedValue({ width: 512, height: 512, steps: 20, cfg: 7 })
   vi.spyOn(api, 'assistantAvailability').mockResolvedValue({ available: false, state: 'unavailable' })
+  vi.spyOn(api, 'speechDiscovery').mockResolvedValue({ available: false })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
 afterEach(async () => {
   await act(async () => root.unmount()); host.remove(); window.location.hash = ''
-  vi.restoreAllMocks(); vi.unstubAllGlobals()
+  vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); sessionStorage.clear()
 })
 
 test.each(['external', 'studio'] as const)('owned %s execution hash preserves correct settings actions', async origin => {
@@ -45,4 +46,141 @@ test('an empty server snapshot does not restore settings or clear the owned exec
   await act(async () => restore.dispatchEvent(new MouseEvent('click', { bubbles: true })))
   expect(window.location.hash).toBe(`#execution/${asset.executionId}`)
   expect(host.textContent).toContain('Saved Image settings are unavailable.')
+})
+
+test('logout clears pending Speech UUID and a late owned execution hash response cannot restore private results', async () => {
+  let resolve!: (value: import('./api').Execution) => void
+  vi.spyOn(api, 'result').mockImplementation(() => new Promise(value => { resolve = value }))
+  vi.spyOn(api, 'logout').mockResolvedValue(undefined)
+  vi.mocked(api.session).mockResolvedValueOnce({ authenticated: true, userName: 'owner@example.test', accountKey: 'stable-owner',
+    csrfToken: 'csrf', allowRegistration: false }).mockResolvedValue({ authenticated: false, userName: null, csrfToken: 'new', allowRegistration: false })
+  await act(async () => root.render(<App />))
+  sessionStorage.setItem('flamoris.speech.pending:stable-owner', '00000000-0000-4000-8000-000000000002')
+  const logout = [...host.querySelectorAll('button')].find(button => button.textContent === 'Sign out')!
+  await act(async () => logout.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+  await act(async () => resolve({ id: asset.executionId, state: 'completed', submittedAt: '', category: 'speech',
+    assets: [{ ...asset, displayName: 'private-speech.wav' }] }))
+  expect(sessionStorage.getItem('flamoris.speech.pending:stable-owner')).toBeNull()
+  expect(window.location.hash).toBe('')
+  expect(host.textContent).not.toContain('private-speech.wav')
+})
+
+test('late Speech status polling after logout cannot start a result read or restore execution', async () => {
+  vi.useFakeTimers()
+  vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+  const result = vi.spyOn(api, 'result').mockResolvedValue({ id: asset.executionId, state: 'queued',
+    submittedAt: '', category: 'speech', assets: [] })
+  let resolve!: (value: import('./api').Execution) => void
+  vi.spyOn(api, 'execution').mockImplementation(() => new Promise(value => { resolve = value }))
+  vi.spyOn(api, 'logout').mockResolvedValue(undefined)
+  await act(async () => root.render(<App />))
+  await act(async () => vi.advanceTimersByTime(2500))
+  expect(api.execution).toHaveBeenCalledOnce()
+  vi.mocked(api.session).mockResolvedValue({ authenticated: false, userName: null, csrfToken: 'new', allowRegistration: false })
+  const logout = [...host.querySelectorAll('button')].find(button => button.textContent === 'Sign out')!
+  await act(async () => logout.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+  await act(async () => resolve({ id: asset.executionId, state: 'completed', submittedAt: '', category: 'speech', assets: [] }))
+  expect(result).toHaveBeenCalledOnce()
+  expect(window.location.hash).toBe('')
+})
+
+test('uncertain Speech keeps its own handle and UUID when Image generation replaces the Image result', async () => {
+  window.location.hash = ''
+  const requestId = '00000000-0000-4000-8000-000000000002'
+  vi.stubGlobal('crypto', { randomUUID: () => requestId })
+  vi.mocked(api.session).mockResolvedValue({ authenticated: true, userName: 'owner@example.test',
+    accountKey: 'stable-owner', csrfToken: 'csrf', allowRegistration: false })
+  vi.mocked(api.discovery).mockResolvedValue({ available: true, templates: ['text-to-image'],
+    checkpoints: [{ id: 'checkpoint:model', name: 'model' }], loras: [] })
+  vi.spyOn(api, 'styles').mockResolvedValue({ items: [] })
+  vi.mocked(api.speechDiscovery).mockResolvedValue({ available: true })
+  const speech = vi.spyOn(api, 'speechSubmit').mockResolvedValue({ id: asset.executionId,
+    state: 'submission_unknown', submittedAt: '', category: 'speech', assets: [] })
+  vi.spyOn(api, 'submit').mockResolvedValue({ id: '00000000-0000-4000-8000-000000000003',
+    state: 'completed', submittedAt: '', category: 'image', assets: [] })
+  const lookup = vi.spyOn(api, 'speechRequest').mockResolvedValue({ id: asset.executionId,
+    state: 'submission_unknown', submittedAt: '', category: 'speech', assets: [] })
+  await act(async () => root.render(<App />))
+  const nav = async (name: string) => { await act(async () => [...host.querySelectorAll('nav button')]
+    .find(button => button.textContent === name)!.dispatchEvent(new MouseEvent('click', { bubbles: true }))) }
+  await nav('Speech')
+  const speak = [...host.querySelectorAll('label')].find(label => label.textContent === 'Speech text')!.querySelector('textarea')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(speak, 'こんにちは')
+    speak.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => speak.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+  await nav('Image')
+  const image = host.querySelector('.image-workspace textarea')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(image, 'an image')
+    image.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => image.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+  await nav('Speech')
+  const generate = [...host.querySelectorAll('button')].find(button => button.textContent === 'Generate speech')!
+  expect((generate as HTMLButtonElement).disabled).toBe(true)
+  expect(sessionStorage.getItem('flamoris.speech.pending:stable-owner')).toBe(requestId)
+  await act(async () => root.unmount())
+  root = createRoot(host)
+  await act(async () => root.render(<App />))
+  expect(lookup).toHaveBeenCalledExactlyOnceWith(requestId)
+  expect(speech).toHaveBeenCalledOnce()
+  expect(sessionStorage.getItem('flamoris.speech.pending:stable-owner')).toBe(requestId)
+})
+
+async function switchAccount() {
+  vi.spyOn(api, 'logout').mockResolvedValue(undefined)
+  vi.mocked(api.session).mockResolvedValue({ authenticated: true, userName: 'next@example.test',
+    accountKey: 'next-owner', csrfToken: 'next-csrf', allowRegistration: false })
+  const logout = [...host.querySelectorAll('button')].find(button => button.textContent === 'Sign out')!
+  await act(async () => logout.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+  expect(host.textContent).toContain('next@example.test')
+}
+
+test('late Image submit cannot restore the previous account execution or hash', async () => {
+  window.location.hash = ''
+  vi.mocked(api.discovery).mockResolvedValue({ available: true, templates: ['text-to-image'],
+    checkpoints: [{ id: 'checkpoint:model', name: 'model' }], loras: [] })
+  vi.spyOn(api, 'styles').mockResolvedValue({ items: [] })
+  let resolve!: (value: import('./api').Execution) => void
+  vi.spyOn(api, 'submit').mockImplementation(() => new Promise(value => { resolve = value }))
+  await act(async () => root.render(<App />))
+  const prompt = host.querySelector('.image-workspace textarea')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(prompt, 'previous private prompt')
+    prompt.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => prompt.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+  await switchAccount()
+  await act(async () => resolve({ id: asset.executionId, state: 'completed', submittedAt: '', assets: [{ ...asset, displayName: 'previous-private.png' }] }))
+  expect(window.location.hash).toBe('')
+  expect(host.textContent).not.toContain('previous-private.png')
+  expect((host.querySelector('.image-workspace textarea') as HTMLTextAreaElement).value).toBe('')
+})
+
+test.each(['View settings', 'Use settings ↗'])('late %s cannot reveal the previous account prompt', async action => {
+  vi.spyOn(api, 'result').mockResolvedValue({ id: asset.executionId, state: 'completed', submittedAt: '', assets: [asset] })
+  let resolve!: (value: import('./api').AssetDetail) => void
+  vi.spyOn(api, 'asset').mockImplementation(() => new Promise(value => { resolve = value }))
+  await act(async () => root.render(<App />))
+  const settings = [...host.querySelectorAll('button')].find(button => button.textContent === action)!
+  await act(async () => settings.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+  await switchAccount()
+  await act(async () => resolve({ ...asset, state: 'completed', submittedAt: '', settings: { positivePrompt: 'previous private prompt' } }))
+  expect(host.textContent).not.toContain('previous private prompt')
+  expect(window.location.hash).toBe('')
+})
+
+test('late Image cancellation cannot restore the previous account execution', async () => {
+  vi.spyOn(api, 'result').mockResolvedValue({ id: asset.executionId, state: 'queued', submittedAt: '', assets: [] })
+  let resolve!: (value: import('./api').Execution) => void
+  vi.spyOn(api, 'cancel').mockImplementation(() => new Promise(value => { resolve = value }))
+  await act(async () => root.render(<App />))
+  const cancel = [...host.querySelectorAll('button')].find(button => button.textContent === 'Request cancellation')!
+  await act(async () => cancel.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+  await switchAccount()
+  await act(async () => resolve({ id: asset.executionId, state: 'completed', submittedAt: '', assets: [{ ...asset, displayName: 'previous-private.png' }] }))
+  expect(host.textContent).not.toContain('previous-private.png')
+  expect(window.location.hash).toBe('')
 })
