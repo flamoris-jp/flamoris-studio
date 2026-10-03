@@ -1,6 +1,8 @@
 # Opt-in pinned Image v3 operation
 
-Advances #36/#39 and FLAMORIS AI #15 using Generation #51 and Hub #30. Studio
+Advances #36/#39 and FLAMORIS AI #15 using Generation #51 and Hub #30. Current
+reviewed source/deployment receipt requirements are in
+[REAL_MACHINE_ACCEPTANCE.md](REAL_MACHINE_ACCEPTANCE.md). Studio
 consumes Generation's reviewed `image-generate-v1` revision 1 through its existing
 Image editor. It does not author/register graphs, attest candidates, switch a
 runtime or implement another scheduler. The initial execution profile supports
@@ -23,6 +25,24 @@ No new DB migration is needed: existing source-discriminated execution and immut
 request snapshots retain the v3 Workflow kind, expected schema/compiler/adapter/profile
 revisions and exact root version/digest. These are checked against the build reply;
 Generation retains the complete immutable plan and invocation receipt.
+
+## Paired rollout and rollback
+
+Pause Studio/direct/automation ingress and drain or explicitly reconcile existing
+provider work before replacing the Generation singleton. Back up the compatible
+images/private configuration, Studio DB and Generation definitions/recipes/journals/
+outputs. Replace the Hub's **deployed** Generation YAML with the matching v3 catalog,
+preserving its private endpoint/authentication; underscore-prefixed example files
+are not active configuration. Restart Hub and compare the entire tool schema and
+annotation set on a fresh connection before deploying/enabling Studio. Mixed
+Generation/Hub schemas block all Generation forwarding, including health/status.
+Do not switch catalogs while requests remain active.
+
+Rollback requires a compatible Studio/DB, Generation/Hub catalog pair and persistent
+state while retaining newer data and immutable version/request fences. Do not
+disable Generation v3 while an active v3 reservation needs reconciliation: startup
+rejects an incompatible journal. Unknown provider acceptance is not a no-send
+receipt and cannot be repaired by replay or deleting a reservation.
 
 ## Selection and dispatch
 
@@ -55,6 +75,19 @@ Operators register and automatically smoke the exact root through Generation's
 reviewed tools before it can be selected. Unknown submission results retain the
 original Studio execution/request for reconciliation and never automatically replay.
 
+Native Runtime/model expansion is not required to use the existing builtin Image
+route. Registered v3 qualification still requires the separate trusted provider-host
+mutation authority described in Generation's
+[WORKFLOW_VERIFICATION.md](https://github.com/flamoris-jp/flamoris-generation-mcp/blob/main/docs/WORKFLOW_VERIFICATION.md):
+fresh measured content identities, a never-reused provider/restart epoch and a
+separate stable regular `<record>.lock` inode. Its exclusive mutation/shared admission
+lock must cover all writers and restarts; record/lock/parent writes belong only to
+the trusted authority.
+Health, model names, `object_info`, stat data or manually authored evidence cannot
+replace that authority. Its absence leaves v3 unavailable; it does not prevent a
+legacy builtin Image regression. The managed-input readiness flag is independent
+and does not qualify this txt2img profile.
+
 ## User isolation and results
 
 Existing cookie authentication, CSRF and source/owner checks apply. Browser requests
@@ -69,5 +102,14 @@ ready/stale/profile/model/byte-domain fences, two-user PostgreSQL execution owne
 real editor interactions and restoration. GPU/model installation is not required.
 Repository CI is not deployment evidence. Enable this route only after real runtime
 smoke and authenticated two-user acceptance on the deployed matched versions.
-Multiple native components, Music/Speech/Video, fixed-size v3 presentation metadata
-and runtime orchestration remain follow-up scope; #39/#45 stay open.
+The minimal sequence is matched catalog discovery, exact-parent automatic
+verification, Studio selection/build/submit, decoded `primary_image` output and
+full-file hash, then cross-user status/result/cancel/download/deletion denial with
+valid CSRF. Verify revocation/evidence expiry and uncertain-submit/restart fences
+without replay. Complete builtin Image, large transfer and managed-input checks
+using [REAL_MACHINE_ACCEPTANCE.md](REAL_MACHINE_ACCEPTANCE.md).
+
+Multiple native components, Music/Speech/Video **within v3**, fixed-size v3
+presentation metadata and production cross-service orchestration remain follow-up
+scope. Generation #45's source foundation is closed; it does not establish these
+live receipts or close Studio #39's broader acceptance scope.
