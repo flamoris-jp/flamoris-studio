@@ -5,7 +5,7 @@ export type Workflow = { id: string; kind: string; name: string; selectable: boo
 export type ManagedInput = { id: string; available: boolean; expiresAt?: string; thumbnailUrl: string | null; sourceAssetId?: string | null }
 export type Discovery = { available: boolean; templates: string[]; checkpoints: Model[]; loras: Model[]; workflows?: Workflow[]; managedInputReady?: boolean }
 export type OutputRole = { port: string; role: string; index: number }
-export type Asset = { id: string; executionId: string; displayName: string; mimeType: string; mediaKind: string; sizeBytes: number | null; width: number | null; height: number | null; createdAt: string; hasThumbnail: boolean; previewUrl: string; downloadUrl: string; thumbnailUrl: string; source?: 'generation'; previewKind?: 'image' | 'audio' | 'video' | 'file'; outputRole?: OutputRole | null }
+export type Asset = { id: string; executionId: string; displayName: string; mimeType: string; mediaKind: string; sizeBytes: number | null; width: number | null; height: number | null; createdAt: string; hasThumbnail: boolean; previewUrl: string; downloadUrl: string; thumbnailUrl: string; source?: 'generation'; origin?: 'studio' | 'external'; previewKind?: 'image' | 'audio' | 'video' | 'file'; outputRole?: OutputRole | null }
 export type ImageSettings = { workflowId?: string; workflowKind?: string; definitionVersion?: number | null; definitionDigest?: string | null; referenceInputId?: string | null; additionalParameters?: Record<string, unknown>; positivePrompt: string; negativePrompt: string; checkpoint: string; width: number; height: number; steps: number; cfg: number; seed: number; sampler?: string; scheduler?: string; denoise?: number; loras?: { name: string; strengthModel: number; strengthClip: number }[] }
 export type ImagePreferences = Pick<ImageSettings, 'width' | 'height' | 'steps' | 'cfg'>
 export type ImageStyle = { id: string; name: string; positivePrompt: string; negativePrompt: string; createdAt: string; updatedAt: string }
@@ -111,6 +111,8 @@ export const api = {
   result: (id: string) => request<Execution>(`/api/executions/${encodeURIComponent(id)}/result`),
   cancel: (id: string, csrf: string) => post<Execution>(`/api/executions/${encodeURIComponent(id)}/cancel`, {}, csrf),
   assets: (offset = 0) => request<AssetPage>(`/api/assets?offset=${offset}`),
+  externalImportAvailability: () => request<{ available: boolean }>('/api/generation/external-import'),
+  importExternal: (jobId: string, csrf: string) => post<Execution>('/api/generation/external-import', { jobId }, csrf),
   asset: (id: string) => request<AssetDetail>(`/api/assets/${encodeURIComponent(id)}`),
   deleteAssets: (ids: string[], csrf: string) => post<Deletion>('/api/assets/delete', { ids }, csrf),
 }

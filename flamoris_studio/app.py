@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .auth import COOKIE, CSRF_COOKIE, DUMMY_PASSWORD_HASH, authenticated_user, clear_session, current_user, database, digest, hasher, new_csrf, require_csrf, start_session
-from .db import Asset, Execution, ImagePreference, ImageStyle, LoginSession, User, make_session_factory, now
+from .db import Asset, Execution, ExternalAssetClaim, ExternalImport, ImagePreference, ImageStyle, LoginSession, User, make_session_factory, now
 from .gateway import GatewayError, GenerationGateway
 from .media import Thumbnails, filename, generated_filename, inspect_image
 from .logging_setup import configure_logging
@@ -31,6 +31,7 @@ from .range_transfer import representation_response
 from .assistant import mount_assistant
 from .intelligence import mount_intelligence
 from .login_throttle import admit_login
+from .external_import import catalog_guard, mount_external_import
 
 # 512 KiB of raw image data stays below a 1 MiB SSE event even after base64
 # encoding and the MCP JSON envelope. Unknown sizes take the bounded route.
@@ -160,6 +161,7 @@ def asset_view(asset: Asset) -> dict:
             "displayName": asset.display_name, "mimeType": asset.mime_type,
             "mediaKind": asset.media_kind, "sizeBytes": asset.size_bytes,
             "source": asset.source, "previewKind": preview_kind(asset.media_kind, asset.mime_type),
+            "origin": "external" if (asset.extra_metadata or {}).get("external_import") is True else "studio",
             "outputRole": output_role((asset.extra_metadata or {}).get("output_role")),
             "width": asset.width, "height": asset.height,
             "createdAt": asset.created_at.isoformat(),
@@ -228,6 +230,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     app.state.prepare_slots = asyncio.Semaphore(1)
     mount_assistant(app)
     mount_intelligence(app)
+    mount_external_import(app, view)
 
     @app.exception_handler(GatewayError)
     async def gateway_error(_, exc: GatewayError):
@@ -716,6 +719,10 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             set_status(db, execution, job["status"])
             if job["status"] != "completed":
                 return view(execution, db)
+        if execution.upstream_job_id and db.get(ExternalImport, execution.upstream_job_id) is not None:
+            # Imported completed outputs are an immutable catalog snapshot. An
+            # upstream listing cannot silently add unverified assets later.
+            return view(execution, db)
         # Catalog metadata is independent of full materialization and thumbnails.
         # Completed status is already persisted, so retry listing after a timeout
         # (or Studio restart) without requiring the old live provider job mapping.
@@ -727,12 +734,16 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 return {**cached, "catalogSync": "unavailable"}
             raise
         outputs = normalize_outputs(listing)
+        catalog_guard(db)
         # Lock the parent row to serialize concurrent catalog updates across processes.
         db.execute(text("SELECT id FROM executions WHERE id = :id FOR UPDATE"), {"id": execution.id})
         known = {asset.upstream_asset_id: asset for asset in db.scalars(
             select(Asset).where(Asset.execution_id == execution.id, Asset.user_id == user_id))}
         for item in outputs:
             upstream, size = item.upstream_id, item.size_bytes
+            claim = db.get(ExternalAssetClaim, upstream)
+            if claim is not None and claim.user_id != user_id:
+                raise GatewayError("validation")
             if upstream in known:
                 existing = known[upstream]
                 if existing.availability == "deleted":

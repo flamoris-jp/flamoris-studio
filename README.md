@@ -116,6 +116,12 @@ Generated media must also be retrievable by the user from the Studio UI. Studio 
 
 ## Assets
 
+The optional [external generation import](docs/EXTERNAL_GENERATION_IMPORT.md)
+uses exact operator-provisioned external identity grants and trusted Generation
+job/asset provenance to add completed external outputs to the owner's normal
+Assets gallery. The explicit import is metadata-only, durable and idempotent;
+existing preview/download/deletion authorization remains in effect.
+
 Result synchronization stores metadata before any binary retrieval.
 New generated assets receive a persisted Studio filename containing their media
 kind, UTC submission time, output ordinal and a Studio asset suffix. Display and

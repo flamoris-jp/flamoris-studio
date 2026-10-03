@@ -16,7 +16,8 @@ let root: Root | undefined
 let host: HTMLDivElement | undefined
 beforeEach(() => vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true))
 
-async function show(ids: string[]) {
+async function show(ids: string[], available = false) {
+  vi.spyOn(api, 'externalImportAvailability').mockResolvedValue({ available })
   vi.spyOn(api, 'assets').mockResolvedValue({ items: ids.map(item), nextOffset: null })
   host = document.createElement('div')
   document.body.append(host)
@@ -192,4 +193,51 @@ test('non-image gallery entry remains after preview failure and does not restore
   await act(async () => host!.querySelector('audio')!.dispatchEvent(new Event('error')))
   expect(host.querySelectorAll('article')).toHaveLength(1)
   expect(host.querySelector('[role="dialog"] a')?.getAttribute('href')).toBe('/download/audio')
+})
+
+test('linked external import validates a job and refreshes the normal gallery', async () => {
+  const imported = { ...item('external'), origin: 'external' as const }
+  const add = vi.spyOn(api, 'importExternal').mockResolvedValue({
+    id: 'execution', state: 'completed', submittedAt: imported.createdAt, assets: [imported],
+  })
+  const view = await show([], true)
+  const input = view.querySelector('[aria-label="External generation job"]') as HTMLInputElement
+  const button = Array.from(view.querySelectorAll('button')).find(node => node.textContent === 'Import results')!
+  expect((button as HTMLButtonElement).disabled).toBe(true)
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'a'.repeat(32))
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  vi.mocked(api.assets).mockResolvedValue({ items: [imported], nextOffset: null })
+  await act(async () => view.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+  expect(add).toHaveBeenCalledExactlyOnceWith('a'.repeat(32), 'csrf')
+  expect(view.querySelector('article')?.textContent).toContain('External')
+  expect(input.value).toBe('')
+})
+
+test('failed import retains the typed job and existing gallery for explicit retry', async () => {
+  const add = vi.spyOn(api, 'importExternal').mockRejectedValue(new Error('unavailable'))
+  const view = await show(['existing'], true)
+  const input = view.querySelector('[aria-label="External generation job"]') as HTMLInputElement
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'b'.repeat(32))
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => view.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+  expect(add).toHaveBeenCalledOnce()
+  expect(input.value).toBe('b'.repeat(32))
+  expect(view.querySelector('article strong')?.textContent).toBe('existing.png')
+  expect(view.querySelector('[role="alert"]')?.textContent).toContain('retry explicitly')
+})
+
+test('imported images without a request snapshot cannot apply invented settings', async () => {
+  const imported = { ...item('external-image'), origin: 'external' as const }
+  vi.spyOn(api, 'asset').mockResolvedValue({ ...imported, state: 'completed',
+    submittedAt: imported.createdAt, settings: {} })
+  vi.spyOn(api, 'externalImportAvailability').mockResolvedValue({ available: false })
+  vi.spyOn(api, 'assets').mockResolvedValue({ items: [imported], nextOffset: null })
+  host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  await act(async () => root!.render(<Gallery csrf="csrf" onUseSettings={vi.fn()} />))
+  await click(Array.from(host.querySelectorAll('button')).find(node => node.textContent === 'View details')!)
+  expect(host.querySelector('[role="dialog"]')?.textContent).not.toContain('Use settings')
 })

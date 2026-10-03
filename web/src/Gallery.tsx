@@ -66,11 +66,15 @@ export default function Gallery({ csrf, onUseSettings }: { csrf: string; onUseSe
   const [working, setWorking] = useState(false)
   const [error, setError] = useState('')
   const [failures, setFailures] = useState<string[]>([])
+  const [canImport, setCanImport] = useState(false)
+  const [externalJob, setExternalJob] = useState('')
 
   useEffect(() => {
     api.assets().then(page => { setItems(page.items); setNextOffset(page.nextOffset) })
       .catch(e => setError(e instanceof Error ? e.message : 'Could not load generated results.'))
       .finally(() => setLoading(false))
+    api.externalImportAvailability().then(value => setCanImport(value.available === true))
+      .catch(() => setCanImport(false))
   }, [])
   const toggle = (id: string) => setSelected(old => old.includes(id) ? old.filter(x => x !== id) : [...old, id])
   async function remove(ids: string[]) {
@@ -96,11 +100,25 @@ export default function Gallery({ csrf, onUseSettings }: { csrf: string; onUseSe
   return <section className="panel results"><div className="row"><div><span className="eyebrow">YOUR OUTPUTS</span><h2>Assets</h2></div>
     <button disabled={working || !selected.length} onClick={() => remove(selected)}>Delete selected ({selected.length})</button></div>
     <p>Generated files saved to this gallery are private to your account. Deletion removes the Generation MCP managed copy; provider originals may remain.</p>
+    {canImport && <form className="row" onSubmit={async event => {
+      event.preventDefault()
+      if (working || !/^[a-f0-9]{32}$/.test(externalJob.trim())) return
+      setWorking(true); setError('')
+      try {
+        await api.importExternal(externalJob.trim(), csrf)
+        const page = await api.assets()
+        setItems(page.items); setNextOffset(page.nextOffset); setExternalJob(''); setSelected([])
+      } catch { setError('Could not import this completed generation. Verify the job and your linked external account, then retry explicitly.') }
+      finally { setWorking(false) }
+    }}><label>External generation job<input aria-label="External generation job" value={externalJob}
+      maxLength={32} disabled={working} onChange={event => setExternalJob(event.target.value)} /></label>
+      <button type="submit" disabled={working || !/^[a-f0-9]{32}$/.test(externalJob.trim())}>Import results</button>
+      <small>Add completed generations from your linked external client.</small></form>}
     {error && <p role="alert" className="error">{error}</p>}
     {loading ? <p>Loading results…</p> : !items.length ? <p>No generated results yet.</p> : <div className="assets gallery">{items.map(item =>
       <article key={item.id}><div className="gallery-preview"><Thumbnail item={item} /></div>
         <div><label><input type="checkbox" checked={selected.includes(item.id)} disabled={working} onChange={() => toggle(item.id)} /> Select</label>
-          <strong>{item.displayName}</strong><small>{new Date(item.createdAt).toLocaleString()} · {item.mediaKind} · {item.sizeBytes === null ? 'Size unknown' : `${(item.sizeBytes / 1024 / 1024).toFixed(1)} MB`}</small>
+          <strong>{item.displayName}</strong><small>{new Date(item.createdAt).toLocaleString()} · {item.mediaKind}{item.origin === 'external' ? ' · External' : ''} · {item.sizeBytes === null ? 'Size unknown' : `${(item.sizeBytes / 1024 / 1024).toFixed(1)} MB`}</small>
           <button onClick={() => { setError(''); api.asset(item.id).then(setDetail).catch(() => setError('Could not load result details.')) }}>View details</button>
           {failures.includes(item.id) && <small>Deletion failed</small>}</div></article>)}</div>}
     {nextOffset !== null && <button disabled={working} onClick={async () => {
@@ -112,7 +130,7 @@ export default function Gallery({ csrf, onUseSettings }: { csrf: string; onUseSe
       {detail.outputRole && <p>{detail.outputRole.role} · {detail.outputRole.port} · {detail.outputRole.index + 1}</p>}
       <p>{new Date(detail.createdAt).toLocaleString()} · {detail.mimeType} · {detail.sizeBytes === null ? 'Size unknown' : `${(detail.sizeBytes / 1024 / 1024).toFixed(1)} MB`}{detail.width && detail.height ? ` · ${detail.width} × ${detail.height}` : ''}</p>
       <dl>{Object.entries(detail.settings).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{Array.isArray(value) ? value.map((lora, index) => `${index + 1}. ${lora.name} (model ${lora.strengthModel}, CLIP ${lora.strengthClip})`).join('\n') || 'None' : String(value)}</dd></div>)}</dl>
-      <div className="row"><a href={detail.downloadUrl}>Download ↓</a>{onUseSettings && renderer(detail) === 'image' && <button onClick={() => onUseSettings(detail.settings)}>Use settings ↗</button>}<button disabled={working} onClick={() => remove([detail.id])}>Delete this result</button></div>
+      <div className="row"><a href={detail.downloadUrl}>Download ↓</a>{onUseSettings && renderer(detail) === 'image' && Object.keys(detail.settings).length > 0 && <button onClick={() => onUseSettings(detail.settings)}>Use settings ↗</button>}<button disabled={working} onClick={() => remove([detail.id])}>Delete this result</button></div>
     </div></div>}
   </section>
 }
