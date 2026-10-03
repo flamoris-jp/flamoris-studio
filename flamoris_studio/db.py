@@ -95,6 +95,22 @@ class Execution(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
+class ExternalImport(Base):
+    __tablename__ = "external_imports"
+    upstream_job_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    execution_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("executions.id", ondelete="RESTRICT"), unique=True)
+    binding_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class ExternalAssetClaim(Base):
+    __tablename__ = "external_asset_claims"
+    upstream_asset_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("assets.id", ondelete="RESTRICT"), unique=True)
+
+
 class ImageStyle(Base):
     __tablename__ = "image_styles"
     __table_args__ = (UniqueConstraint("owner_user_id", "name", name="uq_image_styles_owner_name"),)

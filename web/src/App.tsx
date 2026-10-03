@@ -90,7 +90,10 @@ export default function App() {
     }, 500)
     return () => window.clearTimeout(timer)
   }, [preferencesReady, session?.authenticated, session?.userName, session?.csrfToken, form.width, form.height, form.steps, form.cfg])
-  const useSettings = (settings: Partial<ImageSettings>) => { setForm(old => restoreImageDraft(old, settings)); setSection('Image'); window.location.hash = '' }
+  const useSettings = (settings: Partial<ImageSettings>) => {
+    if (!Object.keys(settings).length) { setError('Saved Image settings are unavailable.'); return }
+    setForm(old => restoreImageDraft(old, settings)); setSection('Image'); window.location.hash = ''
+  }
   useEffect(() => {
     if (!session?.authenticated) return
     const id = window.location.hash.match(/^#execution\/([0-9a-f-]{36})$/)?.[1]
@@ -129,7 +132,7 @@ export default function App() {
         {execution.state === 'completed' && <div className="assets">{execution.assets.length ? execution.assets.map(asset => <article key={asset.id}>
           <div><ResultPreview item={asset} /></div>
           <div><strong>{asset.displayName}</strong><small>{asset.mimeType} · {asset.sizeBytes === null ? 'Size pending' : `${(asset.sizeBytes / 1024 / 1024).toFixed(1)} MB`}</small>
-            <a href={asset.downloadUrl}>Download ↓</a>{asset.mediaKind === 'image' && ['image/png','image/jpeg','image/webp'].includes(asset.mimeType) && <><button onClick={async () => { try { const detail = await api.asset(asset.id); setResultSettings(detail.settings) } catch { setError('Could not load settings.') } }}>View settings</button><button onClick={async () => { try { const detail = await api.asset(asset.id); useSettings(detail.settings) } catch { setError('Could not restore settings.') } }}>Use settings ↗</button></>}</div></article>) : <p>No files were returned.</p>}</div>}
+            <a href={asset.downloadUrl}>Download ↓</a>{asset.origin !== 'external' && asset.mediaKind === 'image' && ['image/png','image/jpeg','image/webp'].includes(asset.mimeType) && <><button onClick={async () => { try { const detail = await api.asset(asset.id); if (!Object.keys(detail.settings).length) { setError('Saved Image settings are unavailable.'); return } setResultSettings(detail.settings) } catch { setError('Could not load settings.') } }}>View settings</button><button onClick={async () => { try { const detail = await api.asset(asset.id); useSettings(detail.settings) } catch { setError('Could not restore settings.') } }}>Use settings ↗</button></>}</div></article>) : <p>No files were returned.</p>}</div>}
         {resultSettings && <dl className="settings-list">{Object.entries(resultSettings).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{Array.isArray(value) ? value.map((lora, index) => `${index + 1}. ${lora.name} (model ${lora.strengthModel}, CLIP ${lora.strengthClip})`).join('\n') || 'None' : String(value)}</dd></div>)}</dl>}
       </section>}
     </div><Assistant key={session.userName} csrf={session.csrfToken} draft={form} /></div> : <section className="panel"><span className="eyebrow">COMING LATER</span><h2>{section} is unavailable</h2><p>This editor will connect when its MCP capability is ready.</p></section>}</main></div>
