@@ -28,6 +28,38 @@ afterEach(async () => {
   vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); sessionStorage.clear()
 })
 
+test('Clear inputs survives late preference loading and preserves an uncertain execution', async () => {
+  vi.spyOn(api, 'styles').mockResolvedValue({ items: [] })
+  vi.spyOn(api, 'result').mockResolvedValue({ id: asset.executionId, state: 'submission_unknown', submittedAt: '', assets: [] })
+  const submit = vi.spyOn(api, 'submit')
+  const cancel = vi.spyOn(api, 'cancel')
+  let resolve!: (value: import('./api').ImagePreferences) => void
+  vi.mocked(api.imagePreferences).mockImplementation(() => new Promise(value => { resolve = value }))
+  await act(async () => root.render(<App />))
+  await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Clear inputs')!.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+  await act(async () => resolve({ width: 768, height: 1024, steps: 30, cfg: 8 }))
+  expect([...host.querySelectorAll('label')].find(label => label.textContent === 'width')!.querySelector('input')!.value).toBe('512')
+  expect(host.textContent).toContain('Submission could not be confirmed')
+  expect(window.location.hash).toBe(`#execution/${asset.executionId}`)
+  expect(submit).not.toHaveBeenCalled()
+  expect(cancel).not.toHaveBeenCalled()
+})
+
+test('late Use settings cannot refill the draft after Clear inputs', async () => {
+  vi.spyOn(api, 'styles').mockResolvedValue({ items: [] })
+  vi.spyOn(api, 'result').mockResolvedValue({ id: asset.executionId, state: 'completed', submittedAt: '', assets: [asset] })
+  let resolve!: (value: import('./api').AssetDetail) => void
+  vi.spyOn(api, 'asset').mockImplementation(() => new Promise(value => { resolve = value }))
+  await act(async () => root.render(<App />))
+  const click = async (name: string) => { await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === name)!.dispatchEvent(new MouseEvent('click', { bubbles: true }))) }
+  await click('Use settings ↗')
+  await click('Clear inputs')
+  await act(async () => resolve({ ...asset, state: 'completed', submittedAt: '', settings: { positivePrompt: 'old prompt', width: 768 } }))
+  expect((host.querySelector('.image-workspace textarea') as HTMLTextAreaElement).value).toBe('')
+  expect(window.location.hash).toBe(`#execution/${asset.executionId}`)
+  expect(host.textContent).toContain(asset.displayName)
+})
+
 test('offline image service still allows reference upload and recheck preserves the attached draft', async () => {
   window.location.hash = ''
   vi.spyOn(api, 'styles').mockResolvedValue({ items: [] })

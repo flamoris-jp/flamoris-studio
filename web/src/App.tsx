@@ -71,6 +71,7 @@ export default function App() {
   const [preferencesError, setPreferencesError] = useState('')
   const accountEpoch = useRef(0)
   const signingOut = useRef(false)
+  const imageDraftEpoch = useRef(0)
   const currentAccount = (version: number) => accountEpoch.current === version && !signingOut.current
   useEffect(() => {
     signingOut.current = false
@@ -91,9 +92,10 @@ export default function App() {
     if (!session?.authenticated) { setPreferencesReady(false); return }
     let active = true
     setPreferencesReady(false)
+    const draftVersion = imageDraftEpoch.current
     api.imagePreferences().then(preferences => {
       if (!active) return
-      setForm(old => ({ ...old, ...Object.fromEntries(Object.entries(preferences).map(([key, value]) => [key, String(value)])) }))
+      if (draftVersion === imageDraftEpoch.current) setForm(old => ({ ...old, ...Object.fromEntries(Object.entries(preferences).map(([key, value]) => [key, String(value)])) }))
       setPreferencesReady(true)
     }).catch(() => { if (active) setPreferencesError('Could not load Image defaults.') })
     return () => { active = false }
@@ -163,7 +165,7 @@ export default function App() {
     {section === 'Intelligence' || section === 'Speech' || section === 'Music' ? null : section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Assets' ? <Gallery csrf={session.csrfToken} onUseSettings={useSettings} /> : section === 'Assistant' ? <Assistant key={session.userName} csrf={session.csrfToken} initiallyOpen /> : section === 'Image' ? <div className="image-workspace"><div><p>Turn a prompt into something you can keep.</p>
       {preferencesError && <p role="alert" className="error">{preferencesError}</p>}
       {!discovery?.available && <section className="panel"><h2>Image generation unavailable</h2><p>You can prepare a reference below. Generation requires an available image service.</p><button onClick={() => { const version = accountEpoch.current; api.discovery().then(value => { if (currentAccount(version)) setDiscovery(value) }).catch(() => { if (currentAccount(version)) setError('Service unavailable.') }) }}>Check again</button></section>}
-      <ImageEditor discovery={discovery ?? { available: false, checkpoints: [], loras: [], templates: [] }} busy={busy} form={form} setForm={setForm} csrf={session.csrfToken} onSubmit={async form => {
+      <ImageEditor discovery={discovery ?? { available: false, checkpoints: [], loras: [], templates: [] }} busy={busy} form={form} setForm={setForm} csrf={session.csrfToken} onReset={() => { imageDraftEpoch.current += 1; setError('') }} onSubmit={async form => {
         const version = accountEpoch.current
         setBusy(true); setError(''); setExecution(null); setResultSettings(null)
         try { const created = await api.submit(form, session.csrfToken); if (currentAccount(version)) { setExecution(created); window.location.hash = `execution/${created.id}` } }
@@ -177,7 +179,7 @@ export default function App() {
         {execution.state === 'completed' && <div className="assets">{execution.assets.length ? execution.assets.map(asset => <article key={asset.id}>
           <div><ResultPreview item={asset} /></div>
           <div><strong>{asset.displayName}</strong><small>{asset.mimeType} · {asset.sizeBytes === null ? 'Size pending' : `${(asset.sizeBytes / 1024 / 1024).toFixed(1)} MB`}</small>
-            <a href={asset.downloadUrl}>Download ↓</a>{asset.origin !== 'external' && asset.mediaKind === 'image' && ['image/png','image/jpeg','image/webp'].includes(asset.mimeType) && <><button onClick={async () => { const version = accountEpoch.current; try { const detail = await api.asset(asset.id); if (!currentAccount(version)) return; if (!Object.keys(detail.settings).length) { setError('Saved Image settings are unavailable.'); return } setResultSettings(detail.settings) } catch { if (currentAccount(version)) setError('Could not load settings.') } }}>View settings</button><button onClick={async () => { const version = accountEpoch.current; try { const detail = await api.asset(asset.id); if (currentAccount(version)) useSettings(detail.settings) } catch { if (currentAccount(version)) setError('Could not restore settings.') } }}>Use settings ↗</button></>}</div></article>) : <p>No files were returned.</p>}</div>}
+            <a href={asset.downloadUrl}>Download ↓</a>{asset.origin !== 'external' && asset.mediaKind === 'image' && ['image/png','image/jpeg','image/webp'].includes(asset.mimeType) && <><button onClick={async () => { const version = accountEpoch.current; try { const detail = await api.asset(asset.id); if (!currentAccount(version)) return; if (!Object.keys(detail.settings).length) { setError('Saved Image settings are unavailable.'); return } setResultSettings(detail.settings) } catch { if (currentAccount(version)) setError('Could not load settings.') } }}>View settings</button><button onClick={async () => { const version = accountEpoch.current, draftVersion = imageDraftEpoch.current; try { const detail = await api.asset(asset.id); if (currentAccount(version) && draftVersion === imageDraftEpoch.current) useSettings(detail.settings) } catch { if (currentAccount(version)) setError('Could not restore settings.') } }}>Use settings ↗</button></>}</div></article>) : <p>No files were returned.</p>}</div>}
         {resultSettings && <dl className="settings-list">{Object.entries(resultSettings).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{Array.isArray(value) ? value.map((lora, index) => `${index + 1}. ${lora.name} (model ${lora.strengthModel}, CLIP ${lora.strengthClip})`).join('\n') || 'None' : String(value)}</dd></div>)}</dl>}
       </section>}
     </div><Assistant key={session.userName} csrf={session.csrfToken} draft={form} /></div> : <section className="panel"><span className="eyebrow">COMING LATER</span><h2>{section} is unavailable</h2><p>This editor will connect when its MCP capability is ready.</p></section>}</main></div>
@@ -243,7 +245,7 @@ function Account({ allowRegistration, onReady }: { allowRegistration: boolean; o
   </div></div>
 }
 
-export function ImageEditor({ discovery, onSubmit, busy, form, setForm, csrf }: { discovery: Discovery; onSubmit: (form: ImageSubmission) => void; busy: boolean; form: ImageDraft; setForm: React.Dispatch<React.SetStateAction<ImageDraft>>; csrf: string }) {
+export function ImageEditor({ discovery, onSubmit, onReset, busy, form, setForm, csrf }: { discovery: Discovery; onSubmit: (form: ImageSubmission) => void; onReset?: () => void; busy: boolean; form: ImageDraft; setForm: React.Dispatch<React.SetStateAction<ImageDraft>>; csrf: string }) {
   const [styles, setStyles] = useState<ImageStyle[]>([])
   const [selectedStyle, setSelectedStyle] = useState('')
   const [styleName, setStyleName] = useState('')
@@ -251,6 +253,16 @@ export function ImageEditor({ discovery, onSubmit, busy, form, setForm, csrf }: 
   const [styleBusy, setStyleBusy] = useState(false)
   const [referenceValid, setReferenceValid] = useState(false)
   const [referenceBusy, setReferenceBusy] = useState(false)
+  const [resetVersion, setResetVersion] = useState(0)
+  const positivePrompt = useRef<HTMLTextAreaElement>(null)
+  function clearInputs() {
+    if (busy || referenceBusy || styleBusy) return
+    onReset?.()
+    setForm(initialImageDraft(discovery.checkpoints[0]?.name ?? ''))
+    setSelectedStyle(''); setStyleName(''); setStyleError(''); setReferenceValid(false)
+    setResetVersion(old => old + 1)
+    positivePrompt.current?.focus()
+  }
   const selected = discovery.workflows?.find(item => item.id === form.workflowId)
   const exactSelection = !form.workflowId || Boolean(selected?.selectable && selected.definitionVersion === form.definitionVersion && selected.definitionDigest === form.definitionDigest)
   const payload = selected ? workflowPayload(form, selected) : form.workflowId ? null : imagePayload(form)
@@ -293,19 +305,20 @@ export function ImageEditor({ discovery, onSubmit, busy, form, setForm, csrf }: 
       <label>Style name<input maxLength={100} value={styleName} onChange={e => setStyleName(e.target.value)} placeholder="Name this prompt recipe" /></label></div>
       <div className="row style-actions"><button type="button" disabled={styleBusy} onClick={() => styleAction('save')}>Save as new</button><button type="button" disabled={!style || styleBusy} onClick={() => styleAction('update')}>Update selected</button><button type="button" disabled={!style || styleBusy} onClick={() => styleAction('duplicate')}>Duplicate</button><button type="button" disabled={!style || styleBusy} onClick={() => styleAction('delete')}>Delete</button></div>
       {styleError && <p role="alert" className="error">{styleError}</p>}<small>Applying a Style changes the prompts; edits afterward are your own draft.</small></div>
-    <label>Positive prompt<textarea required maxLength={20000} rows={8} value={form.positivePrompt} onChange={e => set('positivePrompt', e.target.value)} placeholder="A place, a person, a moment…" /></label>
+    <label>Positive prompt<textarea ref={positivePrompt} required maxLength={20000} rows={8} value={form.positivePrompt} onChange={e => set('positivePrompt', e.target.value)} placeholder="A place, a person, a moment…" /></label>
     <label>Negative prompt<textarea maxLength={20000} rows={5} value={form.negativePrompt} onChange={e => set('negativePrompt', e.target.value)} /></label>
-    <ReferencePicker enabled={referenceEnabled} needsReference={Boolean(needsReference)} inputId={form.referenceInputId} csrf={csrf} onChange={id => set("referenceInputId", id)} onValid={setReferenceValid} onBusy={setReferenceBusy} />
+    <ReferencePicker key={`reference-${resetVersion}`} enabled={referenceEnabled} needsReference={Boolean(needsReference)} inputId={form.referenceInputId} csrf={csrf} onChange={id => set("referenceInputId", id)} onValid={setReferenceValid} onBusy={setReferenceBusy} />
     {form.referenceInputId && !needsReference && <p role="alert">Select a ready img2img Workflow or remove the reference before generating.</p>}
     <div className="fields four">{(['width', 'height', 'steps', 'cfg'] as const).map(key => <label key={key}>{key}<input disabled={!supports(key) || Boolean(fixed && (key === 'width' || key === 'height'))} type="number" min={spec(key)?.minimum ?? (key === 'steps' ? 1 : key === 'cfg' ? 0 : 64)} max={spec(key)?.maximum ?? (key === 'steps' ? 150 : key === 'cfg' ? 100 : 4096)} step={spec(key)?.multiple_of ?? (key === 'cfg' ? 'any' : key === 'steps' ? 1 : 8)} value={fixed && (key === 'width' || key === 'height') ? String(fixed[key]) : form[key]} onChange={e => set(key, e.target.value)} /></label>)}</div>
     <div className="size-presets"><span>Size presets</span>{[[512, 512], [768, 1024], [768, 1152], [768, 1344]].map(([width, height]) => <button type="button" disabled={Boolean(fixed) || !supports('width') || !supports('height')} key={`${width}-${height}`} onClick={() => setForm(old => ({ ...old, width: String(width), height: String(height) }))}>{width} × {height}</button>)}</div>
     <div className="fields"><label>Seed (blank = Auto)<input disabled={!supports("seed")} type="number" min={spec("seed")?.minimum ?? 0} max={Math.min(Number.MAX_SAFE_INTEGER, spec("seed")?.maximum ?? Number.MAX_SAFE_INTEGER)} step={spec("seed")?.multiple_of ?? 1} value={form.seed} onChange={e => set('seed', e.target.value)} /></label><button type="button" disabled={!supports("seed")} onClick={() => { if (selected) { const seed = legalSeed(spec("seed")); if (seed !== null) set("seed", String(seed)) } else { const bits = new Uint32Array(2); crypto.getRandomValues(bits); setForm(old => withRandomSeed(old, bits)) } }}>Randomize seed</button><button type="button" onClick={() => set('seed', '')}>Auto seed</button></div>
-    <details><summary>Advanced generation settings</summary><div className="fields"><label>Sampler<input disabled={!supports("sampler")} value={form.sampler} maxLength={80} onChange={e => set('sampler', e.target.value)} /></label><label>Scheduler<input disabled={!supports("scheduler")} value={form.scheduler} maxLength={80} onChange={e => set('scheduler', e.target.value)} /></label><label>Denoise<input disabled={!supports("denoise")} type="number" min={spec("denoise")?.minimum ?? 0} max={spec("denoise")?.maximum ?? 1} step="any" value={form.denoise} onChange={e => set('denoise', e.target.value)} /></label></div></details>
+    <details key={`advanced-${resetVersion}`}><summary>Advanced generation settings</summary><div className="fields"><label>Sampler<input disabled={!supports("sampler")} value={form.sampler} maxLength={80} onChange={e => set('sampler', e.target.value)} /></label><label>Scheduler<input disabled={!supports("scheduler")} value={form.scheduler} maxLength={80} onChange={e => set('scheduler', e.target.value)} /></label><label>Denoise<input disabled={!supports("denoise")} type="number" min={spec("denoise")?.minimum ?? 0} max={spec("denoise")?.maximum ?? 1} step="any" value={form.denoise} onChange={e => set('denoise', e.target.value)} /></label></div></details>
     <div className="row"><strong>LoRA layers</strong><button type="button" disabled={form.loras.length >= 16 || !discovery.loras.length || (selected !== undefined && !spec("loras"))} onClick={() => set('loras', [...form.loras, { name: discovery.loras[0].name, strengthModel: '1', strengthClip: '1' }])}>+ Add LoRA</button></div>
     {form.loras.map((lora, index) => <div className="fields lora" key={index}><label>LoRA {index + 1}<select value={lora.name} onChange={e => set('loras', form.loras.map((x, i) => i === index ? { ...x, name: e.target.value } : x))}>{!discovery.loras.some(x => x.name === lora.name) && <option value={lora.name} disabled>{lora.name} (unavailable)</option>}{discovery.loras.map(x => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>
       {(['strengthModel', 'strengthClip'] as const).map(key => <label key={key}>{key}<input type="number" min="-20" max="20" step="any" value={lora[key]} onChange={e => set('loras', form.loras.map((x, i) => i === index ? { ...x, [key]: e.target.value } : x))} /></label>)}
       <button type="button" onClick={() => set('loras', form.loras.filter((_, i) => i !== index))}>Remove</button>{index > 0 && <button type="button" onClick={() => set('loras', form.loras.map((x, i) => i === index ? form.loras[index - 1] : i === index - 1 ? lora : x))}>Move up</button>}</div>)}
     {selected && form.loras.length > 0 && !spec('loras') && <p role="alert">This Workflow does not support the LoRA draft. Remove the layers or select a compatible Workflow.</p>}
-    <div className="row actions"><span>Uses the available MCP image capability.</span><button className="primary" disabled={!valid || busy}>{busy ? 'Submitting…' : 'Generate image ↗'}</button></div>
+    <small id="image-clear-help">Clear inputs resets prompts, reference, Workflow, LoRAs and generation settings.</small>
+    <div className="row actions"><button type="button" aria-describedby="image-clear-help" disabled={busy || referenceBusy || styleBusy} onClick={clearInputs}>Clear inputs</button><button className="primary" disabled={!valid || busy}>{busy ? 'Submitting…' : 'Generate image ↗'}</button></div>
   </form>
 }

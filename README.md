@@ -60,6 +60,15 @@ generation still requires an exact ready img2img Workflow and managed-input
 infrastructure. Attach, detach and replace preserve the prompt draft; expired
 references require reselection. A reference attached to txt2img blocks generation
 until a compatible Workflow is selected or the reference is explicitly removed.
+
+**Clear inputs** resets the Image draft: both prompts, Style selection/name,
+reference attachment, Workflow and additional parameters, LoRAs, seed and advanced
+settings. It restores 512 × 512, 20 steps, CFG 7, Euler/normal, denoise 1 and the
+first discovered model; valid numeric defaults use the existing per-user autosave.
+The reference picker closes and focus returns to the positive prompt. The action
+is disabled during submission, reference operations and Style writes. Saved
+Styles, uploaded snapshots, generated assets and current execution tracking remain
+available; clearing the draft does not cancel or resubmit a job.
 Upload support implements the image portion of #30 through #58; audio upload is
 outside this contract.
 See [Workflow Image operation](docs/WORKFLOW_IMAGE_OPERATION.md).
