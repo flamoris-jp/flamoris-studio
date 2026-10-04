@@ -2,7 +2,7 @@
 import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { ImageEditor, initialImageDraft, restoreImageDraft } from './App'
+import { ImageEditor, initialImageDraft, restoreImageDraft, type ImageDraft } from './App'
 import { api, type Asset, type Discovery, type Workflow } from './api'
 import { legalSeed, seedDomain, validValue, workflowPayload } from './WorkflowImage'
 
@@ -41,6 +41,98 @@ async function selectWorkflow() {
   const select = host.querySelector('select')!
   await act(async () => { select.value = 'reference'; select.dispatchEvent(new Event('change', { bubbles: true })) })
 }
+
+test('Clear inputs resets the complete draft and picker while keeping saved Styles', async () => {
+  vi.mocked(api.styles).mockResolvedValue({ items: [{ id: 'style', name: 'Recipe', positivePrompt: 'styled', negativePrompt: 'blur', createdAt: '', updatedAt: '' }] })
+  let draft = initialImageDraft('model')
+  const submit = vi.fn()
+  function Editor() {
+    const [form, setForm] = useState<ImageDraft>({ ...initialImageDraft('other'), positivePrompt: 'old', negativePrompt: 'bad',
+      width: '768', height: '1024', steps: '30', cfg: '8', seed: '8', sampler: 'dpmpp_2m', scheduler: 'karras', denoise: '0.5',
+      loras: [{ name: 'detail', strengthModel: '0.5', strengthClip: '0.6' }], workflowId: workflow.id,
+      workflowKind: workflow.kind, definitionVersion: 1, definitionDigest: workflow.definitionDigest,
+      additionalParameters: { extra: 'old' }, referenceInputId: 'owned' })
+    draft = form
+    return <ImageEditor discovery={discovery} form={form} setForm={setForm} busy={false} csrf="csrf" onSubmit={submit} />
+  }
+  await act(async () => root.render(<Editor />))
+  const style = host.querySelectorAll('select')[2]
+  await act(async () => { style.value = 'style'; style.dispatchEvent(new Event('change', { bubbles: true })) })
+  await click('Replace from Assets')
+  host.querySelector('details')!.open = true
+  expect(host.querySelector('[role="dialog"]')).not.toBeNull()
+  await click('Clear inputs')
+  expect(draft).toEqual(initialImageDraft('model'))
+  expect(host.querySelector('img')).toBeNull()
+  expect(host.querySelector('[role="dialog"]')).toBeNull()
+  expect(host.querySelector('details')!.open).toBe(false)
+  expect(style.value).toBe('')
+  expect([...style.options].some(option => option.textContent === 'Recipe')).toBe(true)
+  expect([...host.querySelectorAll('label')].find(label => label.textContent === 'Style name')!.querySelector('input')!.value).toBe('')
+  expect(document.activeElement).toBe(host.querySelector('textarea'))
+  expect(button('Generate image').disabled).toBe(true)
+  expect(submit).not.toHaveBeenCalled()
+})
+
+test('Clear inputs waits for an upload, then clears its reference without submitting', async () => {
+  let resolve!: (value: import('./api').ManagedInput) => void
+  vi.mocked(api.uploadInput).mockImplementation(() => new Promise(value => { resolve = value }))
+  const submit = await show()
+  const fileInput = host.querySelector<HTMLInputElement>('input[type="file"]')!
+  await act(async () => {
+    Object.defineProperty(fileInput, 'files', { value: [new File(['fixture'], 'image.png', { type: 'image/png' })] })
+    fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  expect(button('Clear inputs').disabled).toBe(true)
+  await click('Clear inputs')
+  expect(host.querySelector('textarea')!.value).toBe('keep this prompt')
+  await act(async () => resolve({ id: 'uploaded', available: true, thumbnailUrl: '/input-thumb' }))
+  expect(button('Clear inputs').disabled).toBe(false)
+  await click('Clear inputs')
+  expect(host.querySelector('img')).toBeNull()
+  expect(host.querySelector('textarea')!.value).toBe('')
+  expect(submit).not.toHaveBeenCalled()
+})
+
+test('Clear inputs clears reference validation errors and works without a provider', async () => {
+  await show({ ...discovery, available: false, checkpoints: [] })
+  const fileInput = host.querySelector<HTMLInputElement>('input[type="file"]')!
+  await act(async () => {
+    Object.defineProperty(fileInput, 'files', { value: [new File(['fixture'], 'image.txt', { type: 'text/plain' })] })
+    fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  expect(host.textContent).toContain('PNG, JPEG or WebP')
+  await click('Clear inputs')
+  expect(host.querySelector('[role="alert"]')).toBeNull()
+  expect(host.querySelector('textarea')!.value).toBe('')
+})
+
+test('Clear inputs waits for Style writes without deleting the saved Style', async () => {
+  let resolve!: (value: import('./api').ImageStyle) => void
+  vi.spyOn(api, 'createStyle').mockImplementation(() => new Promise(value => { resolve = value }))
+  await show()
+  const name = [...host.querySelectorAll('label')].find(label => label.textContent === 'Style name')!.querySelector('input')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(name, 'Recipe')
+    name.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await click('Save as new')
+  expect(button('Clear inputs').disabled).toBe(true)
+  await act(async () => resolve({ id: 'saved', name: 'Recipe', positivePrompt: 'keep this prompt', negativePrompt: '', createdAt: '', updatedAt: '' }))
+  await click('Clear inputs')
+  expect(host.querySelector('textarea')!.value).toBe('')
+  expect([...host.querySelectorAll('option')].some(option => option.textContent === 'Recipe')).toBe(true)
+})
+
+test('Clear inputs is disabled during submission', async () => {
+  const setForm = vi.fn(), onReset = vi.fn()
+  await act(async () => root.render(<ImageEditor discovery={discovery} form={initialImageDraft('model')}
+    setForm={setForm} busy csrf="csrf" onSubmit={vi.fn()} onReset={onReset} />))
+  expect(button('Clear inputs').disabled).toBe(true)
+  await click('Clear inputs')
+  expect(setForm).not.toHaveBeenCalled()
+  expect(onReset).not.toHaveBeenCalled()
+})
 
 test('initial selection, attach, remove and replace obey both readiness gates', async () => {
   const submit = await show(); await selectWorkflow()
