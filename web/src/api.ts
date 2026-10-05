@@ -107,6 +107,7 @@ export const api = {
   intelligenceExecute,
   assistantModels: (csrf: string) => post<{ models: AgentModel[]; defaultModelId?: string }>('/api/assistant/models', {}, csrf),
   assistantStart: (modelId: string, remoteConsent: boolean, csrf: string) => post<{ sessionKey: string; modelId: string }>('/api/assistant/start', { modelId, remoteConsent }, csrf),
+  assistantSwitch: (payload: { requestId: string; sessionKey: string; expectedModelId: string; modelId: string; remoteConsent: boolean }, csrf: string) => post<{ sessionKey: string; modelId: string; remoteConsent: boolean }>('/api/assistant/switch', payload, csrf),
   personality: (csrf: string) => post<Personality>('/api/assistant/personality', {}, csrf),
   personalityHistory: (csrf: string, beforeRevision?: number) => post<{ versions: Personality[]; beforeRevision: number | null }>('/api/assistant/personality/history', { ...(beforeRevision ? { beforeRevision } : {}) }, csrf),
   personalitySave: (payload: unknown, csrf: string) => post<{ revision: number; duplicate: boolean }>('/api/assistant/personality/save', payload, csrf),

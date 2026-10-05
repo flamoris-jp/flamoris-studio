@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from .agent_gateway import AgentError, AgentGateway
 from .auth import authenticated_user, current_user, database
-from .db import AssistantRequest, AssistantSession, now
+from .db import AssistantModelSwitch, AssistantRequest, AssistantSession, now
 
 
 class Draft(BaseModel):
@@ -206,6 +206,13 @@ class ModelSelection(BaseModel):
     remoteConsent: StrictBool = False
 
 
+class ModelSwitch(ModelSelection):
+    model_config = ConfigDict(extra="forbid")
+    sessionKey: uuid.UUID
+    requestId: uuid.UUID
+    expectedModelId: StrictStr = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
 class PersonalitySection(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     title: StrictStr = Field(min_length=1, max_length=80)
@@ -323,6 +330,102 @@ def mount_assistant(app):
             raise HTTPException(
                 503, "Could not start selected conversation; no retry was made"
             ) from None
+
+    @router.post("/switch", dependencies=[Depends(settings_slot)])
+    async def switch_model(request: Request, response: Response,
+                           db: Session = Depends(database),
+                           user: uuid.UUID = Depends(authenticated_user)):
+        settings_enabled()
+        response.headers["Cache-Control"] = "private, no-store"
+        try:
+            selection = ModelSwitch.model_validate_json(await bounded_body(request, 2048))
+        except ValueError:
+            raise HTTPException(422, "Invalid model handoff") from None
+        actor = configured_actor(user)
+        binding = owned_binding(db, user, actor, selection.sessionKey)
+        gateway = app.state.agent_gateway_factory(actor[1], actor[2])
+        slots = app.state.assistant_ask_slots
+        try:
+            await asyncio.wait_for(slots.acquire(), 0.01)
+        except TimeoutError:
+            raise HTTPException(409, "Assistant is busy") from None
+        record = None
+        try:
+            catalog = await gateway.models(actor[0])
+            reauthorize(request, db, user, actor)
+            binding = owned_binding(db, user, actor, selection.sessionKey)
+            chosen = next((m for m in catalog["models"] if m["id"] == selection.modelId), None)
+            if chosen is None:
+                raise HTTPException(403, "Model is not permitted")
+            if chosen["data_flow"] == "remote_authorized" and not selection.remoteConsent:
+                raise HTTPException(422, "Confirm remote transmission of the complete conversation context")
+            record = db.get(AssistantModelSwitch, (user, selection.requestId))
+            if record is not None:
+                if (record.session_id != selection.sessionKey or record.binding_digest != actor[3]
+                        or record.model_id != selection.modelId or record.remote_consent != selection.remoteConsent):
+                    raise HTTPException(409, "Handoff identity changed; no new handoff was made")
+                if record.state == "completed":
+                    if binding.upstream_session_id != record.target_session_id:
+                        raise HTTPException(409, "This model handoff was superseded")
+                    return {"sessionKey": str(binding.id), "modelId": binding.model_id,
+                            "remoteConsent": binding.remote_consent}
+                if binding.upstream_session_id != record.source_session_id:
+                    raise HTTPException(409, "Assistant selection changed")
+            else:
+                if binding.model_id != selection.expectedModelId:
+                    raise HTTPException(409, "Assistant model changed; refresh before switching")
+                pending = db.scalar(select(AssistantRequest.id).where(
+                    AssistantRequest.user_id == user, AssistantRequest.session_id == binding.id,
+                    AssistantRequest.state != "completed"))
+                switching = db.scalar(select(AssistantModelSwitch.request_id).where(
+                    AssistantModelSwitch.user_id == user, AssistantModelSwitch.session_id == binding.id,
+                    AssistantModelSwitch.state == "uncertain"))
+                if pending or switching:
+                    raise HTTPException(409, "An earlier request is unconfirmed; reconcile it before switching")
+                record = AssistantModelSwitch(user_id=user, request_id=selection.requestId,
+                    session_id=binding.id, source_session_id=binding.upstream_session_id,
+                    model_id=selection.modelId, remote_consent=selection.remoteConsent,
+                    binding_digest=actor[3], state="uncertain")
+                db.add(record)
+                try:
+                    db.commit()
+                except IntegrityError:
+                    db.rollback()
+                    raise HTTPException(409, "Handoff already recorded; use the same request identity") from None
+            source = record.source_session_id
+            db.rollback()
+
+            async def before_dispatch():
+                reauthorize(request, db, user, actor)
+                latest = owned_binding(db, user, actor, selection.sessionKey)
+                if latest.upstream_session_id != source or await request.is_disconnected():
+                    raise AgentError("uncertain")
+                db.rollback()
+
+            target, expiry = await gateway.continue_session({"session_id": str(source),
+                "request_id": str(selection.requestId), "model_id": selection.modelId,
+                "remote_consent": selection.remoteConsent}, before_dispatch=before_dispatch)
+            reauthorize(request, db, user, actor)
+            binding = owned_binding(db, user, actor, selection.sessionKey)
+            if binding.upstream_session_id != source or not now() < expiry <= now() + timedelta(hours=1):
+                raise HTTPException(409, "Assistant selection changed; handoff result withheld")
+            binding.upstream_session_id, binding.expires_at = uuid.UUID(target), expiry
+            binding.model_id, binding.remote_consent = selection.modelId, selection.remoteConsent
+            record = db.get(AssistantModelSwitch, (user, selection.requestId))
+            record.target_session_id, record.state = uuid.UUID(target), "completed"
+            db.commit()
+            return {"sessionKey": str(binding.id), "modelId": binding.model_id,
+                    "remoteConsent": binding.remote_consent}
+        except AgentError as exc:
+            if record is not None and exc.code in {"busy", "model_forbidden", "remote_consent_required",
+                                                  "conversation_incomplete", "session_continuation_changed"}:
+                db.rollback()
+                recorded = db.get(AssistantModelSwitch, (user, selection.requestId))
+                recorded.state = "rejected"
+                db.commit()
+            raise HTTPException(503, "Model handoff unconfirmed. Check or retry this same handoff before sending.") from None
+        finally:
+            slots.release()
 
     async def personality_read(operation, request, response, db, user):
         settings_enabled()
@@ -472,7 +575,8 @@ def mount_assistant(app):
                 state = await gateway.availability(upstream)
                 reauthorize(request, db, user, actor)
                 current = db.get(AssistantSession, user)
-                if not current or current.id != session_key or expiry <= now():
+                if (not current or current.id != session_key or expiry <= now()
+                        or str(current.upstream_session_id) != upstream):
                     raise AgentError()
                 return {
                     **state,
@@ -511,6 +615,11 @@ def mount_assistant(app):
                 409, "Assistant session expired or changed; refresh before sending"
             )
         parent = None
+        pending_switch = db.scalar(select(AssistantModelSwitch.request_id).where(
+            AssistantModelSwitch.user_id == user, AssistantModelSwitch.session_id == binding.id,
+            AssistantModelSwitch.state == "uncertain"))
+        if pending_switch:
+            raise HTTPException(409, "Model handoff is unconfirmed; reconcile it before sending")
         if advice.previousHandle:
             previous = db.scalar(
                 select(AssistantRequest).where(
@@ -568,7 +677,8 @@ def mount_assistant(app):
                     409, "Assistant is not ready; question was not sent"
                 )
             current = db.get(AssistantSession, user)
-            if not current or current.id != session_key or current.expires_at <= now():
+            if (not current or current.id != session_key or current.expires_at <= now()
+                    or str(current.upstream_session_id) != payload["session_id"]):
                 raise HTTPException(409, "Assistant session changed")
             record = AssistantRequest(
                 user_id=user,
@@ -594,14 +704,16 @@ def mount_assistant(app):
                     raise AgentError("uncertain")
                 reauthorize(request, db, user, actor)
                 latest = db.get(AssistantSession, user)
-                if not latest or latest.id != session_key or latest.expires_at <= now():
+                if (not latest or latest.id != session_key or latest.expires_at <= now()
+                        or str(latest.upstream_session_id) != payload["session_id"]):
                     raise AgentError("uncertain")
                 db.rollback()
 
             result = await gateway.ask(payload, before_dispatch=before_dispatch)
             reauthorize(request, db, user, actor)
             current = db.get(AssistantSession, user)
-            if not current or current.id != session_key or current.expires_at <= now():
+            if (not current or current.id != session_key or current.expires_at <= now()
+                    or str(current.upstream_session_id) != payload["session_id"]):
                 raise HTTPException(409, "Assistant session changed; result withheld")
             record = db.get(AssistantRequest, handle)
             record.upstream_conversation_id, record.state = (

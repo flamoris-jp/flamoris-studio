@@ -52,6 +52,20 @@ class AssistantSession(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class AssistantModelSwitch(Base):
+    __tablename__ = "assistant_model_switches"
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), primary_key=True)
+    request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    target_session_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    model_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    remote_consent: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    binding_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class AssistantRequest(Base):
     __tablename__ = "assistant_requests"
     __table_args__ = (UniqueConstraint("user_id", "request_id", name="uq_assistant_request_owner"),)

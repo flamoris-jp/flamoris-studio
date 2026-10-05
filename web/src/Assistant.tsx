@@ -25,7 +25,8 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
   const [models, setModels] = useState<AgentModel[]>([])
   const [modelId, setModelId] = useState('')
   const [remoteConsent, setRemoteConsent] = useState(false)
-  const [modelLocked, setModelLocked] = useState(false)
+  const [switchUncertain, setSwitchUncertain] = useState(false)
+  const pendingSwitch = useRef<Parameters<typeof api.assistantSwitch>[0] | null>(null)
   const [selecting, setSelecting] = useState(false)
   const [open, setOpen] = useState(initiallyOpen)
   const [state, setState] = useState<AssistantAvailability>({ available: false, state: 'unknown' })
@@ -45,7 +46,7 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
   useEffect(() => { setRevision(value => value + 1) }, [draftJSON])
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   useEffect(() => {
-    if (!open || sending) return
+    if (!open || sending || selecting) return
     let active = true, pending = false
     const check = async () => {
       if (pending || document.hidden) return
@@ -74,7 +75,7 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
     const visibility = () => { setClock(Date.now()); void check() }
     document.addEventListener('visibilitychange', visibility)
     return () => { active = false; clearInterval(poll); document.removeEventListener('visibilitychange', visibility) }
-  }, [open, sending, refresh, csrf])
+  }, [open, sending, selecting, refresh, csrf])
   useEffect(() => {
     if (!open) return
     let active = true
@@ -92,15 +93,24 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
     {open && <><p role="status">{ready ? 'Ready' : state.state === 'ready' ? 'Checking availability' : state.state}</p>
       <button disabled={sending} onClick={() => setRefresh(value => value + 1)}>Check availability</button>
       {models.length > 0 && <section aria-label="Assistant model selection">
-        <label>Conversation model<select value={modelId} disabled={sending || selecting || modelLocked || uncertain} onChange={e => { setModelId(e.target.value); setRemoteConsent(false) }}><option value="">Select a model</option>{models.map(m => <option key={m.id} value={m.id}>{m.display_name} · {m.data_flow === 'local_only' ? 'Internal LLM' : 'OpenAI API'}</option>)}</select></label>
-        {remote && <label><input type="checkbox" checked={remoteConsent} disabled={sending || selecting || modelLocked || uncertain} onChange={e => setRemoteConsent(e.target.checked)} />Allow this conversation's personality, previous turns, question and explicitly attached draft to be sent to OpenAI</label>}
-        {modelLocked && <p>Model is fixed for this conversation. Start a new conversation before changing it.</p>}
-        <button disabled={!modelId || remote && !remoteConsent || sending || selecting || modelLocked || uncertain} onClick={async () => {
+        <label>Conversation model<select value={modelId} disabled={sending || selecting || switchUncertain || uncertain} onChange={e => { setModelId(e.target.value); setRemoteConsent(false) }}><option value="">Select a model</option>{models.map(m => <option key={m.id} value={m.id}>{m.display_name} · {m.data_flow === 'local_only' ? 'Internal LLM' : 'OpenAI API'}</option>)}</select></label>
+        {remote && <label><input type="checkbox" checked={remoteConsent} disabled={sending || selecting || switchUncertain || uncertain} onChange={e => setRemoteConsent(e.target.checked)} />Allow this conversation's personality, previous turns, question and explicitly attached draft to be sent to OpenAI</label>}
+        <p>You can switch models while keeping this conversation and its personality.</p>
+        <button disabled={!modelId || remote && !remoteConsent || sending || selecting || uncertain} onClick={async () => {
           setSelecting(true); setNotice('')
-          try { const result = await api.assistantStart(modelId, remoteConsent, csrf); if (!alive.current) return; previous.current = undefined; setAnswer(null); session.current = result.sessionKey; setState({ available: false, state: 'unknown', sessionKey: result.sessionKey, modelId: result.modelId, remoteConsent }); setNotice('Selected model started. Your unsent question is preserved.'); setRefresh(v => v + 1) }
-          catch (error) { if (alive.current) setNotice(error instanceof Error ? error.message : 'Model selection could not be confirmed.') }
+          try {
+            const continuing = !!state.sessionKey && !!state.modelId
+            if (continuing && !pendingSwitch.current) pendingSwitch.current = { requestId: crypto.randomUUID(), sessionKey: state.sessionKey!, expectedModelId: state.modelId!, modelId, remoteConsent }
+            const result = continuing ? await api.assistantSwitch(pendingSwitch.current!, csrf) : await api.assistantStart(modelId, remoteConsent, csrf)
+            if (!alive.current) return
+            if (!continuing) { previous.current = undefined; setAnswer(null) }
+            pendingSwitch.current = null; setSwitchUncertain(false); session.current = result.sessionKey
+            setState({ available: false, state: 'unknown', sessionKey: result.sessionKey, modelId: result.modelId, remoteConsent })
+            setNotice(continuing ? 'Model switched. This conversation and your unsent question are preserved.' : 'Selected model started. Your unsent question is preserved.'); setRefresh(v => v + 1)
+          }
+          catch (error) { if (alive.current) { setSwitchUncertain(!!pendingSwitch.current); setNotice(error instanceof Error ? error.message : 'Model selection could not be confirmed.') } }
           finally { if (alive.current) setSelecting(false) }
-        }}>Start selected model</button>
+        }}>{switchUncertain ? 'Check model switch' : state.sessionKey && state.modelId ? 'Switch selected model' : 'Start selected model'}</button>
       </section>}
       {state.modelId && <p>Active conversation model: {models.find(m => m.id === state.modelId)?.display_name ?? state.modelId}</p>}
       <p>Text advice. Sending does not change your draft or generate media.</p>
@@ -110,13 +120,13 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
       <label>Question<textarea value={question} maxLength={16384} disabled={sending || uncertain} onChange={event => setQuestion(event.target.value)} /></label>
       {notice && <p role="alert">{notice}</p>}
       {uncertain && <p role="alert">The outcome is unconfirmed. No automatic retry was made. Start a new conversation explicitly to send a new question.</p>}
-      <button className="primary" disabled={!ready || !selectionMatches || !validQuestion || sending || selecting || uncertain || attach && !capturedDraft}
+      <button className="primary" disabled={!ready || !selectionMatches || !validQuestion || sending || selecting || switchUncertain || uncertain || attach && !capturedDraft}
         onClick={async () => {
           if (!state.sessionKey || !ready || sending || uncertain) return
           const payload = JSON.parse(JSON.stringify({ requestId: crypto.randomUUID(), sessionKey: state.sessionKey,
             text: question, previousHandle: previous.current,
             ...(attach && capturedDraft ? { draft: capturedDraft, draftRevision: revision } : {}) }))
-          setModelLocked(true); setSending(true); setNotice('')
+          setSending(true); setNotice('')
           try {
             const result = await api.assistantAsk(payload, csrf)
             if (!alive.current) return
@@ -128,7 +138,19 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
             setUncertain(!(error instanceof AssistantFailure) || error.uncertain)
           } finally { if (alive.current) setSending(false) }
         }}>{sending ? 'Waiting for advice…' : 'Send question'}</button>
-      <button disabled={sending || selecting} onClick={() => { previous.current = undefined; setAnswer(null); setQuestion(''); setNotice(''); setUncertain(false); setModelLocked(false); setAttach(false); setRefresh(value => value + 1) }}>Start new conversation</button>
+      <button disabled={sending || selecting || models.length > 0 && (!modelId || remote && !remoteConsent)} onClick={async () => {
+        setSelecting(true)
+        try {
+          if (models.length > 0) {
+            const result = await api.assistantStart(modelId, remoteConsent, csrf)
+            if (!alive.current) return
+            session.current = result.sessionKey
+            setState({ available: false, state: 'unknown', sessionKey: result.sessionKey, modelId: result.modelId, remoteConsent })
+          }
+          previous.current = undefined; pendingSwitch.current = null; setAnswer(null); setQuestion(''); setNotice(''); setUncertain(false); setSwitchUncertain(false); setAttach(false); setRefresh(value => value + 1)
+        } catch (error) { if (alive.current) setNotice(error instanceof Error ? error.message : 'New conversation could not be confirmed.') }
+        finally { if (alive.current) setSelecting(false) }
+      }}>Start new conversation</button>
       {models.length > 0 && <PersonalityEditor csrf={csrf} sessionKey={session.current} />}
       {answer && <div className="assistant-answer"><p>{answer.text}</p><small>{answer.provenance.model} · {answer.provenance.provider}</small></div>}
     </>}
