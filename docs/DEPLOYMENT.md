@@ -5,12 +5,12 @@ to PostgreSQL and the explicitly configured backend services.
 
 The production container serves the built React application from FastAPI.
 PostgreSQL stores Studio account/catalog metadata. Thumbnails use a persistent
-private bind mount. Generation MCP is optional during initial setup and may run
+private bind mount. The Controller API is optional during initial setup and may run
 on the same host, another trusted host, or behind a protected proxy/tunnel.
 
 Raw Intelligence uses the shared non-MCP llama.cpp adapter; Agent Support uses
-Agent HTTP `/api/v1`. Generation alone retains its MCP compatibility gateway.
-Controller has no implementation or endpoint to configure. Follow
+Agent HTTP `/api/v1`. Generation uses Controller HTTP `/api/v1/generation`,
+co-hosted by the external Generation MCP process around the same runtime. Follow
 [architecture cleanup](ARCHITECTURE_CLEANUP.md), [raw Intelligence](RAW_INTELLIGENCE.md)
 and [assistant settings](ASSISTANT_SETTINGS.md) for their exact configuration.
 
@@ -83,12 +83,18 @@ Keep the thumbnail directory in the backup plan. PostgreSQL contains thumbnail
 locators, but the thumbnail files themselves live in this storage.
 
 `STUDIO_GENERATION_ENDPOINT` may remain empty for the first login test. To
-enable generation, use a protected HTTPS MCP endpoint or a trusted local tunnel
-to a loopback-only Generation MCP listener. With a local tunnel, an endpoint
-such as `http://127.0.0.1:<local-port>/mcp` is appropriate. The gateway
+enable generation, use a protected HTTPS Controller endpoint or a trusted local tunnel
+to a loopback-only matched Generation listener. With a local tunnel, an endpoint
+such as `http://127.0.0.1:<local-port>/api/v1/generation` is appropriate. The gateway
 intentionally refuses plain HTTP to a remote LAN host.
 
-Do not expose an unauthenticated MCP service to public networks.
+Configure the host's private `FLAMORIS_CONTROLLER_TOKEN` and the same backend-only
+`STUDIO_GENERATION_TOKEN` (32–512 printable ASCII credential characters), and leave
+`STUDIO_GENERATION_NAMESPACE` empty. External MCP/Hub ingress credentials are
+separate. Legacy MCP routes are rejected by Studio with no fallback. Drain or
+reconcile and stop the previous generation authority before activating this matched
+version; do not delete active journals or the lifetime ownership lock. See
+[the generation contract](GENERATION_CONTROLLER.md).
 
 ## 3. Build, migrate, start
 
@@ -104,7 +110,7 @@ curl -fsS http://127.0.0.1:${STUDIO_BIND_PORT:-5087}/api/system/status
 
 The migration job uses the migration env file; the long-running app uses the
 runtime env file. The migration must finish successfully before starting the
-app. The status endpoint checks the HTTP process, not database or MCP
+app. The status endpoint checks the HTTP process, not database or provider
 availability. Check application logs and a real login separately.
 
 The default published bind is `127.0.0.1:5087`. Override it only when your
@@ -158,20 +164,20 @@ during provisioning if needed.
 
 ## 5. Image generation smoke test
 
-Before enabling Generation MCP, verify that the Studio page and account login
+Before enabling the Controller API, verify that the Studio page and account login
 work while generation is unavailable.
 
-Once a compatible protected Generation MCP endpoint is running, configure
+Once a matched authenticated Controller endpoint is running, configure
 `STUDIO_GENERATION_ENDPOINT` and recreate Studio. Verify discovery, submit one
 small image, wait for completion, open its thumbnail/preview, and download it.
 
 Confirm:
 - Studio catalog rows exist in PostgreSQL;
 - a thumbnail exists in the configured thumbnail directory;
-- the generated asset remains owned by Generation MCP rather than by a
+- the generated asset remains owned by Controller rather than by a
   provider-local path exposed to Studio.
 
-If Generation MCP cannot restore job/asset state after its own restart, Studio
+If the Controller host cannot restore job/asset state after its own restart, Studio
 metadata alone cannot restore those outputs. Plan durable asset retention at
 the owning service. Do not point Studio directly at a provider-local output
 directory.

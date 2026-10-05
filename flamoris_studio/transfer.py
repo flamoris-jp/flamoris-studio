@@ -1,4 +1,4 @@
-"""Verify bounded Generation MCP chunks without collecting the asset in memory."""
+"""Verify bounded Controller chunks without collecting the asset in memory."""
 import asyncio
 import base64
 import binascii

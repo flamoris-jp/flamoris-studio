@@ -1,5 +1,7 @@
 # Internal connection cleanup and custom generation retirement
 
+> Historical cleanup receipt: the following inventory describes the earlier accepted cleanup before Controller extraction. Current generation ownership and direct HTTP integration are documented in [GENERATION_CONTROLLER.md](GENERATION_CONTROLLER.md) and [STUDIO_ARCHITECTURE.md](STUDIO_ARCHITECTURE.md). The earlier Controller hold/source status below is superseded by the 2026-10-05 implementation instruction.
+
 Authority: [AI #18](https://github.com/flamoris-jp/flamoris-ai/issues/18) and
 [Studio #62](https://github.com/flamoris-jp/flamoris-studio/issues/62).
 This source change does not deploy services, migrate databases, change grants or

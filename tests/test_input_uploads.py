@@ -9,7 +9,6 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from mcp.types import CallToolResult, TextContent
 from sqlalchemy import delete, select
 from test_studio import clients as studio_clients
 from test_studio import image_request, register
@@ -47,13 +46,13 @@ async def test_failed_upload_compensation_is_bounded_and_preserves_unknown_charg
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("namespace", ["", "generation"])
+@pytest.mark.parametrize("namespace", [""])
 async def test_gateway_chunks_private_image_on_one_connection_without_retry(monkeypatch, namespace):
     monkeypatch.setenv("STUDIO_GENERATION_NAMESPACE", namespace)
     data, key, calls, connections = b"x" * (512 * 1024 + 1), uuid.uuid4().hex, [], []
     prefix = namespace + "." if namespace else ""
     assembled = bytearray()
-    async def call(name, args, read_timeout_seconds):
+    async def call(_http, name, args, read_timeout_seconds):
         assert read_timeout_seconds == 15
         assert args["upload_id"] == key
         calls.append(name)
@@ -69,13 +68,14 @@ async def test_gateway_chunks_private_image_on_one_connection_without_retry(monk
         else:
             assert bytes(assembled) == data
             raw = {"input_id": key}
-        return CallToolResult(content=[], structured_content=raw)
+        return raw
     @asynccontextmanager
     async def connection():
         connections.append(True)
-        yield SimpleNamespace(call_tool=call)
+        yield object()
     gateway = GenerationGateway()
     monkeypatch.setattr(gateway, "_connection", connection)
+    monkeypatch.setattr(gateway, "_exchange", call)
     assert await gateway.upload_input(key, data, "image/png") == {"input_id": key}
     assert len(connections) == 1
     assert calls == [prefix + "inputs.upload.begin", *[prefix + "inputs.upload.write"] * 5, prefix + "inputs.upload.finish"]
@@ -85,14 +85,15 @@ async def test_gateway_chunks_private_image_on_one_connection_without_retry(monk
 @pytest.mark.parametrize("offset", [True, -1, 5, "0"])
 async def test_gateway_rejects_invalid_upload_cursor_without_writes(monkeypatch, offset):
     key, calls = uuid.uuid4().hex, []
-    async def call(name, args, **kwargs):
+    async def call(_http, name, args, _timeout, **kwargs):
         calls.append(name)
-        return CallToolResult(content=[], structured_content={"upload_id": key, "offset": offset})
+        return {"upload_id": key, "offset": offset}
     @asynccontextmanager
     async def connection():
-        yield SimpleNamespace(call_tool=call)
+        yield object()
     gateway = GenerationGateway()
     monkeypatch.setattr(gateway, "_connection", connection)
+    monkeypatch.setattr(gateway, "_exchange", call)
     with pytest.raises(GatewayError):
         await gateway.upload_input(key, b"x", "image/png")
     assert len(calls) == 1
@@ -101,14 +102,15 @@ async def test_gateway_rejects_invalid_upload_cursor_without_writes(monkeypatch,
 @pytest.mark.asyncio
 async def test_gateway_unknown_upload_never_replays_or_echoes_private_payload(monkeypatch):
     calls = []
-    async def call(name, args, **kwargs):
+    async def call(_http, name, args, _timeout, **kwargs):
         calls.append(name)
-        return CallToolResult(content=[TextContent(type="text", text="private filename/image content")], is_error=True)
+        raise GatewayError("unavailable")
     @asynccontextmanager
     async def connection():
-        yield SimpleNamespace(call_tool=call)
+        yield object()
     gateway = GenerationGateway()
     monkeypatch.setattr(gateway, "_connection", connection)
+    monkeypatch.setattr(gateway, "_exchange", call)
     with pytest.raises(GatewayError) as error:
         await gateway.upload_input(uuid.uuid4().hex, b"x", "image/png")
     assert "private" not in str(error.value) and len(calls) == 1
