@@ -6,11 +6,11 @@ import { ImageEditor, initialImageDraft, restoreImageDraft, type ImageDraft } fr
 import { api, type Asset, type Discovery, type Workflow } from './api'
 import { legalSeed, seedDomain, validValue, workflowPayload } from './WorkflowImage'
 
-const workflow: Workflow = { id: 'reference', kind: 'definition', name: 'Initial image', selectable: true, reason: null, definitionVersion: 1, definitionDigest: 'sha256:' + 'a'.repeat(64),
-  image: { mode: 'img2img', profile: 'image-v1', dimensions: { mode: 'parameters' } }, parameters: {
+const workflow: Workflow = { id: 'text-to-image', kind: 'builtin', name: 'Builtin image', selectable: true, reason: null, definitionVersion: null, definitionDigest: null,
+  image: { mode: 'txt2img', profile: 'image-v1', dimensions: { mode: 'parameters' } }, parameters: {
     model: { type: 'string', role: 'checkpoint', required: true }, prompt: { type: 'string', role: 'positive_prompt', required: true },
     w: { type: 'integer', role: 'width', minimum: 64, maximum: 4096, multiple_of: 8 }, h: { type: 'integer', role: 'height', minimum: 64, maximum: 4096, multiple_of: 8 },
-    random: { type: 'integer', role: 'seed', minimum: 8, maximum: 8, multiple_of: 4 }, strength: { type: 'number', role: 'denoise', minimum: 0, maximum: 1 }, source: { type: 'managed_input', role: 'initial_image' },
+    random: { type: 'integer', role: 'seed', minimum: 8, maximum: 8, multiple_of: 4 },
   } }
 const asset: Asset = { id: 'asset-a', executionId: 'execution', displayName: 'Source.png', mimeType: 'image/png', mediaKind: 'image', sizeBytes: 100, width: 512, height: 512, createdAt: '', hasThumbnail: true, thumbnailUrl: '/thumb', previewUrl: '/preview', downloadUrl: '/download' }
 const discovery: Discovery = { available: true, templates: ['text-to-image'], checkpoints: [{ id: 'checkpoint:model', name: 'model' }], loras: [], managedInputReady: true, workflows: [workflow] }
@@ -31,7 +31,7 @@ async function show(data = discovery, restore = false) {
   const submit = vi.fn()
   function Editor() {
     const [form, setForm] = useState(() => restoreImageDraft(initialImageDraft('model'), { positivePrompt: 'keep this prompt', seed: 8,
-      ...(restore ? { workflowId: workflow.id, workflowKind: workflow.kind, definitionVersion: 1, definitionDigest: workflow.definitionDigest, referenceInputId: 'owned' } : {}) }))
+      ...(restore ? { workflowId: workflow.id, workflowKind: workflow.kind, definitionVersion: workflow.definitionVersion, definitionDigest: workflow.definitionDigest, referenceInputId: 'owned' } : {}) }))
     return <ImageEditor discovery={data} form={form} setForm={setForm} busy={false} csrf="csrf" onSubmit={submit} />
   }
   await act(async () => root.render(<Editor />))
@@ -39,7 +39,7 @@ async function show(data = discovery, restore = false) {
 }
 async function selectWorkflow() {
   const select = host.querySelector('select')!
-  await act(async () => { select.value = 'reference'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+  await act(async () => { select.value = workflow.id; select.dispatchEvent(new Event('change', { bubbles: true })) })
 }
 
 test('Clear inputs resets the complete draft and picker while keeping saved Styles', async () => {
@@ -58,9 +58,7 @@ test('Clear inputs resets the complete draft and picker while keeping saved Styl
   await act(async () => root.render(<Editor />))
   const style = host.querySelectorAll('select')[2]
   await act(async () => { style.value = 'style'; style.dispatchEvent(new Event('change', { bubbles: true })) })
-  await click('Replace from Assets')
   host.querySelector('details')!.open = true
-  expect(host.querySelector('[role="dialog"]')).not.toBeNull()
   await click('Clear inputs')
   expect(draft).toEqual(initialImageDraft('model'))
   expect(host.querySelector('img')).toBeNull()
@@ -134,23 +132,14 @@ test('Clear inputs is disabled during submission', async () => {
   expect(onReset).not.toHaveBeenCalled()
 })
 
-test('initial selection, attach, remove and replace obey both readiness gates', async () => {
+test('builtin selection submits bounded parameters without a reference gate', async () => {
   const submit = await show(); await selectWorkflow()
-  expect(button('Generate image').disabled).toBe(true)
-  expect(button('Choose from Assets').disabled).toBe(false)
-  await click('Choose from Assets'); await click('Source.png')
-  expect(api.createInput).toHaveBeenCalledWith('asset-a', 'csrf')
   expect(button('Generate image').disabled).toBe(false)
-  expect(submit).not.toHaveBeenCalled()
+  expect(button('Choose from Assets').disabled).toBe(true)
   await click('Generate image')
   expect(submit).toHaveBeenCalledTimes(1)
-  expect(submit.mock.calls[0][0]).toMatchObject({ workflowId: 'reference', definitionVersion: 1, definitionDigest: workflow.definitionDigest, referenceInputId: 'owned', positivePrompt: 'keep this prompt' })
-  await click('Remove reference')
-  expect(button('Generate image').disabled).toBe(true)
-  await click('Choose from Assets'); await click('Source.png')
-  expect(button('Generate image').disabled).toBe(false)
-  expect(host.querySelector('textarea')?.value).toBe('keep this prompt')
-  expect(host.querySelector('input[type="file"]')?.getAttribute('accept')).toContain('image/webp')
+  expect(submit.mock.calls[0][0]).toMatchObject({ workflowId: workflow.id, workflowKind: 'builtin', positivePrompt: 'keep this prompt' })
+  expect(api.createInput).not.toHaveBeenCalled()
 })
 
 test('ready model domain and fixed dimensions remain explicit in the editor', async () => {
@@ -166,31 +155,37 @@ test('ready model domain and fixed dimensions remain explicit in the editor', as
   expect(button('512 × 512').disabled).toBe(true)
 })
 
-test('missing infrastructure disables picker; empty Assets do not enable generate', async () => {
+test('builtin generation does not depend on reference infrastructure', async () => {
   await show({ ...discovery, managedInputReady: false }); await selectWorkflow()
   expect(button('Choose from Assets').disabled).toBe(true)
-  expect(button('Generate image').disabled).toBe(true)
+  expect(button('Generate image').disabled).toBe(false)
 })
 
-test('expired restored reference permits reselection and missing preview does not revoke it', async () => {
-  vi.mocked(api.input).mockResolvedValueOnce({ id: 'owned', available: false, thumbnailUrl: null })
+test('restored references remain visible and keep builtin generation blocked', async () => {
   await show(discovery, true)
   expect(button('Generate image').disabled).toBe(true)
-  expect(button('Replace from Assets').disabled).toBe(false)
-  vi.mocked(api.createInput).mockResolvedValue({ id: 'replacement', available: true, thumbnailUrl: '/input-thumb' })
-  await click('Replace from Assets'); await click('Source.png')
-  expect(button('Generate image').disabled).toBe(false)
+  expect(host.querySelector('img')?.getAttribute('src')).toBe('/input-thumb')
   await act(async () => host.querySelector('img')!.dispatchEvent(new Event('error')))
   expect(host.textContent).toContain('Preview unavailable')
+  expect(button('Generate image').disabled).toBe(true)
+  await click('Remove reference')
   expect(button('Generate image').disabled).toBe(false)
 })
 
-test('stale version stays blocked until explicit current selection', async () => {
-  await show({ ...discovery, workflows: [{ ...workflow, definitionVersion: 2 }] }, true)
+test('retired saved selection preserves the draft until explicit builtin reselection', async () => {
+  function Editor() {
+    const [form, setForm] = useState(() => restoreImageDraft(initialImageDraft('model'), {
+      positivePrompt: 'keep retired draft', workflowId: 'old-custom', workflowKind: 'definition',
+      definitionVersion: 7, definitionDigest: 'sha256:' + 'a'.repeat(64), seed: 8,
+    }))
+    return <ImageEditor discovery={discovery} form={form} setForm={setForm} busy={false} csrf="csrf" onSubmit={vi.fn()} />
+  }
+  await act(async () => root.render(<Editor />))
   expect(button('Generate image').disabled).toBe(true)
-  expect(host.textContent).toContain('select a current ready version')
+  expect(host.querySelector('textarea')?.value).toBe('keep retired draft')
   await selectWorkflow()
   expect(button('Generate image').disabled).toBe(false)
+  expect(host.querySelector('textarea')?.value).toBe('keep retired draft')
 })
 
 test('seed domain sampling respects singleton, typed enum and empty domains', () => {
@@ -271,21 +266,12 @@ test('optional scalar defaults are materialized in payload; required and invalid
 })
 
 
-test('a ready pinned Image v3 wrapper submits through the existing editor without reference or native selectors', async () => {
-  const { source: _source, strength: _strength, ...parameters } = workflow.parameters
-  const wrapped: Workflow = { ...workflow, id: 'v3:image-parent', kind: 'v3', name: 'Composed image',
-    image: { mode: 'txt2img', profile: 'image-v1', dimensions: { mode: 'parameters' } }, parameters }
-  const submit = await show({ ...discovery, managedInputReady: false, workflows: [wrapped] })
-  const select = host.querySelector('select')!
-  await act(async () => { select.value = wrapped.id; select.dispatchEvent(new Event('change', { bubbles: true })) })
-  expect(button('Generate image').disabled).toBe(false)
-  expect(button('Choose from Assets').disabled).toBe(true)
-  await click('Generate image')
-  expect(submit.mock.calls[0][0]).toMatchObject({ workflowId: wrapped.id, workflowKind: 'v3', definitionVersion: 1,
-    definitionDigest: wrapped.definitionDigest, positivePrompt: 'keep this prompt' })
-  expect(submit.mock.calls[0][0].sampler).toBeUndefined()
-  expect(submit.mock.calls[0][0].scheduler).toBeUndefined()
-  expect(api.createInput).not.toHaveBeenCalled()
+test('retired custom and v3 descriptors never become executable from UI metadata', () => {
+  const form = { ...initialImageDraft('model'), positivePrompt: 'keep this prompt' }
+  for (const kind of ['definition', 'v3']) {
+    const retired: Workflow = { ...workflow, kind, id: 'old-custom', definitionVersion: 1, definitionDigest: 'sha256:' + 'a'.repeat(64) }
+    expect(workflowPayload(form, retired)).toBeNull()
+  }
 })
 
 test('restored v3 settings keep the draft and require reselection when the exact root changes', async () => {
@@ -304,7 +290,7 @@ test('restored v3 settings keep the draft and require reselection when the exact
   expect(host.querySelector('select')?.value).toBe('__stale')
 })
 
-test('v3 text domains enforce the declared UTF-8 JSON byte bound', () => {
+test('text domains enforce the declared UTF-8 JSON byte bound', () => {
   const spec = { type: 'string', max_bytes: 10 }
   expect(validValue(spec, 'cats')).toBe(true)
   expect(validValue(spec, '猫猫猫猫')).toBe(false)
@@ -328,9 +314,11 @@ test('local upload prepares a private reference before readiness but cannot be i
   expect(host.querySelector('textarea')?.value).toBe('keep this prompt')
   expect(host.querySelector('img')?.getAttribute('src')).toBe('/input-thumb')
   await selectWorkflow()
+  expect(button('Generate image').disabled).toBe(true)
+  await click('Remove reference')
   expect(button('Generate image').disabled).toBe(false)
   await click('Generate image')
-  expect(submit.mock.calls[0][0].referenceInputId).toBe('uploaded')
+  expect(submit.mock.calls[0][0].referenceInputId).toBeFalsy()
 })
 
 test('preparing uploads while infrastructure is offline keeps generation blocked', async () => {
@@ -350,11 +338,13 @@ test('upload replacement blocks generation during transfer and preserves the pre
   expect(button('Generate image').disabled).toBe(true)
   expect(button('Remove reference').disabled).toBe(true)
   await act(async () => reject(new Error('network failed')))
-  expect(button('Generate image').disabled).toBe(false)
+  expect(button('Generate image').disabled).toBe(true)
   expect(host.textContent).toContain('No automatic retry')
   expect(api.uploadInput).toHaveBeenCalledTimes(1)
-  await click('Generate image')
-  expect(submit.mock.calls[0][0].referenceInputId).toBe('owned')
+  expect(host.querySelector('img')?.getAttribute('src')).toBe('/input-thumb')
+  expect(submit).not.toHaveBeenCalled()
+  await click('Remove reference')
+  expect(button('Generate image').disabled).toBe(false)
 })
 
 test('drop accepts a single image and rejects unsupported, empty, oversized and multiple files before upload', async () => {

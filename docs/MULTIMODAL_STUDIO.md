@@ -1,5 +1,9 @@
 # Multimodal Studio and contextual Agent panel
 
+> Superseded by [architecture cleanup](ARCHITECTURE_CLEANUP.md) and AI #18.
+> Custom definitions/v3 execution and reference-image expansion are retired/held.
+> The following records the previous design and evidence, not current implementation instructions.
+
 Status: proposed product/integration design, 2026-10-02. Coordination: [FLAMORIS AI #15](https://github.com/flamoris-jp/flamoris-ai/issues/15). This does not implement new editors or alter the current Image contract.
 
 ## Baseline and responsibility

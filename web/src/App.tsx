@@ -264,7 +264,7 @@ export function ImageEditor({ discovery, onSubmit, onReset, busy, form, setForm,
     positivePrompt.current?.focus()
   }
   const selected = discovery.workflows?.find(item => item.id === form.workflowId)
-  const exactSelection = !form.workflowId || Boolean(selected?.selectable && selected.definitionVersion === form.definitionVersion && selected.definitionDigest === form.definitionDigest)
+  const exactSelection = !form.workflowId ? (!form.workflowKind && form.definitionVersion == null && form.definitionDigest == null) : Boolean(selected?.selectable && selected.kind === 'builtin' && form.workflowKind === selected.kind && selected.definitionVersion === form.definitionVersion && selected.definitionDigest === form.definitionDigest)
   const payload = selected ? workflowPayload(form, selected) : form.workflowId ? null : imagePayload(form)
   const needsReference = selected?.image.mode === 'img2img'
   const referenceEnabled = Boolean(exactSelection && needsReference && discovery.managedInputReady)

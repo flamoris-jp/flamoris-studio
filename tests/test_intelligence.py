@@ -1,23 +1,16 @@
 import json
 import uuid
-from copy import deepcopy
-from typing import Annotated, Any
-
-import httpx2
+import httpx
 import pytest
 from fastapi import HTTPException
-from mcp.server.mcpserver import MCPServer
-from mcp.types import CallToolResult, TextContent
-from pydantic import Field, ValidationError
+from pydantic import ValidationError
 from sqlalchemy import delete, select
 from test_studio import clients as studio_clients
 from test_studio import register
 
-from flamoris_studio.agent_gateway import AgentTransport
 from flamoris_studio.db import IntelligenceRequest, LoginSession
 from flamoris_studio.intelligence import InferenceInput, configured
 from flamoris_studio.intelligence_gateway import (
-    INFERENCE_REQUEST_SCHEMA,
     IntelligenceError,
     IntelligenceGateway,
 )
@@ -32,7 +25,7 @@ PIN = {
 
 
 def configure(monkeypatch):
-    monkeypatch.setenv("STUDIO_INTELLIGENCE_ENDPOINT", "http://127.0.0.1:8767/mcp")
+    monkeypatch.setenv("STUDIO_INTELLIGENCE_ENDPOINT", "http://127.0.0.1:8081")
     monkeypatch.setenv("STUDIO_INTELLIGENCE_DATA_FLOW", "approved-local")
     monkeypatch.setenv("STUDIO_INTELLIGENCE_MODELS", json.dumps([PIN]))
 
@@ -217,137 +210,60 @@ def test_input_and_config_are_exact_and_bounded(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "mode",
-    [
-        "valid",
-        "partial",
-        "error",
-        "mismatch",
-        "schema",
-        "pin",
-        "revoke",
-        "invalid",
-        "bad_discovery",
-    ],
-)
-async def test_actual_mcp_wire_no_retry_and_exact_dispatch(mode):
-    schema = deepcopy(INFERENCE_REQUEST_SCHEMA)
-    if mode == "schema":
-        schema["properties"]["max_output_tokens"]["type"] = "string"
-    Argument = Annotated[Any, Field(json_schema_extra=schema)]
-    server = MCPServer("fixture")
-    calls = []
-    model = {
-        **PIN,
-        "discovery": "configured",
-        "capability_ids": ["text.generate", "reasoning.generate", "code.generate"],
-    }
-    if mode == "pin":
-        model["context_tokens"] = 4096
+@pytest.mark.parametrize("mode", ["valid", "partial", "error", "pin", "revoke", "invalid", "bad_discovery"])
+async def test_shared_non_mcp_wire_no_retry_and_exact_dispatch(mode):
+    calls, admitted = [], []
 
-    @server.tool(name="inference.execute")
-    async def infer(request: Argument):
-        calls.append(request)
-        data = {
-            "ok": True,
-            "execution_id": str(uuid.uuid4()),
-            "provider_id": "llamacpp",
-            "model_id": "local",
-            "capability_id": "text.generate",
-            "elapsed_ms": 1,
-            "text": "<script>safe text</script>",
-            "finish_reason": "stop",
-            "usage": None,
-        }
-        if mode == "partial":
-            data.update(text="", finish_reason="length")
+    async def provider(incoming):
+        assert incoming.url.path in {"/health", "/v1/models", "/v1/chat/completions"}
+        if incoming.url.path == "/health":
+            return httpx.Response(200, json={"status": "ok"})
+        if incoming.url.path == "/v1/models":
+            return httpx.Response(200, json={"data": [{"id": "other" if mode in {"pin", "bad_discovery"} else "local"}]})
+        payload = json.loads(incoming.content)
+        calls.append(payload)
         if mode == "error":
-            data = {
-                "ok": False,
-                "error": {"code": "provider_timeout", "message": "PRIVATE_DETAIL"},
-            }
-        if mode == "invalid":
-            data["model_id"] = "another"
-        return CallToolResult(
-            content=[TextContent(type="text", text=json.dumps(data))],
-            structured_content=data,
-            is_error=mode == "error",
-        )
+            raise httpx.ReadTimeout("PRIVATE_DETAIL")
+        return httpx.Response(200, json={
+            "model": "local",
+            "choices": [{"finish_reason": "length" if mode == "partial" else "stop",
+                         "message": {"role": "assistant", "content": "" if mode == "partial" else "<script>safe text</script>"}}],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 9 if mode == "invalid" else 4},
+        })
 
-    def wire(data):
-        return CallToolResult(
-            content=[TextContent(type="text", text=json.dumps(data))],
-            structured_content=data,
-        )
-
-    @server.tool(name="models.get")
-    async def get_model(model_id: str) -> dict:
-        return wire(model)
-
-    @server.tool(name="models.list")
-    async def models() -> dict:
-        return wire({"models": [model]})
-
-    @server.tool(name="capabilities.list")
-    async def caps() -> dict:
-        if mode == "bad_discovery":
-            return wire({"capabilities": [{"capability_id": []}] * 3})
-        return wire(
-            {"capabilities": [{"capability_id": c} for c in model["capability_ids"]]}
-        )
-
-    @server.tool(name="capabilities.get")
-    async def cap(capability_id: str) -> dict:
-        return wire({"capability_id": capability_id})
-
-    if mode != "mismatch":
-
-        @server.tool(name="system.health")
-        async def health() -> dict:
-            return wire(
-                {
-                    "healthy": True,
-                    "providers": [{"provider_id": "llamacpp", "available": True}],
-                }
-            )
-
-    app = server.streamable_http_app(stateless_http=True, json_response=True)
-    gateway = IntelligenceGateway(
-        "http://127.0.0.1:8767/mcp",
-        transport_factory=lambda: AgentTransport(httpx2.ASGITransport(app=app)),
-    )
-    admitted = []
+    gateway = IntelligenceGateway("http://127.0.0.1:8081", transport_factory=lambda: httpx.MockTransport(provider))
 
     async def admit():
         if mode == "revoke":
             raise HTTPException(401)
         admitted.append(True)
 
-    request = InferenceInput.model_validate(body()).upstream()
-    async with server.session_manager.run():
-        if mode == "bad_discovery":
-            with pytest.raises(IntelligenceError):
-                await gateway.discover([PIN])
-            assert not calls
-        elif mode in {"valid", "partial"}:
-            result = await gateway.execute(
-                request, approved_model=PIN, before_dispatch=admit
-            )
-            assert result["finishReason"] == ("length" if mode == "partial" else "stop")
-            assert len(calls) == 1 and len(admitted) == 1
-            assert (await gateway.discover([PIN]))["available"]
-        elif mode == "revoke":
-            with pytest.raises(HTTPException):
-                await gateway.execute(
-                    request, approved_model=PIN, before_dispatch=admit
-                )
-            assert not admitted and not calls
-        else:
-            with pytest.raises(IntelligenceError) as error:
-                await gateway.execute(
-                    request, approved_model=PIN, before_dispatch=admit
-                )
-            assert error.value.uncertain is (mode in {"error", "invalid"})
-            assert len(calls) == (1 if mode in {"error", "invalid"} else 0)
-            assert "PRIVATE_DETAIL" not in str(error.value)
+    request = InferenceInput.model_validate(body(instruction="system guidance")).upstream()
+    if mode == "bad_discovery":
+        assert (await gateway.discover([PIN]))["available"] is False
+        assert not calls
+    elif mode in {"valid", "partial"}:
+        result = await gateway.execute(request, approved_model=PIN, before_dispatch=admit)
+        assert result["finishReason"] == ("length" if mode == "partial" else "stop")
+        assert len(calls) == len(admitted) == 1
+        assert calls[0]["messages"] == [
+            {"role": "system", "content": "system guidance"},
+            {"role": "user", "content": "private prompt"},
+        ]
+        assert (await gateway.discover([PIN]))["available"]
+    elif mode == "revoke":
+        with pytest.raises(HTTPException):
+            await gateway.execute(request, approved_model=PIN, before_dispatch=admit)
+        assert not admitted and not calls
+    else:
+        with pytest.raises(IntelligenceError) as error:
+            await gateway.execute(request, approved_model=PIN, before_dispatch=admit)
+        assert error.value.uncertain is (mode in {"error", "invalid"})
+        assert len(calls) == (1 if mode in {"error", "invalid"} else 0)
+        assert "PRIVATE_DETAIL" not in str(error.value)
+
+
+@pytest.mark.parametrize("endpoint", ["http://127.0.0.1:8767/mcp", "https://hub.example.test/mcp", "http://127.0.0.1:8081?secret=1"])
+def test_old_internal_mcp_endpoints_fail_before_any_network(endpoint):
+    with pytest.raises(IntelligenceError):
+        IntelligenceGateway(endpoint, "x" * 40)

@@ -26,8 +26,8 @@ async def test_explicit_direct_and_hub_names_preserve_arguments(monkeypatch, nam
     gateway = GenerationGateway()
     monkeypatch.setattr(gateway, "_connection", connection)
     for name in (
-        "workflows.v3.list",
-        "workflows.v3.build",
+        "workflows.list",
+        "workflows.build",
         "jobs.submit",
         "assets.prepare",
         "assets.read",
@@ -39,8 +39,8 @@ async def test_explicit_direct_and_hub_names_preserve_arguments(monkeypatch, nam
     assert calls == [
         (prefix + name, {"opaque": "unchanged"}, 45)
         for name in (
-            "workflows.v3.list",
-            "workflows.v3.build",
+            "workflows.list",
+            "workflows.build",
             "jobs.submit",
             "assets.prepare",
             "assets.read",

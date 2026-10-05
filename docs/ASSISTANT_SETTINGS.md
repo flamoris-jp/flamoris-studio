@@ -3,8 +3,8 @@
 Owner: #56; upstream Agent#34/#35, Intelligence#8, coordination AI#17.
 
 Apply Alembic `20261004_11`, then set `STUDIO_AGENT_SETTINGS_ENABLED=1` only with
-Agent's matched eight-tool settings catalog. Old four-tool deployments remain
-compatible with the default flag=0. The private Agent endpoint/token and exact
+Agent's versioned HTTP API with all eight settings operations. Core-only HTTP
+deployments remain compatible with the default flag=0; `/mcp` endpoints are rejected. The private Agent endpoint/token and exact
 account UUID → Human/Agent/Project bindings remain operator managed. Hub is not
 required: this uses the existing reviewed private Studio-backend → Agent path.
 

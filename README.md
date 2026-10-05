@@ -1,14 +1,14 @@
 # FLAMORIS Studio
 
 The dedicated [Raw Intelligence editor](docs/RAW_INTELLIGENCE.md) executes the
-reviewed synchronous Intelligence MCP contract. The standalone **Assistant**
+shared non-MCP intelligence execution adapter. The standalone **Assistant**
 workspace and contextual Image panel keep Agent conversations separate.
 
 Creative control center for FLAMORIS, connecting intelligence, generative AI, and production tools.
 
 FLAMORIS Studio is the web-based creative control plane for the FLAMORIS ecosystem.
 
-It coordinates AI-facing workflows through stable MCP boundaries while deliberately avoiding ownership of GPU runtime state or large production files.
+It coordinates AI capabilities through narrow backend contracts while avoiding ownership of GPU runtime state or large production files. Raw Intelligence calls the shared vendor adapter; Agent Support calls the Agent HTTP API. Generation retains its existing compatibility path while Controller remains unimplemented.
 
 Studio is **multi-user by design**. Authenticated users must be isolated from one another: prompts, execution references, results, and asset downloads are user-scoped even when an upstream MCP service is shared.
 
@@ -20,7 +20,7 @@ See [assistant settings and model integration](docs/ASSISTANT_SETTINGS.md) for t
 
 ## Proposed integration design
 
-[Multimodal Studio and contextual Agent](docs/MULTIMODAL_STUDIO.md) records the proposed media/Workflow/Agent integration coordinated by [FLAMORIS AI #15](https://github.com/flamoris-jp/flamoris-ai/issues/15). It is a design proposal, not a claim that new providers, composed execution or shared-user Agent assistance are implemented. Existing public contracts and readiness gates remain authoritative.
+[Architecture cleanup](docs/ARCHITECTURE_CLEANUP.md) records the implemented internal Intelligence/Agent paths and custom ComfyWorkFlow retirement under [FLAMORIS AI #18](https://github.com/flamoris-jp/flamoris-ai/issues/18). The older [multimodal proposal](docs/MULTIMODAL_STUDIO.md) remains historical; its composition and reference-image expansion are held.
 
 The [multimodal result catalog and bounded retrieval](docs/MULTIMEDIA_RESULTS.md)
 preserves explicit output roles and supported media metadata, renders controlled
@@ -49,17 +49,18 @@ The Image editor includes user-owned Styles stored in PostgreSQL. A Style saves
 positive and negative prompts; applying it leaves an editable draft. The editor
 also exposes size presets, ordered optional LoRAs, sampler, scheduler, denoise,
 and a random seed action. Generated result details show Studio's original request
-snapshot and offer **Use settings** to return to the Image editor. The Workflow
-picker uses graph-free Image-v1 descriptors and only selects ready Definitions
-with exact version/digest evidence. Reference images come from the signed-in
-user's existing generated Assets when both Workflow and managed-input
-infrastructure are ready. The editor also accepts a local PNG/JPEG/WebP image
-through file selection or drag and drop, up to 8 MiB, with an owner-only preview
-and a 24-hour lifetime. Uploads can be prepared before Workflow/GPU readiness;
-generation still requires an exact ready img2img Workflow and managed-input
-infrastructure. Attach, detach and replace preserve the prompt draft; expired
-references require reselection. A reference attached to txt2img blocks generation
-until a compatible Workflow is selected or the reference is explicitly removed.
+snapshot and offer **Use settings** to return to the Image editor. The recipe
+picker accepts only the original builtin `text-to-image` and `text-to-image-lora`
+descriptors. Custom definitions and v3 execution are retired. A restored custom
+selection remains blocked until the user explicitly selects a supported builtin;
+Studio does not silently retarget the draft.
+
+Existing owned Assets and immutable PNG/JPEG/WebP inputs retain their bounded
+upload, preview and deletion APIs. Uploads remain limited to 8 MiB and 24 hours.
+Neither retained builtin accepts reference images: an attached reference blocks
+generation until explicitly removed. Historical executions and uncertain input
+references keep their ownership and deletion fences. Source cleanup deletes no
+stored inputs or assets and does not implement a replacement img2img path.
 
 **Clear inputs** resets the Image draft: both prompts, Style selection/name,
 reference attachment, Workflow and additional parameters, LoRAs, seed and advanced
@@ -71,10 +72,9 @@ Styles, uploaded snapshots, generated assets and current execution tracking rema
 available; clearing the draft does not cancel or resubmit a job.
 Upload support implements the image portion of #30 through #58; audio upload is
 outside this contract.
-See [Workflow Image operation](docs/WORKFLOW_IMAGE_OPERATION.md).
-The opt-in [Image v3 route](docs/IMAGE_V3_OPERATION.md) also selects exact ready
-pinned Image wrappers through this editor, preserving per-user execution and Asset
-access. Multiple components and other media remain gated.
+See [architecture cleanup](docs/ARCHITECTURE_CLEANUP.md) for retained behavior.
+The previous [Image contract](docs/WORKFLOW_IMAGE_OPERATION.md) and
+[v3 route](docs/IMAGE_V3_OPERATION.md) are explicitly superseded historical records.
 
 The [native Speech editor](docs/SPEECH_OPERATION.md) submits one Japanese speech
 recording with text, optional voice description, duration, steps and seed. It
@@ -106,20 +106,21 @@ Examples include:
 ```text
 FLAMORIS Studio
       |
-      +-- flamoris-intelligence-mcp
-      |      language / reasoning / coding
+      +-- shared flamoris_intelligence -> configured local vendor/runtime API
       |
-      +-- flamoris-generation-mcp
-             image / video / music / speech
+      +-- AI Agent HTTP API -> internal execution adapter
+      |
+      +-- legacy Generation compatibility gateway
+             retained image / music / speech / asset operations
 ```
 
 Studio does not directly manage GPU-heavy runtimes.
 
 Runtime activation, shutdown, switching, and GPU exclusivity belong to `flamoris-gpu-node-manager`.
 
-Generation workflows, generation jobs, and generated assets belong to `flamoris-generation-mcp`.
+Retained generation recipes, jobs, inputs and generated assets currently remain behind the `flamoris-generation-mcp` compatibility boundary. Generation Controller is a future owner and remains unimplemented.
 
-Language/reasoning/coding execution belongs to `flamoris-intelligence-mcp`.
+Language/reasoning/coding inference belongs to Runtime/API/vendor execution. `flamoris-intelligence-mcp` is an external facade and is not an internal Studio gateway.
 
 Studio remains authoritative only for Studio-specific UI state, presentation, orchestration, and Studio-side access control.
 
@@ -230,7 +231,7 @@ Implemented foundations in current main include:
 
 Still tracked in Phase 1:
 
-- Intelligence editor integration through the public Intelligence MCP contract;
+- Raw Intelligence and Agent HTTP cutover acceptance on the operator-selected deployment;
 - Music editor integration after the Generation music contract is ready;
 - bounded large-asset transfer adoption and managed-input authorization;
 - account/session and login-boundary hardening.
@@ -259,8 +260,8 @@ Still tracked in Phase 1:
 
 ## Related repositories
 
-- [FLAMORIS Intelligence MCP](https://github.com/flamoris-jp/flamoris-intelligence-mcp) — provider-neutral intelligence boundary
-- [FLAMORIS Generation MCP](https://github.com/flamoris-jp/flamoris-generation-mcp) — generation workflows, jobs, providers and assets
+- [FLAMORIS Intelligence MCP](https://github.com/flamoris-jp/flamoris-intelligence-mcp) — external MCP facade and package distribution for the shared non-MCP intelligence adapter
+- [FLAMORIS Generation MCP](https://github.com/flamoris-jp/flamoris-generation-mcp) — retained generation recipes, jobs, providers, inputs and assets behind the compatibility boundary
 - [FLAMORIS Studio Client](https://github.com/flamoris-jp/flamoris-studio-client) — local bridge for desktop files, media and production tools
 - [FLAMORIS Commons](https://github.com/flamoris-jp/flamoris-commons) — shared foundations and repository policy
 

@@ -1,5 +1,9 @@
 # Studio Workflow selection and managed Image inputs
 
+> Superseded by [architecture cleanup](ARCHITECTURE_CLEANUP.md) and AI #18.
+> Custom definitions/v3 execution and reference-image expansion are retired/held.
+> The following records the previous design and evidence, not current implementation instructions.
+
 Status: proposed design-only implementation plan, 2026-10-01. Tracks #21/#30/#36. This
 design and its existing-Asset slice do not close #30.
 

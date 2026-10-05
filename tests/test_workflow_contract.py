@@ -14,9 +14,8 @@ def descriptor(mode="txt2img"):
         image.update(reference_semantics="initial_image", resize_policy="center-crop-resize")
         roles.update(source={"type": "managed_input", "role": "initial_image"},
                      strength={"type": "number", "role": "denoise", "minimum": 0, "maximum": 1})
-    return {"id": "arbitrary-image", "kind": "definition", "metadata_schema_version": 2,
-            "definition_version": 7, "definition_digest": "sha256:" + "a" * 64,
-            "readiness": {"state": "ready", "definition_version": 7, "definition_digest": "sha256:" + "a" * 64},
+    return {"id": "text-to-image", "kind": "builtin", "metadata_schema_version": 2,
+            "readiness": {"state": "ready", "basis": "builtin_compatibility"},
             "image": image, "parameters": roles, "graph": {"private": "never exposed"}}
 
 
@@ -32,7 +31,7 @@ def test_arbitrary_public_keys_effective_dimensions_seed_and_no_graph():
 def test_missing_or_mismatched_readiness_disabled(change):
     item = descriptor()
     if change == "digest":
-        item["readiness"]["definition_digest"] = "sha256:" + "b" * 64
+        item["definition_digest"] = "sha256:" + "b" * 64
     elif change == "legacy":
         item["metadata_schema_version"] = 1
     else:
@@ -95,7 +94,7 @@ def test_wrong_role_type_and_noncanonical_identity_never_selectable():
 def test_selected_request_scalar_types_are_exact():
     from flamoris_studio.app import WorkflowImageRequest
     from test_studio import image_request
-    raw = {**image_request(), "workflowId": "arbitrary-image", "workflowKind": "definition"}
+    raw = {**image_request(), "workflowId": "text-to-image", "workflowKind": "builtin"}
     for key in ("width", "height", "steps", "cfg", "seed", "denoise"):
         with pytest.raises(ValueError):
             WorkflowImageRequest(**{**raw, key: True})
@@ -107,7 +106,7 @@ def test_selected_request_accepts_omitted_controls_and_maps_only_descriptor_role
 
     item = normalize_catalog({"descriptors": [descriptor()]})[0]
     item["parameters"]["count"] = {"type": "integer", "role": "steps", "required": False, "default": 12}
-    raw = {"workflowId": item["id"], "workflowKind": "definition", "positivePrompt": "x", "checkpoint": "model",
+    raw = {"workflowId": item["id"], "workflowKind": "builtin", "positivePrompt": "x", "checkpoint": "model",
            "width": 512, "height": 512, **controls}
     values = WorkflowImageRequest(**raw).model_dump(mode="json", exclude_none=True)
     params = map_parameters(item, values)
@@ -120,7 +119,7 @@ def test_omitted_required_descriptor_control_is_rejected():
 
     item = normalize_catalog({"descriptors": [descriptor()]})[0]
     item["parameters"]["count"] = {"type": "integer", "role": "steps", "required": True}
-    raw = {"workflowId": item["id"], "workflowKind": "definition", "positivePrompt": "x", "checkpoint": "model", "width": 512, "height": 512}
+    raw = {"workflowId": item["id"], "workflowKind": "builtin", "positivePrompt": "x", "checkpoint": "model", "width": 512, "height": 512}
     values = WorkflowImageRequest(**raw).model_dump(mode="json", exclude_none=True)
     with pytest.raises(ValueError):
         map_parameters(item, values)
@@ -134,7 +133,7 @@ def test_number_enum_roles_survive_request_normalization(role, value, floating_e
     raw = descriptor()
     raw["parameters"]["control"] = {"type": "number", "role": role, "enum": [float(value) if floating_enum else value]}
     item = normalize_catalog({"descriptors": [raw]})[0]
-    request = WorkflowImageRequest(workflowId=item["id"], workflowKind="definition", positivePrompt="x", checkpoint="model",
+    request = WorkflowImageRequest(workflowId=item["id"], workflowKind="builtin", positivePrompt="x", checkpoint="model",
                                    width=512, height=512, **{role: value})
     params = map_parameters(item, request.model_dump(mode="json", exclude_none=True))
     assert params["control"] == value
@@ -170,7 +169,7 @@ async def test_selected_build_rejects_missing_or_invalid_workflow_id(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_selected_build_preserves_pinned_contract_and_valid_id(monkeypatch):
+async def test_selected_build_preserves_builtin_contract_and_valid_id(monkeypatch):
     from flamoris_studio.gateway import GenerationGateway
 
     item = normalize_catalog({"descriptors": [descriptor()]})[0]
@@ -178,10 +177,8 @@ async def test_selected_build_preserves_pinned_contract_and_valid_id(monkeypatch
 
     async def result(name, args):
         assert name == "workflows.build"
-        assert args["definition_version"] == item["definitionVersion"]
-        assert args["definition_digest"] == item["definitionDigest"]
-        assert args["require_ready"] is True
-        return {**args, "workflow_id": "a" * 32}
+        assert set(args) == {"template", "parameters"}
+        return {**args, "workflow_id": "a" * 32, "schema_version": 1}
 
     monkeypatch.setattr(gateway, "_json", result)
     assert await gateway.build_selected(item, {"model_key": "model"}) == "a" * 32

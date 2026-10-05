@@ -31,8 +31,9 @@ Studio may own:
 Studio must not become a competing authority for:
 
 - GPU runtime state or GPU exclusivity;
-- generation workflows/jobs/assets owned by `flamoris-generation-mcp`;
-- intelligence execution owned by `flamoris-intelligence-mcp`;
+- generation jobs/assets behind the retained Generation compatibility boundary;
+- intelligence execution owned by the internal Runtime/API/vendor adapter;
+- Agent personalities, conversations and principal policy owned by `flamoris-ai-agent`;
 - project/document state owned by FLAMORIS production applications;
 - arbitrary workstation filesystem state that belongs behind `flamoris-studio-client`.
 
@@ -40,10 +41,11 @@ Studio must not become a competing authority for:
 
 ## Architecture principles
 
-1. **Keep MCP behind a backend boundary**
-   - Browser code must not depend directly on MCP transport or SDK types.
-   - Use explicit Studio gateway/application contracts.
-   - Normalize MCP errors and results before exposing them to the frontend.
+1. **Keep internal execution behind a backend boundary**
+   - Studio raw Intelligence uses the shared non-MCP `flamoris_intelligence` adapter; Agent Support uses Agent HTTP API `/api/v1`. Never route either through MCP or MCP Hub.
+   - Browser code uses Studio DTOs, never provider credentials or protocol types.
+   - Generation still uses its legacy MCP compatibility gateway until a separately authorized Controller implementation. Do not create a replacement Controller in this cleanup.
+   - Normalize upstream errors/results before frontend publication and preserve scoped admission fences.
 
 2. **Capability first, provider second**
    - User-facing UI should be organized primarily around creative operations such as Intelligence, Image, Video, Music, and Speech.
@@ -84,6 +86,8 @@ Studio must not become a competing authority for:
    - Never invisibly retry non-idempotent submissions after ambiguous failure.
 
 ## Phase discipline
+
+[AI #18](https://github.com/flamoris-jp/flamoris-ai/issues/18) and [Studio #62](https://github.com/flamoris-jp/flamoris-studio/issues/62) govern the authorized Intelligence cleanup. Controller remains unimplemented. Retire the old custom ComfyWorkFlow/v3 integration; retain baseline generation, owned assets/inputs and uncertain request reservations. Use `ExecuteFlow` for inference flow and `ComfyWorkFlow` for ComfyUI graphs; existing wire identifiers remain exact.
 
 Follow the current Issue/design document as the source of truth.
 

@@ -1,4 +1,4 @@
-"""Private bounded Agent MCP transport. No Generation or direct inference fallback."""
+"""Private bounded Agent HTTP API. No Generation or direct inference fallback."""
 
 import asyncio
 import json
@@ -6,13 +6,11 @@ import logging
 import os
 import re
 from contextvars import ContextVar
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx2
-from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
 
 CATALOG = {"health", "sessions.open", "ask_scoped", "ask_availability"}
 SETTINGS_TOOLS = {
@@ -43,7 +41,7 @@ class PrivateLog(logging.Filter):
         return True
 
 
-for name in ("mcp.client.streamable_http", "mcp.client.session", "httpx2"):
+for name in ("httpx2", "httpx", "httpcore"):
     logging.getLogger(name).addFilter(PrivateLog())
 
 
@@ -99,12 +97,12 @@ def timestamp(value):
     if type(value) is not str or len(value) > 64:
         raise AgentError()
     try:
-        stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        stamp = datetime.fromisoformat(value)
     except ValueError:
         raise AgentError() from None
     if stamp.tzinfo is None:
         raise AgentError()
-    return stamp.astimezone(timezone.utc)
+    return stamp.astimezone(UTC)
 
 
 class AgentGateway:
@@ -123,6 +121,10 @@ class AgentGateway:
             and not 1 <= port <= 65535
             or url.username
             or url.password
+            or url.path not in {"", "/"}
+            or any(c.isspace() or ord(c) < 32 for c in endpoint)
+            or "\\" in endpoint
+            or "%" in url.netloc
             or url.query
             or url.fragment
             or url.scheme == "http"
@@ -130,16 +132,30 @@ class AgentGateway:
             or not re.fullmatch(r"[A-Za-z0-9_-]{32,512}", token)
         ):
             raise AgentError()
-        self.endpoint, self.token = endpoint, token
+        self.endpoint, self.token = endpoint.rstrip("/"), token
         self.settings_enabled = os.getenv("STUDIO_AGENT_SETTINGS_ENABLED") == "1"
         self.transport_factory = transport_factory or AgentTransport
 
     async def call(self, name, request, timeout=20, *, before_dispatch=None):
-        if len(json.dumps(request, ensure_ascii=False).encode()) > (
+        routes = {
+            "health": "/api/v1/health",
+            "sessions.open": "/api/v1/sessions/open",
+            "ask_scoped": "/api/v1/ask-scoped",
+            "ask_availability": "/api/v1/ask-availability",
+            "models.allowed": "/api/v1/models/allowed",
+            "personality.get": "/api/v1/personality/get",
+            "personality.history": "/api/v1/personality/history",
+            "personality.save": "/api/v1/personality/save",
+        }
+        permitted = CATALOG | SETTINGS_TOOLS if self.settings_enabled else CATALOG
+        if name not in permitted or type(request) is not dict:
+            raise AgentError("invalid_input")
+        if len(json.dumps(request, ensure_ascii=False, allow_nan=False).encode()) > (
             72 * 1024 if name == "personality.save" else 36 * 1024
         ):
             raise AgentError("invalid_input")
         marker = PRIVATE.set(True)
+        callback_started = callback_done = False
         try:
             async with asyncio.timeout(timeout):
                 async with httpx2.AsyncClient(
@@ -152,124 +168,79 @@ class AgentGateway:
                         "Accept-Encoding": "identity",
                     },
                 ) as http:
-                    async with streamable_http_client(
-                        self.endpoint, http_client=http, terminate_on_close=False
-                    ) as (read, write):
-                        async with ClientSession(read, write) as session:
-                            await session.initialize()
-                            tools = await session.list_tools()
-                            if (
-                                tools.next_cursor is not None
-                                or {x.name for x in tools.tools}
-                                != (
-                                    CATALOG | SETTINGS_TOOLS
-                                    if self.settings_enabled
-                                    else CATALOG
-                                )
-                                or len(tools.tools)
-                                != (8 if self.settings_enabled else 4)
-                            ):
-                                raise AgentError()
-                            expected = {
-                                "sessions.open": {"human", "agent", "project"},
-                                "ask_availability": {"session_id"},
-                                "ask_scoped": {
-                                    "session_id",
-                                    "request_id",
-                                    "text",
-                                    "previous_conversation_id",
-                                    "context",
-                                },
+                    response = await http.get(self.endpoint + "/api/v1/capabilities")
+                    response.raise_for_status()
+                    catalog = response.json()
+                    if (
+                        type(catalog) is not dict
+                        or catalog.get("ok") is not True
+                        or type(catalog.get("api_version")) is not int
+                        or catalog["api_version"] != 1
+                        or type(catalog.get("operations")) is not list
+                        or any(
+                            type(operation) is not str
+                            for operation in catalog["operations"]
+                        )
+                        or len(catalog["operations"]) != len(permitted)
+                        or set(catalog["operations"]) != permitted
+                    ):
+                        raise AgentError()
+                    if before_dispatch is not None:
+                        callback_started = True
+                        await before_dispatch()
+                        callback_done = True
+                    if name == "health":
+                        response = await http.get(self.endpoint + routes[name])
+                    else:
+                        response = await http.post(
+                            self.endpoint + routes[name], json=request
+                        )
+                    response.raise_for_status()
+                    data = response.json()
+                    if (
+                        type(data) is not dict
+                        or len(
+                            json.dumps(
+                                data, ensure_ascii=False, allow_nan=False
+                            ).encode()
+                        )
+                        > 128 * 1024
+                    ):
+                        raise AgentError()
+                    if data.get("ok") is not True:
+                        code = (
+                            data.get("error", {}).get("code")
+                            if type(data.get("error")) is dict
+                            else None
+                        )
+                        raise AgentError(
+                            code
+                            if code
+                            in {
+                                "busy",
+                                "principal_unavailable",
+                                "invalid_input",
+                                "input_too_large",
+                                "conversation_unavailable",
+                                "duplicate_request",
+                                "revision_conflict",
+                                "personality_forbidden",
+                                "personality_unavailable",
+                                "personality_capacity",
+                                "update_identity_mismatch",
+                                "model_forbidden",
+                                "model_selection_changed",
+                                "remote_consent_required",
                             }
-                            if self.settings_enabled:
-                                expected["sessions.open"] |= {
-                                    "model_id",
-                                    "remote_consent",
-                                }
-                                expected.update(
-                                    {
-                                        "models.allowed": {"human", "agent", "project"},
-                                        "personality.get": {
-                                            "session_id",
-                                            "before_revision",
-                                        },
-                                        "personality.history": {
-                                            "session_id",
-                                            "before_revision",
-                                        },
-                                        "personality.save": {
-                                            "session_id",
-                                            "request_id",
-                                            "expected_revision",
-                                            "display_name",
-                                            "sections",
-                                        },
-                                    }
-                                )
-                            for tool in tools.tools:
-                                if tool.name == "health":
-                                    continue
-                                schema = tool.input_schema.get("properties", {}).get(
-                                    "request", {}
-                                )
-                                if (
-                                    schema.get("type") != "object"
-                                    or schema.get("additionalProperties") is not False
-                                    or set(schema.get("properties", {}))
-                                    != expected[tool.name]
-                                ):
-                                    raise AgentError()
-                            if before_dispatch is not None:
-                                await before_dispatch()
-                            result = await session.call_tool(
-                                name, {"request": request}, read_timeout_seconds=timeout
-                            )
-                            data = result.structured_content
-                            if (
-                                result.is_error
-                                and type(data) is dict
-                                and data.get("ok") is True
-                            ):
-                                raise AgentError()
-                            if result.is_error and not isinstance(data, dict):
-                                raise AgentError()
-                            if (
-                                type(data) is not dict
-                                or len(json.dumps(data, ensure_ascii=False).encode())
-                                > 128 * 1024
-                            ):
-                                raise AgentError()
-                            if data.get("ok") is not True:
-                                code = (
-                                    data.get("error", {}).get("code")
-                                    if type(data.get("error")) is dict
-                                    else None
-                                )
-                                raise AgentError(
-                                    code
-                                    if code
-                                    in {
-                                        "busy",
-                                        "principal_unavailable",
-                                        "invalid_input",
-                                        "input_too_large",
-                                        "conversation_unavailable",
-                                        "duplicate_request",
-                                        "revision_conflict",
-                                        "personality_forbidden",
-                                        "personality_unavailable",
-                                        "personality_capacity",
-                                        "update_identity_mismatch",
-                                        "model_forbidden",
-                                        "model_selection_changed",
-                                        "remote_consent_required",
-                                    }
-                                    else "uncertain"
-                                )
-                            return data
+                            else "uncertain"
+                        )
+                    return data
         except AgentError:
             raise
         except Exception:
+            # Studio admission failures retain their authorization/fence meaning.
+            if callback_started and not callback_done:
+                raise
             raise AgentError() from None
         finally:
             PRIVATE.reset(marker)
@@ -390,7 +361,7 @@ class AgentGateway:
             timestamp(data.get("observed_at")),
             timestamp(data.get("expires_at")),
         )
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if not (
             0 < (expires - observed).total_seconds() <= 5 and observed <= now < expires
         ):
