@@ -1,12 +1,18 @@
 # Studio container deployment
 
 FLAMORIS Studio can run on any Linux host with Docker Compose and network access
-to the PostgreSQL and MCP services selected by the operator.
+to PostgreSQL and the explicitly configured backend services.
 
 The production container serves the built React application from FastAPI.
 PostgreSQL stores Studio account/catalog metadata. Thumbnails use a persistent
 private bind mount. Generation MCP is optional during initial setup and may run
 on the same host, another trusted host, or behind a protected proxy/tunnel.
+
+Raw Intelligence uses the shared non-MCP llama.cpp adapter; Agent Support uses
+Agent HTTP `/api/v1`. Generation alone retains its MCP compatibility gateway.
+Controller has no implementation or endpoint to configure. Follow
+[architecture cleanup](ARCHITECTURE_CLEANUP.md), [raw Intelligence](RAW_INTELLIGENCE.md)
+and [assistant settings](ASSISTANT_SETTINGS.md) for their exact configuration.
 
 This is a deployment template, not an automatic deployment. Review the target
 host, database, reverse proxy, storage, and network policy before applying it.

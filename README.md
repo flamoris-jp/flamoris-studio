@@ -18,14 +18,14 @@ Phase 1 uses a Python FastAPI backend with PostgreSQL-backed local accounts and 
 
 See [assistant settings and model integration](docs/ASSISTANT_SETTINGS.md) for the opt-in extension and migration gates.
 
-## Proposed integration design
+## Current integration boundaries
 
-[Architecture cleanup](docs/ARCHITECTURE_CLEANUP.md) records the implemented internal Intelligence/Agent paths and custom ComfyWorkFlow retirement under [FLAMORIS AI #18](https://github.com/flamoris-jp/flamoris-ai/issues/18). The older [multimodal proposal](docs/MULTIMODAL_STUDIO.md) remains historical; its composition and reference-image expansion are held.
+[Architecture cleanup](docs/ARCHITECTURE_CLEANUP.md) records the implemented internal Intelligence/Agent paths and custom ComfyWorkFlow retirement under [FLAMORIS AI #18](https://github.com/flamoris-jp/flamoris-ai/issues/18). The former composition/reference-image proposal is preserved in pinned Git history; it is not current implementation guidance.
 
 The [multimodal result catalog and bounded retrieval](docs/MULTIMEDIA_RESULTS.md)
 preserves explicit output roles and supported media metadata, renders controlled
 audio/video, and provides owner-checked immutable single ranges/attachment downloads.
-Additional generation providers and shared-user Agent integration remain gated.
+Additional generation providers remain gated; shared-user Agent support is implemented and requires configured grants and operational acceptance.
 
 ## Direction
 
@@ -73,8 +73,9 @@ available; clearing the draft does not cancel or resubmit a job.
 Upload support implements the image portion of #30 through #58; audio upload is
 outside this contract.
 See [architecture cleanup](docs/ARCHITECTURE_CLEANUP.md) for retained behavior.
-The previous [Image contract](docs/WORKFLOW_IMAGE_OPERATION.md) and
-[v3 route](docs/IMAGE_V3_OPERATION.md) are explicitly superseded historical records.
+The old custom Image/v3 runbooks have been removed from current documentation.
+Pinned historical references and retained-data rules are in
+[architecture cleanup](docs/ARCHITECTURE_CLEANUP.md).
 
 The [native Speech editor](docs/SPEECH_OPERATION.md) submits one Japanese speech
 recording with text, optional voice description, duration, steps and seed. It
@@ -222,9 +223,10 @@ Implemented foundations in current main include:
 
 - authenticated multi-user Studio shell;
 - PostgreSQL-backed Studio ownership/catalog metadata;
-- MCP gateway boundary;
+- raw Intelligence through the shared non-MCP adapter and Agent support through Agent HTTP;
+- retained Generation MCP compatibility gateway;
 - Image generation submit / status / result flow;
-- opt-in native no-reference Speech submit / status / WAV result flow;
+- opt-in native no-reference Speech and Music generation, plus Music transcription;
 - media-aware image preview and generated-result catalog;
 - per-user download and confirmed deletion;
 - cross-user execution/asset isolation.
@@ -232,9 +234,9 @@ Implemented foundations in current main include:
 Still tracked in Phase 1:
 
 - Raw Intelligence and Agent HTTP cutover acceptance on the operator-selected deployment;
-- Music editor integration after the Generation music contract is ready;
-- bounded large-asset transfer adoption and managed-input authorization;
-- account/session and login-boundary hardening.
+- Image/Speech/Music installed-provider and output-quality acceptance;
+- existing bounded transfers, input authorization and account fences on the selected deployment;
+- separately authorized Controller design/implementation to replace the Generation compatibility hop.
 
 ### Phase 2
 
@@ -292,7 +294,7 @@ Studioは最初からマルチユーザー前提です。共有されたMCP/runt
 
 Studio自身はGPU runtimeのauthorityにも、大容量プロジェクトファイルの保管場所にもなりません。
 
-Phase 1では、認証済みmulti-user shell、Image生成、job表示、生成結果preview、Generated一覧・取得・削除までcurrent mainで実装されています。Intelligence / Music連携やlarge asset / managed inputの境界は引き続きPhase 1で進めます。
+Phase 1では、認証済みmulti-user shell、Image生成、Raw Intelligence、Agent Assistant、opt-inのSpeech・Music生成／音楽採譜、Generated一覧・取得・削除、bounded transferとmanaged inputの認可まで実装されています。内部Intelligenceは共有adapter、AgentはHTTP APIを使います。GenerationだけはMCP互換経路が残り、Controllerは未実装です。実機導入と各providerの受け入れは別途必要です。
 
 生成結果は単なる画面表示で終わらせず、asset authorityを経由して安全にユーザーが取得できることを最初から要件に含めます。
 

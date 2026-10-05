@@ -57,8 +57,8 @@ Studio must not become a competing authority for:
    - Capability metadata may drive availability and validation without dictating the entire UX.
 
 4. **Job references are not job authority**
-   - Studio may retain a reference to an MCP-owned job for presentation.
-   - The owning MCP remains authoritative for current execution state.
+   - Studio may retain a reference to a generation-owned job for presentation.
+   - The retained Generation domain service remains authoritative for current execution state; MCP is its current compatibility transport.
    - Do not invent a second durable job state machine unless an explicit design requires one.
 
 5. **Asset references are not file paths**

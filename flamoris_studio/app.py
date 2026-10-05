@@ -116,7 +116,7 @@ class WorkflowImageRequest(ImageRequest):
     # definition pins are rejected before any reservation or upstream request.
     definitionVersion: None = None
     definitionDigest: None = None
-    referenceInputId: uuid.UUID | None = None
+    referenceInputId: None = None
     additionalParameters: dict = Field(default_factory=dict, max_length=64)
 
 
@@ -531,86 +531,92 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             raise HTTPException(404)
         return Response(data, media_type="image/webp", headers={"Cache-Control": "private, no-store"})
 
-    async def selected_submit(input, db, user_id):
-        reference = owned_input(db, input.referenceInputId, user_id) if input.referenceInputId else None
-        if reference and reference.mime_type not in {"image/png", "image/jpeg", "image/webp"}:
-            raise HTTPException(422, "This Workflow requires a reference image")
-        if reference and not usable(reference):
-            raise HTTPException(409, "Reference image unavailable; choose another Asset")
+    def image_route():
+        return tuple(os.getenv(key, "") for key in (
+            "STUDIO_GENERATION_ENDPOINT", "STUDIO_GENERATION_TOKEN", "STUDIO_GENERATION_NAMESPACE"))
+
+    def image_access(request, db, user_id, route):
+        db.rollback()
+        if current_user(request, db) != user_id:
+            raise HTTPException(401)
+        if image_route() != route:
+            raise HTTPException(409, "Image configuration changed; refresh before submitting")
+
+    def accepted_image_job(job):
+        if (type(job) is not dict or type(job.get("job_id")) is not str
+            or not 1 <= len(job["job_id"]) <= 128 or type(job.get("status")) is not str
+            or job["status"] not in {"queued", "running", "completed", "failed", "cancelled", "unknown"}):
+            raise GatewayError("upstream_failure")
+        return job
+
+    async def selected_submit(input, request, db, user_id, route):
         discovery = await app.state.gateway.discover()
+        image_access(request, db, user_id, route)
         selected = next((item for item in discovery.get("workflows", []) if item["id"] == input.workflowId), None)
         if (not discovery["available"] or not selected or not selected["selectable"]
             or selected["kind"] != "builtin" or selected["kind"] != input.workflowKind
             or selected["id"] not in {"text-to-image", "text-to-image-lora"}
             or selected["image"].get("mode") != "txt2img"):
-            raise HTTPException(409, "Workflow unavailable; select a ready Workflow")
-        needs_input = selected["image"].get("mode") == "img2img"
-        if needs_input and (not discovery.get("managedInputReady") or not reference):
-            raise HTTPException(409, "Reference image unavailable; choose an Asset when the service is ready")
-        if reference and not needs_input:
-            raise HTTPException(422, "This Workflow does not accept a reference image")
-        upstream = await check_input(app.state.gateway, reference) if reference else None
+            raise HTTPException(409, "Image template unavailable; select a ready template")
         values = input.model_dump(mode="json", exclude_none=True)
         try:
-            parameters = map_parameters(selected, values, upstream)
+            parameters = map_parameters(selected, values)
         except (ValueError, TypeError, KeyError) as exc:
-            raise HTTPException(422, "Workflow parameters are unsupported") from exc
+            raise HTTPException(422, "Image parameters are unsupported") from exc
         for role in ("steps", "cfg", "seed", "sampler", "scheduler", "denoise"):
             values.pop(ROLES[role], None)
         for key, spec in selected["parameters"].items():
             role = spec.get("role")
-            if role in ROLES and role not in {"initial_image", "loras"} and key in parameters:
+            if role in ROLES and role != "loras" and key in parameters:
                 values[ROLES[role]] = parameters[key]
-        dimensions = selected["image"].get("dimensions", {})
-        if dimensions.get("mode") == "fixed":
-            values.update(width=dimensions["width"], height=dimensions["height"])
-        snapshot = {**values, "snapshotVersion": 2,
-                    "normalizedParameters": {k:v for k,v in parameters.items() if selected["parameters"][k].get("type") != "managed_input"}}
-        quota_guard(db)
-        if reference:
-            db.refresh(reference)
-            if not usable(reference):
-                raise HTTPException(409, "Reference image unavailable")
-        execution = Execution(user_id=user_id, workflow=selected["id"],
-                              reference_input_id=reference.id if reference else None,
-                              request_snapshot=snapshot)
+        snapshot = {**values, "snapshotVersion": 2, "normalizedParameters": parameters}
+        execution = Execution(user_id=user_id, workflow=selected["id"], request_snapshot=snapshot)
         db.add(execution)
         db.commit()
         try:
             workflow = await app.state.gateway.build_selected(selected, parameters)
-        except GatewayError:
+            image_access(request, db, user_id, route)
+        except (GatewayError, HTTPException):
             set_status(db, execution, "failed")
             raise
         try:
-            job = await app.state.gateway.submit(workflow)
+            job = accepted_image_job(await app.state.gateway.submit(workflow))
             execution.upstream_job_id = job["job_id"]
             set_status(db, execution, job["status"])
         except GatewayError as exc:
             set_status(db, execution, "busy" if exc.code == "busy" else "submission_unknown")
+            image_access(request, db, user_id, route)
             raise
+        image_access(request, db, user_id, route)
         return view(execution, db)
 
     @app.post("/api/generation/image/jobs", status_code=201)
-    async def submit(input: WorkflowImageRequest | ImageRequest, db: Session = Depends(database), user_id: uuid.UUID = Depends(authenticated_user)):
+    async def submit(input: WorkflowImageRequest | ImageRequest, request: Request,
+                     db: Session = Depends(database), user_id: uuid.UUID = Depends(authenticated_user)):
+        route = image_route()
         if isinstance(input, WorkflowImageRequest):
-            return await selected_submit(input, db, user_id)
+            return await selected_submit(input, request, db, user_id, route)
         capability = await app.state.gateway.discover()
+        image_access(request, db, user_id, route)
         template = "text-to-image-lora" if input.loras else "text-to-image"
         if not capability["available"] or template not in capability["templates"]:
             raise GatewayError("unavailable")
         if input.seed is None:
             input.seed = secrets.randbelow(MAX_SAFE_IMAGE_SEED + 1)
         workflow = await app.state.gateway.build(template, input.parameters())
+        image_access(request, db, user_id, route)
         execution = Execution(user_id=user_id, workflow=template, request_snapshot=input.model_dump())
         db.add(execution)
         db.commit()  # Persist uncertain submissions before calling the non-idempotent upstream tool.
         try:
-            job = await app.state.gateway.submit(workflow)
+            job = accepted_image_job(await app.state.gateway.submit(workflow))
             execution.upstream_job_id = job["job_id"]
             set_status(db, execution, job["status"])
         except GatewayError as exc:
             set_status(db, execution, "busy" if exc.code == "busy" else "submission_unknown")
+            image_access(request, db, user_id, route)
             raise
+        image_access(request, db, user_id, route)
         return view(execution, db)
 
     @app.get("/api/assets")

@@ -862,3 +862,90 @@ async def test_gallery_burst_queues_bounded_thumbnails_and_cached_reads_bypass_s
             slots.release()
             slots.release()
     assert a.app.state.preview_admission.pending == 0
+
+
+@pytest.mark.parametrize("selected", [False, True])
+@pytest.mark.parametrize("stage", ["discover", "build", "submit"])
+@pytest.mark.parametrize("change", ["session", "route"])
+def test_image_admission_and_publication_recheck_owner_and_route(clients, monkeypatch, selected, stage, change):
+    from sqlalchemy import delete
+    from flamoris_studio.workflow_contract import normalize_catalog
+    from test_workflow_contract import descriptor
+
+    client, _, gateway, factory = clients
+    csrf = register(client, "image-fence@example.test")
+    item = normalize_catalog({"descriptors": [descriptor()]})[0]
+    body = {**image_request(), "seed": 8}
+    if selected:
+        body.update(workflowId=item["id"], workflowKind="builtin")
+
+    def invalidate():
+        if change == "session":
+            with factory() as db:
+                db.execute(delete(LoginSession))
+                db.commit()
+        else:
+            monkeypatch.setenv("STUDIO_GENERATION_NAMESPACE", "changed")
+
+    async def discover():
+        if stage == "discover":
+            invalidate()
+        return {"available": True, "templates": ["text-to-image"], "workflows": [item]}
+
+    async def build(*args):
+        if stage == "build":
+            invalidate()
+        return "built-recipe"
+
+    async def submit(workflow):
+        gateway.submit_count += 1
+        if stage == "submit":
+            invalidate()
+        return {"job_id": "accepted-job", "status": "queued"}
+
+    gateway.discover, gateway.build, gateway.build_selected, gateway.submit = discover, build, build, submit
+    response = client.post("/api/generation/image/jobs", json=body, headers={"X-CSRF-TOKEN": csrf})
+    assert response.status_code == (401 if change == "session" else 409), response.text
+    assert gateway.submit_count == (1 if stage == "submit" else 0)
+    with factory() as db:
+        execution = db.scalar(select(Execution))
+        if stage == "submit":
+            assert execution.upstream_job_id == "accepted-job" and execution.last_known_status == "queued"
+        elif selected and stage == "build":
+            assert execution.upstream_job_id is None and execution.last_known_status == "failed"
+        else:
+            assert execution is None
+
+
+@pytest.mark.parametrize("selected", [False, True])
+@pytest.mark.parametrize("job", [None, {"job_id": 7, "status": "queued"},
+                                {"job_id": "accepted", "status": {"completed": True}},
+                                {"job_id": "accepted", "status": "not-a-state"}])
+def test_malformed_image_acknowledgement_preserves_unknown_submission(clients, selected, job):
+    from flamoris_studio.workflow_contract import normalize_catalog
+    from test_workflow_contract import descriptor
+
+    client, _, gateway, factory = clients
+    csrf = register(client, "image-ack@example.test")
+    body = {**image_request(), "seed": 8}
+    item = normalize_catalog({"descriptors": [descriptor()]})[0]
+    if selected:
+        body.update(workflowId=item["id"], workflowKind="builtin")
+
+    async def discover():
+        return {"available": True, "templates": ["text-to-image"], "workflows": [item]}
+
+    async def build(*args):
+        return "built-recipe"
+
+    async def submit(recipe):
+        gateway.submit_count += 1
+        return job
+
+    gateway.discover, gateway.build, gateway.build_selected, gateway.submit = discover, build, build, submit
+    response = client.post("/api/generation/image/jobs", json=body, headers={"X-CSRF-TOKEN": csrf})
+    assert response.status_code == 502, response.text
+    assert gateway.submit_count == 1
+    with factory() as db:
+        execution = db.scalar(select(Execution))
+        assert execution.upstream_job_id is None and execution.last_known_status == "submission_unknown"

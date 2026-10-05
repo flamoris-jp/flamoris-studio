@@ -142,17 +142,16 @@ test('builtin selection submits bounded parameters without a reference gate', as
   expect(api.createInput).not.toHaveBeenCalled()
 })
 
-test('ready model domain and fixed dimensions remain explicit in the editor', async () => {
+test('builtin model domain and editable dimensions remain explicit in the editor', async () => {
   await show({ ...discovery, checkpoints: [...discovery.checkpoints, { id: 'other', name: 'unverified' }], workflows: [{ ...workflow,
-    image: { ...workflow.image, dimensions: { mode: 'fixed', width: 768, height: 1152 } },
     parameters: { ...workflow.parameters, model: { ...workflow.parameters.model, enum: ['model'] } } }] })
   await selectWorkflow()
   const model = host.querySelectorAll('select')[1]
   expect([...model.options].map(option => option.value)).not.toContain('unverified')
   const width = [...host.querySelectorAll('label')].find(label => label.textContent === 'width')!.querySelector('input')!
-  expect(width.disabled).toBe(true)
-  expect(width.value).toBe('768')
-  expect(button('512 × 512').disabled).toBe(true)
+  expect(width.disabled).toBe(false)
+  expect(width.value).toBe('512')
+  expect(button('512 × 512').disabled).toBe(false)
 })
 
 test('builtin generation does not depend on reference infrastructure', async () => {
@@ -197,8 +196,8 @@ test('seed domain sampling respects singleton, typed enum and empty domains', ()
 })
 
 test.each(['sampler', 'scheduler'])('selected builtin %s applies its advertised full string pattern', role => {
-  const selected: Workflow = { ...workflow, image: { ...workflow.image, mode: 'txt2img', dimensions: { mode: 'fixed', width: 512, height: 512 } },
-    parameters: { model: workflow.parameters.model, prompt: workflow.parameters.prompt,
+  const selected: Workflow = { ...workflow, image: workflow.image,
+    parameters: { model: workflow.parameters.model, prompt: workflow.parameters.prompt, w: workflow.parameters.w, h: workflow.parameters.h,
       token: { type: 'string', role, pattern: '^[a-zA-Z0-9_]+$', max_length: 80 } } }
   const form = { ...initialImageDraft('model'), positivePrompt: 'x' }
   expect(workflowPayload(form, selected)).not.toBeNull()
@@ -214,28 +213,24 @@ test('string patterns require complete matches and invalid patterns fail closed'
 })
 
 
-test.each(['513', '', 'invalid'])('fixed dimensions override stale draft %s in submitted payload', async stale => {
-  const fixed: Workflow = { ...workflow, image: { ...workflow.image, mode: 'txt2img', dimensions: { mode: 'fixed', width: 768, height: 1152 } },
-    parameters: { model: workflow.parameters.model, prompt: workflow.parameters.prompt } }
+test.each(['513', '', 'invalid'])('retired fixed dimensions cannot override a draft %s', stale => {
+  const retired: Workflow = { ...workflow, image: { ...workflow.image, dimensions: { mode: 'fixed', width: 768, height: 1152 } } }
   const form = { ...initialImageDraft('model'), positivePrompt: 'keep this prompt', width: stale, height: stale }
-  expect(workflowPayload(form, fixed)).toMatchObject({ width: 768, height: 1152, positivePrompt: 'keep this prompt' })
+  expect(workflowPayload(form, retired)).toBeNull()
   expect(form.width).toBe(stale)
-  const submit = vi.fn()
-  await act(async () => root.render(<ImageEditor discovery={{ ...discovery, workflows: [fixed] }}
-    form={{ ...form, workflowId: fixed.id, workflowKind: fixed.kind, definitionVersion: fixed.definitionVersion, definitionDigest: fixed.definitionDigest }}
-    setForm={vi.fn()} busy={false} csrf="csrf" onSubmit={submit} />))
-  const width = [...host.querySelectorAll('label')].find(label => label.textContent === 'width')!.querySelector('input')!
-  expect(width.disabled).toBe(true)
-  expect(width.value).toBe('768')
-  expect(button('Generate image').disabled).toBe(false)
-  await click('Generate image')
-  expect(submit).toHaveBeenCalledWith(expect.objectContaining({ width: 768, height: 1152 }))
 })
 
+test('retired reference parameter types and roles fail closed even on builtin IDs', () => {
+  const form = { ...initialImageDraft('model'), positivePrompt: 'x' }
+  for (const source of [{ type: 'managed_input', role: 'initial_image' }, { type: 'string', role: 'initial_image' }]) {
+    expect(workflowPayload(form, { ...workflow, parameters: { ...workflow.parameters, source } })).toBeNull()
+  }
+  expect(validValue({ type: 'managed_input' }, 'owned')).toBe(false)
+})
 
 test.each(['', 'invalid'])('inactive numeric and sampler drafts are omitted while preserving draft %s', async stale => {
-  const fixed: Workflow = { ...workflow, image: { ...workflow.image, mode: 'txt2img', dimensions: { mode: 'fixed', width: 512, height: 512 } },
-    parameters: { model: workflow.parameters.model, prompt: workflow.parameters.prompt } }
+  const fixed: Workflow = { ...workflow, image: workflow.image,
+    parameters: { model: workflow.parameters.model, prompt: workflow.parameters.prompt, w: workflow.parameters.w, h: workflow.parameters.h } }
   const form = { ...initialImageDraft('model'), positivePrompt: 'keep this prompt', steps: stale, cfg: stale, denoise: stale, seed: stale, sampler: '', scheduler: '' }
   const payload = workflowPayload(form, fixed)!
   for (const field of ['steps', 'cfg', 'denoise', 'seed', 'sampler', 'scheduler']) expect(payload).not.toHaveProperty(field)
@@ -253,8 +248,8 @@ test.each(['', 'invalid'])('inactive numeric and sampler drafts are omitted whil
 })
 
 test('optional scalar defaults are materialized in payload; required and invalid controls remain blocked', () => {
-  const selected: Workflow = { ...workflow, image: { ...workflow.image, mode: 'txt2img', dimensions: { mode: 'fixed', width: 512, height: 512 } },
-    parameters: { model: workflow.parameters.model, prompt: workflow.parameters.prompt,
+  const selected: Workflow = { ...workflow, image: workflow.image,
+    parameters: { model: workflow.parameters.model, prompt: workflow.parameters.prompt, w: workflow.parameters.w, h: workflow.parameters.h,
       count: { type: 'integer', role: 'steps', required: false, default: 12, minimum: 1, maximum: 30 },
       guidance: { type: 'number', role: 'cfg', required: false, default: 4, minimum: 0, maximum: 100 } } }
   const form = { ...initialImageDraft('model'), positivePrompt: 'x', steps: '', cfg: '' }
@@ -310,7 +305,7 @@ test('local upload prepares a private reference before readiness but cannot be i
   expect(api.uploadInput).toHaveBeenCalledWith(file, 'csrf')
   expect(submit).not.toHaveBeenCalled()
   expect(button('Generate image').disabled).toBe(true)
-  expect(host.textContent).toContain('or remove the reference')
+  expect(host.textContent).toContain('Remove the reference')
   expect(host.querySelector('textarea')?.value).toBe('keep this prompt')
   expect(host.querySelector('img')?.getAttribute('src')).toBe('/input-thumb')
   await selectWorkflow()
