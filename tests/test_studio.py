@@ -537,17 +537,14 @@ def test_media_bounds():
 
 
 @pytest.mark.asyncio
-async def test_gateway_normalizes_sdk_v2_result(monkeypatch):
-    from mcp.types import CallToolResult, ImageContent
+async def test_gateway_returns_bounded_http_binary(monkeypatch):
     gateway = GenerationGateway()
-
-    async def call(name, args=None, timeout=45):
+    async def call(name, args=None, timeout=45, *, max_bytes=None):
         assert name == "assets.get" and args == {"asset_id": "internal-only"}
-        return CallToolResult(content=[ImageContent(type="image", data="aGVsbG8=", mimeType="image/png")])
-
+        assert max_bytes == 1024 and timeout == 300
+        return b"hello", "image/png"
     monkeypatch.setattr(gateway, "_call", call)
-    data, mime = await gateway.content("internal-only", 1024)
-    assert data == b"hello" and mime == "image/png"
+    assert await gateway.content("internal-only", 1024) == (b"hello", "image/png")
 
 
 def test_gallery_detail_and_deletion_are_private_and_do_not_reimport(clients):
@@ -700,60 +697,33 @@ def test_catalog_sync_retries_after_timeout_and_thumbnail_disk_failure(clients):
 
 
 @pytest.mark.asyncio
-async def test_gateway_translates_upstream_size_limit_without_leaking_details():
-    from contextlib import asynccontextmanager
-    from types import SimpleNamespace
+async def test_gateway_translates_upstream_size_limit_without_leaking_details(monkeypatch):
+    from test_generation_connection import connect
+    import httpx2
     gateway = GenerationGateway()
-    class Session:
-        async def call_tool(self, *args, **kwargs):
-            return SimpleNamespace(is_error=True, content=[SimpleNamespace(
-                text='ComfyUI output exceeds the 64 MiB download limit /private/path')])
-    @asynccontextmanager
-    async def connection():
-        yield Session()
-    gateway._connection = connection
+    connect(monkeypatch, gateway, lambda request: httpx2.Response(413,
+        json={"error": {"code": "asset_too_large", "detail": "/private/path"}}))
     with pytest.raises(GatewayError) as error:
-        await gateway.content('asset', 64 * 1024 * 1024)
-    assert error.value.code == 'asset_too_large'
-    assert '/private' not in str(error.value)
+        await gateway.content("asset", 64 * 1024 * 1024)
+    assert error.value.code == "asset_too_large" and "/private" not in str(error.value)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("name", ["assets.prepare", "assets.read"])
-async def test_gateway_identifies_only_exact_hub_missing_transfer_tool(name):
-    from contextlib import asynccontextmanager
-    from types import SimpleNamespace
-
+async def test_gateway_identifies_missing_http_transfer_operation(name, monkeypatch):
+    from test_generation_connection import connect
+    import httpx2
     gateway = GenerationGateway()
-
-    class Session:
-        async def call_tool(self, called, args, **kwargs):
-            assert called == name
-            return SimpleNamespace(is_error=True, content=[
-                SimpleNamespace(text=f"Unknown tool: {called}")])
-
-    @asynccontextmanager
-    async def connection():
-        yield Session()
-
-    gateway._connection = connection
+    connect(monkeypatch, gateway, lambda request: httpx2.Response(404,
+        json={"error": {"code": "unknown_operation"}}))
     with pytest.raises(GatewayError) as error:
         await gateway._call(name)
     assert error.value.code == "transfer_unavailable"
-
-    class OtherSession:
-        async def call_tool(self, called, args, **kwargs):
-            return SimpleNamespace(is_error=True, content=[
-                SimpleNamespace(text=f"Unknown tool: {called} /private/path")])
-
-    @asynccontextmanager
-    async def other_connection():
-        yield OtherSession()
-
-    gateway._connection = other_connection
-    with pytest.raises(GatewayError) as other_error:
+    connect(monkeypatch, gateway, lambda request: httpx2.Response(502,
+        json={"error": {"code": "private upstream/path"}}))
+    with pytest.raises(GatewayError) as error:
         await gateway._call(name)
-    assert other_error.value.code == "upstream_failure"
+    assert error.value.code == "upstream_failure"
 
 
 @pytest.mark.parametrize("missing", ["assets.prepare", "assets.read"])

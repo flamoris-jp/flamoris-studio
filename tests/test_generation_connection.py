@@ -1,98 +1,97 @@
+import json
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
 
 import httpx2
 import pytest
-from mcp.types import CallToolResult, TextContent
 
 from flamoris_studio.gateway import GatewayError, GenerationGateway
 
+ENDPOINT = "https://controller.example.test/api/v1/generation"
+TOKEN = "fixture-controller-service-credential-32"
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("namespace", ["", "generation"])
-async def test_explicit_direct_and_hub_names_preserve_arguments(monkeypatch, namespace):
-    monkeypatch.setenv("STUDIO_GENERATION_NAMESPACE", namespace)
-    calls = []
-    expected = CallToolResult(content=[], structured_content={"ok": True})
 
-    async def call(name, args, read_timeout_seconds):
-        calls.append((name, args, read_timeout_seconds))
-        return expected
-
+def connect(monkeypatch, gateway, handler):
     @asynccontextmanager
     async def connection():
-        yield SimpleNamespace(call_tool=call)
+        async with httpx2.AsyncClient(
+            base_url=ENDPOINT + "/",
+            transport=httpx2.MockTransport(handler),
+            follow_redirects=False,
+            trust_env=False,
+        ) as http:
+            yield http
+
+    monkeypatch.setattr(gateway, "_connection", connection)
+
+
+@pytest.mark.asyncio
+async def test_direct_http_operations_preserve_arguments(monkeypatch):
+    monkeypatch.delenv("STUDIO_GENERATION_NAMESPACE", raising=False)
+    calls = []
+
+    def handler(request):
+        calls.append((request.method, request.url.path, json.loads(request.content)))
+        return httpx2.Response(200, json={"ok": True})
 
     gateway = GenerationGateway()
-    monkeypatch.setattr(gateway, "_connection", connection)
-    for name in (
+    connect(monkeypatch, gateway, handler)
+    names = (
         "workflows.list",
         "workflows.build",
         "jobs.submit",
         "assets.prepare",
         "assets.read",
-    ):
-        assert (
-            await gateway._call(name, {"opaque": "unchanged"}, timeout=45) is expected
-        )
-    prefix = namespace + "." if namespace else ""
+    )
+    for name in names:
+        assert await gateway._call(name, {"opaque": "unchanged"}) == {"ok": True}
     assert calls == [
-        (prefix + name, {"opaque": "unchanged"}, 45)
-        for name in (
-            "workflows.list",
-            "workflows.build",
-            "jobs.submit",
-            "assets.prepare",
-            "assets.read",
-        )
+        ("POST", "/api/v1/generation/" + name, {"opaque": "unchanged"})
+        for name in names
     ]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("outcome", ["timeout", "busy", "missing_transfer"])
-async def test_namespaced_failures_are_sanitized_and_never_retry_or_fallback(
-    monkeypatch, outcome
-):
-    monkeypatch.setenv("STUDIO_GENERATION_NAMESPACE", "generation")
+@pytest.mark.parametrize(
+    "outcome,expected",
+    [
+        ("timeout", "unavailable"),
+        ("busy", "busy"),
+        ("unknown", "unavailable"),
+        ("missing_transfer", "transfer_unavailable"),
+        ("redirect", "unavailable"),
+        ("private_error", "upstream_failure"),
+    ],
+)
+async def test_safe_failures_never_retry_or_fall_back(monkeypatch, outcome, expected):
     calls = []
 
-    async def call(name, args, read_timeout_seconds):
-        calls.append(name)
+    def handler(request):
+        calls.append(request.url.path)
         if outcome == "timeout":
-            raise TimeoutError("private upstream detail")
-        message = (
-            "busy: private job detail"
-            if outcome == "busy"
-            else "Unknown tool: generation.assets.prepare"
-        )
-        return CallToolResult(
-            is_error=True, content=[TextContent(type="text", text=message)]
-        )
-
-    @asynccontextmanager
-    async def connection():
-        yield SimpleNamespace(call_tool=call)
+            raise httpx2.ReadTimeout("private upstream detail", request=request)
+        if outcome == "redirect":
+            return httpx2.Response(307, headers={"Location": ENDPOINT + "/jobs.submit"})
+        status, code = {
+            "busy": (409, "busy"),
+            "unknown": (503, "submission_unknown"),
+            "missing_transfer": (404, "unknown_operation"),
+            "private_error": (502, "private path/input"),
+        }[outcome]
+        return httpx2.Response(status, json={"error": {"code": code}})
 
     gateway = GenerationGateway()
-    monkeypatch.setattr(gateway, "_connection", connection)
+    connect(monkeypatch, gateway, handler)
     name = "assets.prepare" if outcome == "missing_transfer" else "jobs.submit"
     with pytest.raises(GatewayError) as error:
         await gateway._call(name)
-    assert (
-        error.value.code
-        == {
-            "timeout": "unavailable",
-            "busy": "busy",
-            "missing_transfer": "transfer_unavailable",
-        }[outcome]
-    )
-    assert "private" not in str(error.value)
-    assert calls == ["generation." + name]
+    assert error.value.code == expected and "private" not in str(error.value)
+    assert calls == ["/api/v1/generation/" + name]
 
 
 @pytest.mark.asyncio
-async def test_invalid_namespace_rejects_before_connection(monkeypatch):
-    monkeypatch.setenv("STUDIO_GENERATION_NAMESPACE", "other")
+@pytest.mark.parametrize("namespace", ["generation", "other"])
+async def test_mcp_namespaces_rejected_before_connection(monkeypatch, namespace):
+    monkeypatch.setenv("STUDIO_GENERATION_NAMESPACE", namespace)
     gateway = GenerationGateway()
 
     @asynccontextmanager
@@ -106,62 +105,40 @@ async def test_invalid_namespace_rejects_before_connection(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_private_token_is_only_sent_in_explicit_no_redirect_backend_client(
-    monkeypatch,
-):
-    monkeypatch.setenv("STUDIO_GENERATION_ENDPOINT", "https://hub.example.test/mcp")
-    monkeypatch.setenv("STUDIO_GENERATION_TOKEN", "backend-test-placeholder")
-    sessions = []
+async def test_token_is_only_sent_in_explicit_no_redirect_backend_client(monkeypatch):
+    monkeypatch.setenv("STUDIO_GENERATION_ENDPOINT", ENDPOINT)
+    monkeypatch.setenv("STUDIO_GENERATION_TOKEN", TOKEN)
+    monkeypatch.delenv("STUDIO_GENERATION_NAMESPACE", raising=False)
+    factory, seen = httpx2.AsyncClient, []
 
-    @asynccontextmanager
-    async def transport(endpoint, *, http_client):
-        assert endpoint == "https://hub.example.test/mcp"
-        assert http_client.headers["Authorization"] == "Bearer backend-test-placeholder"
-        assert not http_client.follow_redirects
-        assert http_client.timeout.read == 330
-        for status in (301, 307, 308):
-            response = httpx2.Response(
-                status,
-                headers={"Location": "/another-path"},
-                request=httpx2.Request("POST", endpoint),
-            )
-            with pytest.raises(GatewayError):
-                await http_client.event_hooks["response"][0](response)
-            assert response.is_closed
-        sessions.append(http_client)
-        yield (object(), object())
+    def client(**kwargs):
+        assert kwargs["trust_env"] is False and kwargs["follow_redirects"] is False
+        assert kwargs["timeout"].read == 330
+        assert kwargs["headers"] == {"Authorization": "Bearer " + TOKEN}
+        seen.append(kwargs)
+        return factory(**kwargs)
 
-    class Session:
-        def __init__(self, *args):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            pass
-
-        async def initialize(self):
-            pass
-
-    monkeypatch.setattr("flamoris_studio.gateway.streamable_http_client", transport)
-    monkeypatch.setattr("flamoris_studio.gateway.ClientSession", Session)
-    async with GenerationGateway()._connection():
-        pass
-    assert len(sessions) == 1 and sessions[0].is_closed
+    monkeypatch.setattr("flamoris_studio.gateway.httpx2.AsyncClient", client)
+    async with GenerationGateway()._connection() as http:
+        assert str(http.base_url) == ENDPOINT + "/"
+    assert len(seen) == 1 and http.is_closed
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "endpoint,token",
     [
-        ("https://user:password@example.test/mcp", "token"),
-        ("https://example.test/mcp?token=secret", "token"),
-        ("https://example.test:invalid/mcp", "token"),
-        ("http://localhost:8765@other.example.test/mcp", "token"),
-        ("http://remote.example.test:8765/mcp", "token"),
-        ("https://example.test/mcp", "token\r\nInjected: value"),
-        ("https://example.test/mcp", "x" * 4097),
+        ("https://user:password@example.test/api/v1/generation", TOKEN),
+        (ENDPOINT + "?token=secret", TOKEN),
+        (ENDPOINT + "#fragment", TOKEN),
+        ("https://example.test:invalid/api/v1/generation", TOKEN),
+        ("http://localhost:8765@other.example.test/api/v1/generation", TOKEN),
+        ("http://remote.example.test:8765/api/v1/generation", TOKEN),
+        ("https://example.test/mcp", TOKEN),
+        (ENDPOINT + "/", TOKEN),
+        (ENDPOINT, "token\r\nInjected: value"),
+        (ENDPOINT, "x" * 513),
+        (ENDPOINT, ""),
     ],
 )
 async def test_invalid_endpoint_and_header_fail_before_transport(
@@ -170,12 +147,101 @@ async def test_invalid_endpoint_and_header_fail_before_transport(
     monkeypatch.setenv("STUDIO_GENERATION_ENDPOINT", endpoint)
     monkeypatch.setenv("STUDIO_GENERATION_TOKEN", token)
 
-    @asynccontextmanager
-    async def transport(*args, **kwargs):
-        pytest.fail("invalid endpoint/header must not connect")
-        yield
+    def forbidden(**kwargs):
+        pytest.fail("invalid endpoint/header must not construct a client")
 
-    monkeypatch.setattr("flamoris_studio.gateway.streamable_http_client", transport)
+    monkeypatch.setattr("flamoris_studio.gateway.httpx2.AsyncClient", forbidden)
     with pytest.raises(GatewayError):
         async with GenerationGateway()._connection():
             pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,headers,data,code",
+    [
+        (200, {"content-type": "image/png"}, b"x" * 11, "asset_too_large"),
+        (
+            200,
+            {"content-type": "image/png", "content-length": "-1"},
+            b"x",
+            "asset_too_large",
+        ),
+        (200, {"content-type": "text/html"}, b"x", "upstream_failure"),
+        (
+            200,
+            {"content-type": "image/png", "content-encoding": "gzip"},
+            b"x",
+            "upstream_failure",
+        ),
+        (
+            413,
+            {"content-type": "application/json"},
+            b'{"error":{"code":"asset_too_large"}}',
+            "asset_too_large",
+        ),
+    ],
+)
+async def test_binary_bounds_types_and_safe_limit_errors(
+    monkeypatch, status, headers, data, code
+):
+    gateway = GenerationGateway()
+    connect(
+        monkeypatch,
+        gateway,
+        lambda request: httpx2.Response(status, headers=headers, content=data),
+    )
+    with pytest.raises(GatewayError) as error:
+        await gateway.content("opaque", 10)
+    assert error.value.code == code
+
+
+@pytest.mark.asyncio
+async def test_streamed_media_and_metadata_are_bounded(monkeypatch):
+    class Stream(httpx2.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"x" * 8
+            yield b"x" * 8
+
+    gateway = GenerationGateway()
+    connect(
+        monkeypatch,
+        gateway,
+        lambda request: httpx2.Response(
+            200, headers={"Content-Type": "image/png"}, stream=Stream()
+        ),
+    )
+    with pytest.raises(GatewayError) as error:
+        await gateway.content("opaque", 10)
+    assert error.value.code == "asset_too_large"
+    connect(
+        monkeypatch,
+        gateway,
+        lambda request: httpx2.Response(
+            200,
+            content=b"x" * (2 * 1024**2 + 1),
+            headers={"Content-Type": "application/json"},
+        ),
+    )
+    with pytest.raises(GatewayError):
+        await gateway._json("system.health")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body", [b'{"healthy":NaN}', b'{"healthy":true,"healthy":false}', b"[]"]
+)
+async def test_malformed_upstream_json_never_becomes_a_trusted_result(
+    monkeypatch, body
+):
+    gateway = GenerationGateway()
+    connect(
+        monkeypatch,
+        gateway,
+        lambda request: httpx2.Response(
+            200, content=body, headers={"Content-Type": "application/json"}
+        ),
+    )
+    with pytest.raises(GatewayError) as error:
+        await gateway._json("system.health")
+    assert error.value.code == "upstream_failure"

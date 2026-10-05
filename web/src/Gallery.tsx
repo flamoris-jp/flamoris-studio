@@ -78,7 +78,7 @@ export default function Gallery({ csrf, onUseSettings }: { csrf: string; onUseSe
   }, [])
   const toggle = (id: string) => setSelected(old => old.includes(id) ? old.filter(x => x !== id) : [...old, id])
   async function remove(ids: string[]) {
-    if (!ids.length || !window.confirm(`Delete ${ids.length} generated result${ids.length === 1 ? '' : 's'} from Generation MCP storage and this Studio gallery? Provider originals may remain.`)) return
+    if (!ids.length || !window.confirm(`Delete ${ids.length} generated result${ids.length === 1 ? '' : 's'} and their stored copies? Provider originals may remain.`)) return
     setWorking(true); setError(''); setFailures([])
     const removed: string[] = [], failed: string[] = []
     try {
@@ -99,7 +99,7 @@ export default function Gallery({ csrf, onUseSettings }: { csrf: string; onUseSe
   }
   return <section className="panel results"><div className="row"><div><span className="eyebrow">YOUR OUTPUTS</span><h2>Assets</h2></div>
     <button disabled={working || !selected.length} onClick={() => remove(selected)}>Delete selected ({selected.length})</button></div>
-    <p>Generated files saved to this gallery are private to your account. Deletion removes the Generation MCP managed copy; provider originals may remain.</p>
+    <p>Generated files saved to this gallery are private to your account. Deletion removes the stored generated copy; provider originals may remain.</p>
     {canImport && <form className="row" onSubmit={async event => {
       event.preventDefault()
       if (working || !/^[a-f0-9]{32}$/.test(externalJob.trim())) return

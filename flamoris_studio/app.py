@@ -38,8 +38,8 @@ from .speech import mount_speech
 from .music import mount_music
 from .music_contract import checked_music_outputs
 
-# 512 KiB of raw image data stays below a 1 MiB SSE event even after base64
-# encoding and the MCP JSON envelope. Unknown sizes take the bounded route.
+# Small known images use direct binary retrieval; larger or unknown sizes use
+# bounded transfer. Keep this consumer threshold separate from the media limit.
 NATIVE_IMAGE_BYTES = 512 * 1024
 MAX_SAFE_IMAGE_SEED = 2**53 - 1
 

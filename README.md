@@ -8,9 +8,9 @@ Creative control center for FLAMORIS, connecting intelligence, generative AI, an
 
 FLAMORIS Studio is the web-based creative control plane for the FLAMORIS ecosystem.
 
-It coordinates AI capabilities through narrow backend contracts while avoiding ownership of GPU runtime state or large production files. Raw Intelligence calls the shared vendor adapter; Agent Support calls the Agent HTTP API. Generation retains its existing compatibility path while Controller remains unimplemented.
+It coordinates AI capabilities through narrow backend contracts while avoiding ownership of GPU runtime state or large production files. Raw Intelligence calls the shared vendor adapter; Agent Support calls the Agent HTTP API. Generation uses the authenticated Controller HTTP API directly; its external MCP facade shares the same Controller authority.
 
-Studio is **multi-user by design**. Authenticated users must be isolated from one another: prompts, execution references, results, and asset downloads are user-scoped even when an upstream MCP service is shared.
+Studio is **multi-user by design**. Authenticated users must be isolated from one another: prompts, execution references, results, and asset downloads are user-scoped even when an upstream generation service is shared.
 
 Phase 1 uses a Python FastAPI backend with PostgreSQL-backed local accounts and secure, server-side cookie sessions. React, TypeScript, and Vite provide the browser UI. Studio-owned user/execution/asset catalog metadata is stored in PostgreSQL; generated media binaries remain outside the database.
 
@@ -111,7 +111,7 @@ FLAMORIS Studio
       |
       +-- AI Agent HTTP API -> internal execution adapter
       |
-      +-- legacy Generation compatibility gateway
+      +-- Controller JSON/binary HTTP API
              retained image / music / speech / asset operations
 ```
 
@@ -119,13 +119,19 @@ Studio does not directly manage GPU-heavy runtimes.
 
 Runtime activation, shutdown, switching, and GPU exclusivity belong to `flamoris-gpu-node-manager`.
 
-Retained generation recipes, jobs, inputs and generated assets currently remain behind the `flamoris-generation-mcp` compatibility boundary. Generation Controller is a future owner and remains unimplemented.
+Generation Controller owns retained generation recipes, providers, jobs, inputs and generated assets. Generation MCP hosts one Controller runtime and its authenticated internal HTTP adapter on the same listener; the external MCP facade uses that same object. Studio uses no MCP handshake or Hub route for generation.
 
 Language/reasoning/coding inference belongs to Runtime/API/vendor execution. `flamoris-intelligence-mcp` is an external facade and is not an internal Studio gateway.
 
 Studio remains authoritative only for Studio-specific UI state, presentation, orchestration, and Studio-side access control.
 
-Upstream MCP job/asset IDs are not authorization tokens. Studio must scope access to the authenticated user and must not expose another user's prompt, execution metadata, result, or asset merely because the upstream identifier is known.
+Upstream generation job/asset IDs are not authorization tokens. Studio must scope access to the authenticated user and must not expose another user's prompt, execution metadata, result, or asset merely because the upstream identifier is known.
+
+## Generation connection
+
+Set `STUDIO_GENERATION_ENDPOINT` to the exact protected Controller API base, for example `https://generation.example.test/api/v1/generation` or a trusted loopback tunnel `http://127.0.0.1:8765/api/v1/generation`. Set the private `STUDIO_GENERATION_TOKEN` to the host's separate `FLAMORIS_CONTROLLER_TOKEN` (32–512 printable ASCII credential characters). `STUDIO_GENERATION_NAMESPACE` must be empty. Missing configuration makes generation unavailable; legacy `/mcp`/Hub endpoints are rejected with no fallback.
+
+The service credential grants the trusted backend the bounded API surface; Studio enforces all account/CSRF/ownership and response-time rechecks. No browser credential, raw upstream ID, arbitrary URL, environment proxy or redirect is used. Submit failures are never automatically retried. No database schema change is required. See [generation contract](docs/GENERATION_CONTROLLER.md).
 
 ## Jobs and results
 
@@ -138,7 +144,7 @@ submit
   -> result
 ```
 
-The underlying MCP remains the authority for execution state.
+Controller remains authoritative for generation execution state; Studio retains owned references and its request/publication fences.
 
 Result presentation is media-aware:
 
@@ -147,7 +153,7 @@ Result presentation is media-aware:
 - audio -> audio player
 - video -> video player
 
-The Generated results page lists each signed-in user's stored output references, offers metadata/details and download, and supports confirmed individual or selected-item deletion. Deletion calls Generation MCP `assets.delete` and then hides the Studio catalog entry; failure leaves it visible for retry. The operation removes the Generation MCP-managed copy, not necessarily the original provider output. Previously materialized outputs remain accessible after a Generation MCP restart once its durable asset support is deployed. Active job status and outputs that were never materialized still belong to the original process session.
+The Generated results page lists each signed-in user's stored output references, offers metadata/details and download, and supports confirmed individual or selected-item deletion. Deletion calls Controller `assets.delete` and then hides the Studio catalog entry; failure leaves it visible for retry. The operation removes the Controller-managed copy, not necessarily the original provider output. Previously materialized outputs remain accessible after a Controller host restart once its durable asset support is deployed. Uncertain/active reservations remain durable; materialization still requires the retained matched provider execution mapping and resources. A restart never authorizes resubmission.
 
 Generated media must also be retrievable by the user from the Studio UI. Studio should expose a safe download path backed by the owning asset authority rather than leaking provider-local filesystem paths.
 
@@ -171,23 +177,21 @@ cataloged results remain visible with `catalogSync: unavailable` on the result
 response. Tombstones prevent deleted entries from being reimported.
 
 Inline preview remains limited to at most 64 MiB (or the lower configured Studio
-limit). Images with unknown size or above 512 KiB use Generation MCP
-`assets.prepare` and `assets.read` for preview, thumbnail and download, avoiding
-a single base64 MCP/SSE event above a typical 1 MiB transport limit. Smaller
-images retain native `assets.get`; downloads above the inline limit also use
-bounded transfer. The two tools must be registered on the MCP Hub. Studio checks
+limit). Images with unknown size or above 512 KiB use Controller
+`assets.prepare` and `assets.read` for preview, thumbnail and download, with bounded materialization and digest-checked chunks. Smaller
+images use binary HTTP `assets.get`; downloads above the inline limit also use
+bounded transfer. The matched Controller API must support these operations. Studio checks
 ownership, reads at most 256 KiB per chunk, verifies chunk/final digests, and
 caps concurrent transfers at two per process. Thumbnail/inline-preview requests
 wait up to 30 seconds for a shared slot, with at most 24 pending previews per
 process; queue overflow/timeouts return 429 with Retry-After. Cached thumbnails
 bypass the transfer queue. Preparation is serialized across previews and downloads
-to respect Generation MCP's one-prepare limit; this stage waits up to 30 seconds.
+to respect Controller's one-prepare limit; this stage waits up to 30 seconds.
 Downloads retain immediate transfer-slot busy rejection. The UI
 retries failed image loads twice with delays, then offers Reload preview. The aggregate transfer cap defaults
-to 1 GiB and may be lowered with `STUDIO_MAX_TRANSFER_BYTES`. Deploy the Generation
-bounded-transfer tools and register them on the Hub before large downloads can
-work. Small image retrieval retains a bounded 300-second MCP call timeout and
-logs tool name, failure class and elapsed time without exposing private paths.
+to 1 GiB and may be lowered with `STUDIO_MAX_TRANSFER_BYTES`. Deploy the matched Controller bounded-transfer API before large downloads can
+work. External MCP tool registration is independent of this internal path. Small image retrieval retains a bounded 300-second HTTP read timeout and
+logs operation name, failure class and elapsed time without exposing private paths.
 Unmaterialized provider outputs still cannot be downloaded after their live
 execution mapping is lost.
 
@@ -205,7 +209,7 @@ Later, `flamoris-studio-client` will make large desktop-local projects and media
 
 ## Deployment
 
-For a generic Docker/Compose deployment, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). The public setup does not assume a particular FLAMORIS host. PostgreSQL, thumbnail storage, bind address/port, Generation MCP, reverse proxy, and secrets are supplied by the deployment environment.
+For a generic Docker/Compose deployment, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). The public setup does not assume a particular FLAMORIS host. PostgreSQL, thumbnail storage, bind address/port, Controller API, reverse proxy, and secrets are supplied by the deployment environment.
 
 [Real-machine acceptance](docs/REAL_MACHINE_ACCEPTANCE.md) records the reviewed source baselines, two-user Image/result retrieval checks, independent Agent-service checks and the remaining provider/runtime/Studio integration gates. CI success and merged source do not certify a deployment or live provider result.
 
@@ -219,12 +223,12 @@ Phase 1 architecture and implementation boundaries are defined in [docs/STUDIO_A
 
 ### Phase 1
 
-Implemented foundations in current main include:
+Implemented foundations in this source include:
 
 - authenticated multi-user Studio shell;
 - PostgreSQL-backed Studio ownership/catalog metadata;
 - raw Intelligence through the shared non-MCP adapter and Agent support through Agent HTTP;
-- retained Generation MCP compatibility gateway;
+- direct authenticated Controller HTTP gateway and shared external-MCP admission;
 - Image generation submit / status / result flow;
 - opt-in native no-reference Speech and Music generation, plus Music transcription;
 - media-aware image preview and generated-result catalog;
@@ -236,7 +240,7 @@ Still tracked in Phase 1:
 - Raw Intelligence and Agent HTTP cutover acceptance on the operator-selected deployment;
 - Image/Speech/Music installed-provider and output-quality acceptance;
 - existing bounded transfers, input authorization and account fences on the selected deployment;
-- separately authorized Controller design/implementation to replace the Generation compatibility hop.
+- matched Controller host/Studio configuration and single-authority operational cutover;
 
 ### Phase 2
 
@@ -263,7 +267,7 @@ Still tracked in Phase 1:
 ## Related repositories
 
 - [FLAMORIS Intelligence MCP](https://github.com/flamoris-jp/flamoris-intelligence-mcp) — external MCP facade and package distribution for the shared non-MCP intelligence adapter
-- [FLAMORIS Generation MCP](https://github.com/flamoris-jp/flamoris-generation-mcp) — retained generation recipes, jobs, providers, inputs and assets behind the compatibility boundary
+- [FLAMORIS Generation MCP](https://github.com/flamoris-jp/flamoris-generation-mcp) — external generation facade and co-hosted Controller HTTP adapter
 - [FLAMORIS Studio Client](https://github.com/flamoris-jp/flamoris-studio-client) — local bridge for desktop files, media and production tools
 - [FLAMORIS Commons](https://github.com/flamoris-jp/flamoris-commons) — shared foundations and repository policy
 
@@ -294,7 +298,7 @@ Studioは最初からマルチユーザー前提です。共有されたMCP/runt
 
 Studio自身はGPU runtimeのauthorityにも、大容量プロジェクトファイルの保管場所にもなりません。
 
-Phase 1では、認証済みmulti-user shell、Image生成、Raw Intelligence、Agent Assistant、opt-inのSpeech・Music生成／音楽採譜、Generated一覧・取得・削除、bounded transferとmanaged inputの認可まで実装されています。内部Intelligenceは共有adapter、AgentはHTTP APIを使います。GenerationだけはMCP互換経路が残り、Controllerは未実装です。実機導入と各providerの受け入れは別途必要です。
+Phase 1では、認証済みmulti-user shell、Image生成、Raw Intelligence、Agent Assistant、opt-inのSpeech・Music生成／音楽採譜、Generated一覧・取得・削除、bounded transferとmanaged inputの認可まで実装されています。内部Intelligenceは共有adapter、AgentはHTTP APIを使います。Generationも認証付きController HTTP APIへ直接接続し、外部MCPと同じ実行予約を使います。実機導入と各providerの受け入れは別途必要です。
 
 生成結果は単なる画面表示で終わらせず、asset authorityを経由して安全にユーザーが取得できることを最初から要件に含めます。
 

@@ -31,7 +31,7 @@ Studio may own:
 Studio must not become a competing authority for:
 
 - GPU runtime state or GPU exclusivity;
-- generation jobs/assets behind the retained Generation compatibility boundary;
+- generation jobs/assets owned by Controller through its authenticated HTTP API;
 - intelligence execution owned by the internal Runtime/API/vendor adapter;
 - Agent personalities, conversations and principal policy owned by `flamoris-ai-agent`;
 - project/document state owned by FLAMORIS production applications;
@@ -44,7 +44,7 @@ Studio must not become a competing authority for:
 1. **Keep internal execution behind a backend boundary**
    - Studio raw Intelligence uses the shared non-MCP `flamoris_intelligence` adapter; Agent Support uses Agent HTTP API `/api/v1`. Never route either through MCP or MCP Hub.
    - Browser code uses Studio DTOs, never provider credentials or protocol types.
-   - Generation still uses its legacy MCP compatibility gateway until a separately authorized Controller implementation. Do not create a replacement Controller in this cleanup.
+   - The latest 2026-10-05 user instruction authorizes Controller implementation and matched Studio integration. Generation uses authenticated Controller HTTP v1; external MCP shares that same runtime. Keep domain/provider state in Controller and do not restore MCP fallback.
    - Normalize upstream errors/results before frontend publication and preserve scoped admission fences.
 
 2. **Capability first, provider second**
@@ -58,7 +58,7 @@ Studio must not become a competing authority for:
 
 4. **Job references are not job authority**
    - Studio may retain a reference to a generation-owned job for presentation.
-   - The retained Generation domain service remains authoritative for current execution state; MCP is its current compatibility transport.
+   - The retained Generation domain service remains authoritative for current execution state; Studio uses its authenticated JSON/binary HTTP transport.
    - Do not invent a second durable job state machine unless an explicit design requires one.
 
 5. **Asset references are not file paths**
@@ -76,7 +76,7 @@ Studio must not become a competing authority for:
 
 8. **Multi-user isolation is an architectural boundary**
    - Treat authenticated user identity as part of every Studio-facing execution and asset access decision.
-   - Upstream MCP job IDs and asset IDs are identifiers, not authorization grants.
+   - Upstream generation job IDs and asset IDs are identifiers, not authorization grants.
    - Do not expose raw shared-upstream identifiers as sufficient proof of ownership.
    - Use Studio-owned opaque handles/mappings and verify ownership before status, result, cancel, preview, or download operations.
    - Do not leak another user's prompt, parameters, filenames, result metadata, active job identity, or diagnostics through busy/error responses.
@@ -87,7 +87,7 @@ Studio must not become a competing authority for:
 
 ## Phase discipline
 
-[AI #18](https://github.com/flamoris-jp/flamoris-ai/issues/18) and [Studio #62](https://github.com/flamoris-jp/flamoris-studio/issues/62) govern the authorized Intelligence cleanup. Controller remains unimplemented. Retire the old custom ComfyWorkFlow/v3 integration; retain baseline generation, owned assets/inputs and uncertain request reservations. Use `ExecuteFlow` for inference flow and `ComfyWorkFlow` for ComfyUI graphs; existing wire identifiers remain exact.
+[AI #18](https://github.com/flamoris-jp/flamoris-ai/issues/18) and [Studio #62](https://github.com/flamoris-jp/flamoris-studio/issues/62) govern the authorized Intelligence cleanup. Controller now owns retained generation domain code; Studio calls its authenticated internal API. Retire the old custom ComfyWorkFlow/v3 integration; retain baseline generation, owned assets/inputs and uncertain request reservations. Use `ExecuteFlow` for inference flow and `ComfyWorkFlow` for ComfyUI graphs; existing wire identifiers remain exact.
 
 Follow the current Issue/design document as the source of truth.
 
@@ -112,7 +112,7 @@ For generated media:
 
 - verify that the authenticated user owns the Studio execution/asset reference before resolving the upstream asset;
 
-- obtain metadata/content through the owning MCP;
+- obtain generation metadata/content through the owning Controller API;
 - validate media type and size;
 - serve content to the browser through an explicit Studio endpoint or equally bounded mechanism;
 - do not trust provider filenames/paths as local paths;
@@ -157,7 +157,7 @@ Treat prompts, attachments, generated outputs, local-project metadata, and user 
 
 In a multi-user deployment, authorization failures must fail closed. A user must not gain access to another user's execution or asset through guessed/replayed Studio or upstream identifiers.
 
-Validate untrusted provider/MCP responses before using them as URLs, paths, filenames, media types, commands, or structured control data.
+Validate untrusted provider/Controller responses before using them as URLs, paths, filenames, media types, commands, or structured control data.
 
 ## Licensing
 

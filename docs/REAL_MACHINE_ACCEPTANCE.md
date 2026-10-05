@@ -23,15 +23,16 @@ principal grant or an instruction to populate production data.
 
 | Capability | Current path and required receipt |
 | --- | --- |
-| Image | Studio -> retained Generation MCP -> ComfyUI; two builtin txt2img templates, model discovery, optional ordered LoRAs and bounded image retrieval |
+| Image | Studio -> authenticated Controller HTTP -> shared Controller -> ComfyUI; two builtin txt2img templates, model discovery, optional ordered LoRAs and bounded image retrieval |
 | Raw Intelligence | Studio -> shared non-MCP llama.cpp adapter; exact configured model alias and bounded text/reasoning/code responses |
 | Agent Assistant | Studio -> Agent HTTP `/api/v1` -> shared Intelligence adapter; authorized principal/session, optional local/OpenAI model grants and complete-context remote consent |
 | Speech | Opt-in native Irodori recipe/CLI adapter; configured immutable resources, Japanese no-reference output up to 30 seconds, owned WAV retrieval |
 | Music | Opt-in native YuE2 generation and SheetSage2 transcription contracts; owned WAV/ABC or MIDI/annotation outputs and existing request fences |
 | External ChatGPT | Hub -> current external Generation/Intelligence/Agent catalogs; configured authentication and a fresh client tool listing |
 
-Controller is unimplemented. Generation's internal MCP compatibility hop remains;
-Intelligence and Agent internal execution use no MCP. An existing Irodori HTTP
+Controller source is implemented and Generation now uses its direct HTTP API;
+this document still requires a separately authorized matched live cutover. Internal
+Intelligence, Agent and generation calls use no MCP. An existing Irodori HTTP
 server does not substitute for the retained CLI adapter contract. GPU Node Manager
 alone controls host lifecycle; Studio/Agent/Generation do not automatically switch
 runtimes to make a capability available.

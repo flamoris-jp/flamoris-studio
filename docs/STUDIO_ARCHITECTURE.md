@@ -20,15 +20,14 @@ production applications' project/document state.
 | --- | --- | --- |
 | Raw Intelligence | Shared non-MCP `flamoris_intelligence` adapter to configured local vendor HTTP API | Provider executes; Studio owns its admission and correlation fences |
 | Agent Support | Agent JSON HTTP API `/api/v1` | Agent owns personality, principal sessions, model/export policy, conversations and durable Agent fences |
-| Image, native Speech/Music, managed inputs and assets | Retained Generation MCP compatibility gateway | One existing generation-domain authority |
+| Image, native Speech/Music, managed inputs and assets | Authenticated Controller HTTP `/api/v1/generation` | One Controller runtime shared with external MCP |
 | GPU runtime lifecycle | No Studio activation/switching implementation | GPU Node Manager |
 | Large desktop-local projects | Future Studio Client boundary | Owning production application/client |
 
 Internal Intelligence and Agent calls do not use MCP or Hub. Agent is optional;
-raw inference and generation require no persona or Agent conversation. Generation
-Controller remains unimplemented. The retained Generation compatibility route is
-an as-built exception pending a separately authorized generation cutover, not the
-permanent architecture or a claim that a Controller already exists.
+raw inference and generation require no persona or Agent conversation. Generation also uses a direct non-MCP contract. The facade hosts one Controller
+shared by its external tools and internal HTTP adapter; Studio does not construct
+a JobStore or own a second generation reservation. See [the generation contract](GENERATION_CONTROLLER.md).
 
 Runtime ExecuteFlow is inference flow; its compiled ExecutionPlan remains distinct.
 ComfyWorkFlow means ComfyUI graph/API JSON. Studio does not implement either engine,
@@ -73,8 +72,8 @@ It cannot silently retarget a draft.
 Owned immutable inputs, uploads and asset routes remain available. Neither
 retained builtin accepts reference images; a reference attachment blocks submission
 until the user explicitly removes it. Historical execution/input relationships and
-uncertain submissions continue to prevent premature deletion. There is no new
-Controller, reference-image implementation, DB schema or data migration here.
+uncertain submissions continue to prevent premature deletion. Controller extraction changes the upstream transport while preserving these
+fences. No reference-image feature, DB schema or data migration is added.
 
 Native no-reference Japanese Speech, Music generation and owned-WAV transcription
 remain opt-in behind their exact Generation descriptors. Configured availability
