@@ -1,3 +1,4 @@
+import asyncio
 import json
 from contextlib import asynccontextmanager
 
@@ -114,7 +115,10 @@ async def test_token_is_only_sent_in_explicit_no_redirect_backend_client(monkeyp
     def client(**kwargs):
         assert kwargs["trust_env"] is False and kwargs["follow_redirects"] is False
         assert kwargs["timeout"].read == 330
-        assert kwargs["headers"] == {"Authorization": "Bearer " + TOKEN}
+        assert kwargs["headers"] == {
+            "Authorization": "Bearer " + TOKEN,
+            "Accept-Encoding": "identity",
+        }
         seen.append(kwargs)
         return factory(**kwargs)
 
@@ -245,3 +249,91 @@ async def test_malformed_upstream_json_never_becomes_a_trusted_result(
     with pytest.raises(GatewayError) as error:
         await gateway._json("system.health")
     assert error.value.code == "upstream_failure"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("slow_part", ["headers", "json", "binary"])
+@pytest.mark.parametrize("entry", ["call", "exchange"])
+async def test_absolute_deadline_bounds_slow_responses_without_replay(
+    monkeypatch, slow_part, entry
+):
+    calls, closed, completed = [], [], []
+
+    class SlowStream(httpx2.AsyncByteStream):
+        async def __aiter__(self):
+            data = (
+                b"x" * 64
+                if slow_part == "binary"
+                else b'{"padding":"' + b"x" * 64 + b'"}'
+            )
+            for value in data:
+                await asyncio.sleep(0.005)
+                yield bytes([value])
+            completed.append(True)
+
+        async def aclose(self):
+            closed.append(True)
+
+    async def handler(request):
+        calls.append(request.url.path)
+        if slow_part == "headers":
+            await asyncio.sleep(0.2)
+            completed.append(True)
+            return httpx2.Response(200, json={"job_id": "opaque"})
+        return httpx2.Response(
+            200,
+            headers={
+                "Content-Type": "image/png"
+                if slow_part == "binary"
+                else "application/json"
+            },
+            stream=SlowStream(),
+        )
+
+    gateway = GenerationGateway()
+    connect(monkeypatch, gateway, handler)
+    operation = "assets.get" if slow_part == "binary" else "jobs.submit"
+    with pytest.raises(GatewayError if entry == "call" else TimeoutError) as error:
+        if entry == "call":
+            await gateway._call(
+                operation,
+                timeout=0.03,
+                max_bytes=128 if slow_part == "binary" else None,
+            )
+        else:
+            async with gateway._connection() as http:
+                await gateway._exchange(
+                    http,
+                    operation,
+                    {},
+                    0.03,
+                    max_bytes=128 if slow_part == "binary" else None,
+                )
+    if entry == "call":
+        assert error.value.code == "unavailable"
+    assert calls == ["/api/v1/generation/" + operation] and completed == []
+    if slow_part != "headers":
+        assert closed == [True]
+
+
+@pytest.mark.asyncio
+async def test_absolute_deadline_also_bounds_connection_setup(monkeypatch):
+    gateway = GenerationGateway()
+    opened = []
+
+    @asynccontextmanager
+    async def slow_connection():
+        await asyncio.sleep(0.2)
+        opened.append(True)
+        async with httpx2.AsyncClient(
+            base_url=ENDPOINT + "/",
+            transport=httpx2.MockTransport(
+                lambda _: httpx2.Response(200, json={"ok": True})
+            ),
+        ) as http:
+            yield http
+
+    monkeypatch.setattr(gateway, "_connection", slow_connection)
+    with pytest.raises(GatewayError) as error:
+        await gateway._call("jobs.submit", timeout=0.03)
+    assert error.value.code == "unavailable" and opened == []

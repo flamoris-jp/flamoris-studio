@@ -68,7 +68,10 @@ class GenerationGateway:
         try:
             async with httpx2.AsyncClient(
                 base_url=endpoint + "/",
-                headers={"Authorization": "Bearer " + token},
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "Accept-Encoding": "identity",
+                },
                 timeout=httpx2.Timeout(30, read=330),
                 follow_redirects=False,
                 trust_env=False,
@@ -108,9 +111,12 @@ class GenerationGateway:
         }
         if name not in operations:
             raise GatewayError("validation")
-        async with http.stream(
-            "POST", name, json=args or {}, timeout=httpx2.Timeout(30, read=timeout)
-        ) as response:
+        async with (
+            asyncio.timeout(timeout),
+            http.stream(
+                "POST", name, json=args or {}, timeout=httpx2.Timeout(30, read=timeout)
+            ) as response,
+        ):
             if 300 <= response.status_code < 400:
                 raise GatewayError("unavailable")
             if response.headers.get("content-encoding", "identity") != "identity":
@@ -183,7 +189,9 @@ class GenerationGateway:
         if os.getenv("STUDIO_GENERATION_NAMESPACE", ""):
             raise GatewayError("unavailable")
         try:
-            async with self._connection() as http:
+            # httpx's read timeout resets on each chunk. Bound the whole call,
+            # including connection setup, headers, streaming and cleanup.
+            async with asyncio.timeout(timeout), self._connection() as http:
                 return await self._exchange(
                     http, name, args, timeout, max_bytes=max_bytes
                 )
