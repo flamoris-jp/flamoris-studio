@@ -27,4 +27,6 @@ def upgrade():
 
 
 def downgrade():
-    raise RuntimeError("Model handoff records require explicit retention reconciliation")
+    if op.get_bind().execute(sa.text("SELECT 1 FROM assistant_model_switches LIMIT 1")).first():
+        raise RuntimeError("Model handoff records require explicit retention reconciliation")
+    op.drop_table("assistant_model_switches")
