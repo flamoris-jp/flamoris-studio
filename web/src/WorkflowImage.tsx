@@ -63,6 +63,9 @@ export function legalSeed(spec?: ParameterSpec): number | null {
 }
 
 export function workflowPayload(form: ImageDraft, item: Workflow): ImageSubmission | null {
+  if (item.kind !== 'builtin' || !['text-to-image', 'text-to-image-lora'].includes(item.id) ||
+      item.image.mode !== 'txt2img' || item.definitionVersion !== null || item.definitionDigest !== null ||
+      form.definitionVersion != null || form.definitionDigest != null || form.referenceInputId) return null
   if (!item.selectable || !form.positivePrompt || !form.checkpoint) return null
   const values: Record<string, unknown> = { ...form }
   for (const key of ['width', 'height', 'steps', 'cfg', 'denoise', 'seed']) {
@@ -163,7 +166,7 @@ export function ReferencePicker({ enabled, needsReference, inputId, csrf, onChan
     finally { finish() }
   }
   return <div className="reference-note"><strong>Reference Image</strong>
-    {!needsReference ? <p>Select a ready img2img Workflow to use an initial image. You can upload a reference in advance.</p> : !enabled ? <p>You can prepare a reference now. Generation requires a ready Workflow and service.</p> : <p>The initial image is center-cropped and resized before generation.</p>}
+    {!needsReference ? <p>This operation does not use a reference image. Saved images remain available.</p> : !enabled ? <p>Reference image generation is unavailable.</p> : <p>The initial image is center-cropped and resized before generation.</p>}
     <div className="reference-upload" role="group" aria-label="Upload reference image" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); void upload(Array.from(event.dataTransfer.files)) }}>
       <input ref={picker} type="file" aria-label="Reference image file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" hidden disabled={busy} onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ''; if (files.length) void upload(files) }} />
       <button type="button" disabled={busy} onClick={() => picker.current?.click()}>{inputId ? 'Replace with upload' : 'Upload image'}</button>

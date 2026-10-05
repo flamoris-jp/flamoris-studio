@@ -16,7 +16,7 @@ def configure(monkeypatch, **overrides):
     }
     row.update(overrides)
     monkeypatch.setenv("STUDIO_AGENT_BINDINGS", json.dumps([row]))
-    monkeypatch.setenv("STUDIO_AGENT_ENDPOINT", "http://127.0.0.1:8768/mcp")
+    monkeypatch.setenv("STUDIO_AGENT_ENDPOINT", "http://127.0.0.1:8768")
     monkeypatch.setenv("STUDIO_AGENT_TOKEN", "x" * 40)
     return row
 

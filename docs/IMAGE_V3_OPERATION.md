@@ -1,5 +1,9 @@
 # Opt-in pinned Image v3 operation
 
+> Superseded by [architecture cleanup](ARCHITECTURE_CLEANUP.md) and AI #18.
+> Custom definitions/v3 execution and reference-image expansion are retired/held.
+> The following records the previous design and evidence, not current implementation instructions.
+
 Advances #36/#39 and FLAMORIS AI #15 using Generation #51 and Hub #30. Current
 reviewed source/deployment receipt requirements are in
 [REAL_MACHINE_ACCEPTANCE.md](REAL_MACHINE_ACCEPTANCE.md). Studio

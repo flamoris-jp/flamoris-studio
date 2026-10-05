@@ -14,13 +14,11 @@ from sqlalchemy import delete, select
 from test_studio import clients as studio_clients
 from test_studio import image_request, register
 from test_managed_inputs import prepare_gateway
-from test_workflow_contract import descriptor
 
 from flamoris_studio.db import Execution, LoginSession, ManagedInput, now
 from flamoris_studio.gateway import GatewayError, GenerationGateway
 from flamoris_studio.input_uploads import publish_upload
 from flamoris_studio.managed_inputs import Limits
-from flamoris_studio.workflow_contract import normalize_catalog
 
 clients = studio_clients
 PATH = "/api/generation/inputs/upload"
@@ -229,33 +227,23 @@ def test_upload_receipt_identity_mismatch_is_not_published(clients):
         assert db.scalar(select(ManagedInput)).state == "revoked"
 
 
-def test_uploaded_reference_keeps_exact_workflow_infrastructure_and_active_delete_gates(clients):
+def test_retired_upload_selection_preserves_input_and_historical_deletion_gate(clients):
     a, _, gateway, factory = clients
-    csrf = register(a, "upload-workflow@example.test")
+    csrf = register(a, "upload-retired@example.test")
     uploading(gateway, factory)
     value = a.post(PATH, content=gateway.image, headers={"Content-Type": "image/png", "X-CSRF-TOKEN": csrf}).json()
-    selected = normalize_catalog({"descriptors": [descriptor("img2img")]})[0]
-    gate = {"available": True, "managedInputReady": False, "workflows": [selected]}
-    built = []
-    async def discover():
-        return gate
-    async def build(item, parameters):
-        built.append(parameters)
-        return "workflow-private"
-    gateway.discover, gateway.build_selected = discover, build
-    body = {**image_request(), "workflowId": selected["id"], "workflowKind": "definition", "seed": 8,
-            "definitionVersion": selected["definitionVersion"], "definitionDigest": selected["definitionDigest"],
-            "referenceInputId": value["id"], "denoise": 0.5}
-    assert a.post("/api/generation/image/jobs", json=body, headers={"X-CSRF-TOKEN": csrf}).status_code == 409
+    body = {**image_request(), "workflowId": "retired-reference", "workflowKind": "definition",
+            "definitionVersion": 7, "definitionDigest": "sha256:" + "a" * 64,
+            "referenceInputId": value["id"]}
+    assert a.post("/api/generation/image/jobs", json=body, headers={"X-CSRF-TOKEN": csrf}).status_code == 422
     assert gateway.submit_count == 0
-    gate["managedInputReady"] = True
-    result = a.post("/api/generation/image/jobs", json=body, headers={"X-CSRF-TOKEN": csrf})
-    assert result.status_code == 201, result.text
+    assert a.get("/api/generation/inputs/" + value["id"]).json()["available"]
     with factory() as db:
         row = db.get(ManagedInput, uuid.UUID(value["id"]))
-        execution = db.get(Execution, uuid.UUID(result.json()["id"]))
-        assert built[0]["source"] == row.upstream_input_id
-        assert execution.reference_input_id == row.id
+        db.add(Execution(user_id=row.owner_user_id, workflow="retired-reference",
+                         reference_input_id=row.id, request_snapshot=body,
+                         last_known_status="submission_unknown"))
+        db.commit()
     assert a.delete("/api/generation/inputs/" + value["id"], headers={"X-CSRF-TOKEN": csrf}).status_code == 409
 
 

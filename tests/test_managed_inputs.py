@@ -29,12 +29,12 @@ def test_invalid_selected_build_response_fails_before_submission(clients, monkey
         return {"available": True, "workflows": [selected]}
 
     async def result(name, args):
-        return {**args, **({"workflow_id": workflow_id} if workflow_id is not None else {})}
+        return {**args, "schema_version": 1, **({"workflow_id": workflow_id} if workflow_id is not None else {})}
 
     monkeypatch.setattr(real_gateway, "_json", result)
     monkeypatch.setattr(gateway, "discover", discover)
     monkeypatch.setattr(gateway, "build_selected", real_gateway.build_selected, raising=False)
-    body = {**image_request(), "seed": 8, "workflowId": selected["id"], "workflowKind": "definition",
+    body = {**image_request(), "seed": 8, "workflowId": selected["id"], "workflowKind": "builtin",
             "definitionVersion": selected["definitionVersion"], "definitionDigest": selected["definitionDigest"]}
     response = a.post("/api/generation/image/jobs", json=body, headers={"X-CSRF-TOKEN": csrf})
     assert response.status_code == 422, response.text
@@ -130,45 +130,27 @@ def test_quota_before_upstream_and_history_pruning_preserves_assets(clients):
     assert a.get(item["thumbnailUrl"]).status_code == 404
 
 
-def test_selected_workflow_owner_first_both_gates_and_seed_snapshot(clients):
+def test_retired_selection_keeps_owned_inputs_and_existing_uncertain_reservations(clients):
     a, b, gateway, factory = clients
-    ca, cb = register(a, "workflow-a@example.test"), register(b, "workflow-b@example.test")
+    ca, cb = register(a, "retired-a@example.test"), register(b, "retired-b@example.test")
     asset = source(a, ca)
     prepare_gateway(gateway)
     attached = a.post("/api/generation/inputs", json={"assetId": asset["id"]}, headers={"X-CSRF-TOKEN": ca}).json()
-    selected = normalize_catalog({"descriptors": [descriptor("img2img")]})[0]
-    gate = {"available": True, "managedInputReady": True, "workflows": [selected]}
-    calls = []
-
-    async def discover():
-        calls.append("discover")
-        return gate
-
-    async def build(item, parameters):
-        calls.append(("build", parameters))
-        return "workflow-private"
-
-    gateway.discover, gateway.build_selected = discover, build
-    body = {**image_request(), "workflowId": selected["id"], "workflowKind": "definition",
-            "definitionVersion": 7, "definitionDigest": selected["definitionDigest"], "seed": 8,
-            "referenceInputId": attached["id"], "denoise": 0.5}
-    path = "/api/generation/image/jobs"
-    assert b.post(path, json=body, headers={"X-CSRF-TOKEN": cb}).status_code == 404
-    assert calls == []
-    gate["managedInputReady"] = False
-    assert a.post(path, json=body, headers={"X-CSRF-TOKEN": ca}).status_code == 409
-    gate["managedInputReady"] = True
-    assert a.post(path, json={**body, "definitionVersion": 8}, headers={"X-CSRF-TOKEN": ca}).status_code == 409
-    assert a.post(path, json={**body, "require_ready": False}, headers={"X-CSRF-TOKEN": ca}).status_code == 422
-    assert a.post(path, json={**body, "additionalParameters": {"source": "raw"}}, headers={"X-CSRF-TOKEN": ca}).status_code == 422
-    result = a.post(path, json={**body, "seed": None}, headers={"X-CSRF-TOKEN": ca})
-    assert result.status_code == 201, result.text
+    before = gateway.submit_count
+    body = {**image_request(), "workflowId": "retired-image", "workflowKind": "definition",
+            "definitionVersion": 7, "definitionDigest": "sha256:" + "a" * 64,
+            "referenceInputId": attached["id"]}
+    for client, csrf in ((a, ca), (b, cb)):
+        assert client.post("/api/generation/image/jobs", json=body, headers={"X-CSRF-TOKEN": csrf}).status_code == 422
+    assert gateway.submit_count == before
+    assert a.get("/api/generation/inputs/" + attached["id"]).json()["available"]
+    assert b.get("/api/generation/inputs/" + attached["id"]).status_code == 404
     with factory() as db:
-        execution = db.get(Execution, uuid.UUID(result.json()["id"]))
-        snapshot = execution.request_snapshot
-        assert snapshot["snapshotVersion"] == 2 and 4 <= snapshot["seed"] <= 32 and snapshot["seed"] % 4 == 0
-        assert "source" not in snapshot["normalizedParameters"]
-        assert execution.reference_input_id == uuid.UUID(attached["id"])
+        execution = db.get(Execution, uuid.UUID(asset["executionId"]))
+        execution.reference_input_id = uuid.UUID(attached["id"])
+        execution.last_known_status = "submission_unknown"
+        execution.request_snapshot = body
+        db.commit()
     assert a.delete("/api/generation/inputs/" + attached["id"], headers={"X-CSRF-TOKEN": ca}).status_code == 409
 
 
@@ -372,7 +354,7 @@ def test_selected_submission_omits_constant_controls_and_snapshots_normalized_de
 
     gateway.discover, gateway.build_selected = discover, build
     body = {k:v for k,v in image_request().items() if k not in {"steps", "cfg", "seed"}}
-    body.update(workflowId=selected["id"], workflowKind="definition", definitionVersion=7, definitionDigest=selected["definitionDigest"])
+    body.update(workflowId=selected["id"], workflowKind="builtin", definitionVersion=None, definitionDigest=selected["definitionDigest"])
     response = a.post("/api/generation/image/jobs", json=body, headers={"X-CSRF-TOKEN": csrf})
     assert response.status_code == 201, response.text
     with factory() as db:

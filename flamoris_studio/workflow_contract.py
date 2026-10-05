@@ -155,6 +155,8 @@ def normalize_descriptor(raw):
     ):
         raise ValueError("unsupported_parameter")
     kind = raw.get("kind")
+    if kind != "builtin" or raw["id"] not in {"text-to-image", "text-to-image-lora"}:
+        raise ValueError("retired_recipe")
     image = raw.get("image", {})
     readiness = raw.get("readiness", {})
     if not isinstance(image, dict) or not isinstance(readiness, dict):
@@ -164,7 +166,7 @@ def normalize_descriptor(raw):
         raise ValueError("unsupported_parameter")
     supported = (
         raw.get("metadata_schema_version") == 2 and image.get("profile") == "image-v1"
-        and image.get("mode") in {"txt2img", "img2img"}
+        and image.get("mode") == "txt2img"
         and dimensions.get("mode") in {"fixed", "parameters"}
     )
     if dimensions.get("mode") == "fixed" and any(
@@ -256,23 +258,8 @@ def normalize_descriptor(raw):
             )
         supported = supported and required <= roles
     ready = readiness.get("state") == "ready"
-    if kind == "definition":
-        ready = (
-            ready
-            and type(raw.get("definition_version")) is int
-            and raw["definition_version"] > 0
-            and isinstance(raw.get("definition_digest"), str)
-            and re.fullmatch(r"sha256:[0-9a-f]{64}", raw["definition_digest"]) is not None
-        )
-        ready = (
-            ready
-            and readiness.get("definition_version") == raw.get("definition_version")
-            and readiness.get("definition_digest") == raw.get("definition_digest")
-        )
-    elif kind == "builtin":
-        ready = ready and readiness.get("basis") == "builtin_compatibility"
-    else:
-        ready = False
+    ready = (ready and readiness.get("basis") == "builtin_compatibility"
+             and raw.get("definition_version") is None and raw.get("definition_digest") is None)
     return {
         "id": raw["id"],
         "kind": kind,

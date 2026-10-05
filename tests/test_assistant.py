@@ -1,13 +1,10 @@
 import json
 import uuid
 from datetime import timedelta
-from typing import Annotated, Any
 
 import httpx2
 import pytest
-from mcp.server.mcpserver import MCPServer
-from mcp.types import CallToolResult, TextContent
-from pydantic import Field
+from fastapi import FastAPI, HTTPException, Request
 from sqlalchemy import delete, select
 from test_studio import clients as studio_clients
 from test_studio import register
@@ -38,7 +35,7 @@ def configure(monkeypatch, factory):
             for index, user in enumerate(users)
         ]
     monkeypatch.setenv("STUDIO_AGENT_BINDINGS", json.dumps(mapping))
-    monkeypatch.setenv("STUDIO_AGENT_ENDPOINT", "http://127.0.0.1:8767/mcp")
+    monkeypatch.setenv("STUDIO_AGENT_ENDPOINT", "http://127.0.0.1:8767")
     monkeypatch.setenv("STUDIO_AGENT_TOKEN", "x" * 40)
     return mapping
 
@@ -279,194 +276,118 @@ def test_question_and_context_types_rejected(data):
         AdviceRequest.model_validate(advice({"sessionKey": str(uuid.uuid4())}, **data))
 
 
-def fixture_tool_result(data):
-    return CallToolResult(
-        content=[TextContent(type="text", text=json.dumps(data))],
-        structured_content=data,
-    )
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fixed", [False, True])
 @pytest.mark.parametrize("settings", [False, True])
-async def test_real_mcp_negotiation_catalog_and_bearer_are_private(
+async def test_agent_http_api_contract_and_bearer_are_private(
     fixed, settings, monkeypatch
 ):
-    if settings:
-        monkeypatch.setenv("STUDIO_AGENT_SETTINGS_ENABLED", "1")
-    schemas = {
-        "sessions.open": {"human": {}, "agent": {}, "project": {}},
-        "ask_availability": {"session_id": {}},
-        "ask_scoped": {
-            k: {}
-            for k in (
-                "session_id",
-                "request_id",
-                "text",
-                "previous_conversation_id",
-                "context",
-            )
-        },
-    }
-    if settings:
-        schemas["sessions.open"].update({"model_id": {}, "remote_consent": {}})
-        schemas.update(
-            {
-                "models.allowed": {"human": {}, "agent": {}, "project": {}},
-                "personality.get": {"session_id": {}, "before_revision": {}},
-                "personality.history": {"session_id": {}, "before_revision": {}},
-                "personality.save": {
-                    k: {}
-                    for k in (
-                        "session_id",
-                        "request_id",
-                        "expected_revision",
-                        "display_name",
-                        "sections",
-                    )
-                },
-            }
-        )
-    server = MCPServer("fixture")
+    monkeypatch.setenv("STUDIO_AGENT_SETTINGS_ENABLED", "1" if settings else "0")
+    app = FastAPI()
     sid, conversation = str(uuid.uuid4()), str(uuid.uuid4())
-    calls = []
+    calls, headers = [], []
+    operations = {"health", "sessions.open", "ask_scoped", "ask_availability"}
+    if settings:
+        operations |= {"models.allowed", "personality.get", "personality.history", "personality.save"}
 
-    @server.tool(name="health")
-    async def health():
-        return {"ok": True}
+    @app.get("/api/v1/capabilities")
+    async def capabilities(request: Request):
+        headers.append(dict(request.headers))
+        return {"ok": True, "api_version": 1, "operations": ["health", "ask"] if fixed else sorted(operations)}
 
-    def register_tool(name):
-        schema = {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": schemas[name],
-        }
-        Argument = Annotated[Any, Field(json_schema_extra=schema)]
+    paths = {
+        "sessions/open": "sessions.open", "ask-availability": "ask_availability",
+        "ask-scoped": "ask_scoped", "models/allowed": "models.allowed",
+        "personality/get": "personality.get", "personality/history": "personality.history",
+        "personality/save": "personality.save",
+    }
 
-        async def tool(request: Argument = None):
-            calls.append((name, request))
-            if name == "sessions.open":
-                data = {
-                    "ok": True,
-                    "session_id": sid,
-                    "principal_revision": 1,
-                    "expires_at": (now() + timedelta(minutes=15)).isoformat(),
-                }
-            elif name == "ask_availability":
-                observed = now()
-                data = {
-                    "ok": True,
-                    "available": True,
-                    "state": "ready",
-                    "principal_revision": 1,
-                    "context_revisions": [1],
-                    "proposal_revisions": [],
-                    "observed_at": observed.isoformat(),
-                    "expires_at": (observed + timedelta(seconds=5)).isoformat(),
-                }
-            elif name == "models.allowed":
-                data = {
-                    "ok": True,
-                    "models": [
-                        {
-                            "id": "approved",
-                            "display_name": "Internal",
-                            "data_flow": "local_only",
-                        }
-                    ],
-                    "default_model_id": "approved",
-                }
-            elif name == "personality.save":
-                data = {"ok": True, "revision": 2, "duplicate": False}
-            elif name.startswith("personality."):
-                data = {
-                    "ok": True,
-                    "revision": 1,
-                    "display_name": "Helper",
-                    "sections": [{"title": "Identity", "content": "synthetic"}],
-                    "can_edit": True,
-                    "scope": "shared_agent",
-                    "updated_at": now().isoformat(),
-                }
-                if name == "personality.history":
-                    data = {"ok": True, "versions": [data], "before_revision": None}
-            else:
-                data = {
-                    "ok": True,
-                    "session_id": sid,
-                    "request_id": request["request_id"],
-                    "conversation_id": conversation,
-                    "text": "safe advice",
-                    "provenance": {"provider": "llamacpp", "model": "approved"},
-                }
-            return fixture_tool_result(data)
-
-        server.tool(name=name)(tool)
-
-    if fixed:
-
-        @server.tool(name="ask")
-        async def fixed_ask():
-            calls.append(("ask", {}))
-            return {"ok": True}
-    else:
-        for name in schemas:
-            register_tool(name)
-    app = server.streamable_http_app(stateless_http=True, json_response=True)
-    headers = []
-
-    async def capture(scope, receive, send):
-        headers.append(dict(scope["headers"]))
-        await app(scope, receive, send)
-
-    async with server.session_manager.run():
-        gateway = AgentGateway(
-            "http://127.0.0.1:8767/mcp",
-            "x" * 40,
-            transport_factory=lambda: AgentTransport(httpx2.ASGITransport(app=capture)),
-        )
-        if fixed:
-            with pytest.raises(AgentError):
-                await gateway.open(
-                    {"human": "first", "agent": "helper", "project": "project"}
-                )
-            assert calls == []
-            return
-        opened, _ = await gateway.open(
-            {"human": "first", "agent": "helper", "project": "project"}
-        )
-        assert opened == sid
-        assert (await gateway.availability(sid))["available"]
-        request = {"session_id": sid, "request_id": str(uuid.uuid4()), "text": "help"}
-        result = await gateway.ask(request)
-        assert result["conversation_id"] == conversation
-        if settings:
-            assert (
-                await gateway.models(
-                    {"human": "first", "agent": "helper", "project": "project"}
-                )
-            )["models"][0]["id"] == "approved"
-            assert (await gateway.personality("get", {"session_id": sid}))[
-                "revision"
-            ] == 1
-            assert (
-                await gateway.personality(
-                    "save",
+    @app.post("/api/v1/{path:path}")
+    async def operation(path: str, incoming: Request):
+        name, request = paths[path], await incoming.json()
+        assert "request" not in request
+        headers.append(dict(incoming.headers))
+        calls.append((name, request))
+        if name == "sessions.open":
+            data = {
+                "ok": True,
+                "session_id": sid,
+                "principal_revision": 1,
+                "expires_at": (now() + timedelta(minutes=15)).isoformat(),
+            }
+        elif name == "ask_availability":
+            observed = now()
+            data = {
+                "ok": True,
+                "available": True,
+                "state": "ready",
+                "principal_revision": 1,
+                "context_revisions": [1],
+                "proposal_revisions": [],
+                "observed_at": observed.isoformat(),
+                "expires_at": (observed + timedelta(seconds=5)).isoformat(),
+            }
+        elif name == "models.allowed":
+            data = {
+                "ok": True,
+                "models": [
                     {
-                        "session_id": sid,
-                        "request_id": str(uuid.uuid4()),
-                        "expected_revision": 1,
-                        "display_name": "Helper",
-                        "sections": [{"title": "Identity", "content": "new"}],
-                    },
-                )
-            )["revision"] == 2
-    assert all(h.get(b"authorization") == b"Bearer " + b"x" * 40 for h in headers)
-    assert [name for name, _ in calls] == [
-        "sessions.open",
-        "ask_availability",
-        "ask_scoped",
-    ] + (["models.allowed", "personality.get", "personality.save"] if settings else [])
+                        "id": "approved",
+                        "display_name": "Internal",
+                        "data_flow": "local_only",
+                    }
+                ],
+                "default_model_id": "approved",
+            }
+        elif name == "personality.save":
+            data = {"ok": True, "revision": 2, "duplicate": False}
+        elif name.startswith("personality."):
+            data = {
+                "ok": True,
+                "revision": 1,
+                "display_name": "Helper",
+                "sections": [{"title": "Identity", "content": "synthetic"}],
+                "can_edit": True,
+                "scope": "shared_agent",
+                "updated_at": now().isoformat(),
+            }
+            if name == "personality.history":
+                data = {"ok": True, "versions": [data], "before_revision": None}
+        else:
+            data = {
+                "ok": True,
+                "session_id": sid,
+                "request_id": request["request_id"],
+                "conversation_id": conversation,
+                "text": "safe advice",
+                "provenance": {"provider": "llamacpp", "model": "approved"},
+            }
+
+        return data
+
+    gateway = AgentGateway(
+        "http://127.0.0.1:8767", "x" * 40,
+        transport_factory=lambda: AgentTransport(httpx2.ASGITransport(app=app)),
+    )
+    if fixed:
+        with pytest.raises(AgentError):
+            await gateway.open({"human": "first", "agent": "helper", "project": "project"})
+        assert calls == []
+        return
+    opened, _ = await gateway.open({"human": "first", "agent": "helper", "project": "project"})
+    assert opened == sid
+    assert (await gateway.availability(sid))["available"]
+    request = {"session_id": sid, "request_id": str(uuid.uuid4()), "text": "help"}
+    assert (await gateway.ask(request))["conversation_id"] == conversation
+    if settings:
+        assert (await gateway.models({"human": "first", "agent": "helper", "project": "project"}))["models"][0]["id"] == "approved"
+        assert (await gateway.personality("get", {"session_id": sid}))["revision"] == 1
+        assert (await gateway.personality("save", {
+            "session_id": sid, "request_id": str(uuid.uuid4()), "expected_revision": 1,
+            "display_name": "Helper", "sections": [{"title": "Identity", "content": "new"}],
+        }))["revision"] == 2
+    assert all(h.get("authorization") == "Bearer " + "x" * 40 for h in headers)
+    assert [name for name, _ in calls] == ["sessions.open", "ask_availability", "ask_scoped"] + (["models.allowed", "personality.get", "personality.save"] if settings else [])
 
 
 @pytest.mark.asyncio
@@ -493,7 +414,7 @@ async def test_agent_transport_fails_closed_without_retry_or_private_logs(mode, 
         )
 
     gateway = AgentGateway(
-        "http://127.0.0.1:8767/mcp",
+        "http://127.0.0.1:8767",
         "x" * 40,
         transport_factory=lambda: AgentTransport(httpx2.MockTransport(handler)),
     )

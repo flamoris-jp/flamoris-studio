@@ -12,7 +12,7 @@ login, never from request identity fields. The operator privately configures:
 
 | Setting | Contract |
 | --- | --- |
-| STUDIO_AGENT_ENDPOINT | Direct protected Agent MCP HTTPS endpoint or trusted loopback tunnel; no URL userinfo/query/fragment or remote plain HTTP |
+| STUDIO_AGENT_ENDPOINT | Direct protected Agent HTTPS API base URL or trusted loopback tunnel; no path, URL userinfo/query/fragment or remote plain HTTP |
 | STUDIO_AGENT_TOKEN | Backend-only Bearer token, 32–512 ASCII letters/digits/underscore/hyphen |
 | STUDIO_AGENT_BINDINGS | JSON array of at most 128 exact `{user_id,human,agent,project}` records |
 
@@ -38,11 +38,14 @@ from browser DTOs. Account UUID configuration stays server-side.
 
 ## Protocol and readiness
 
-The direct Agent service must expose exactly `health`, `sessions.open`,
-`ask_scoped`, `ask_availability`, with the expected bounded request fields. Every
-connection negotiates the actual SDK catalog. Fixed `health`/`ask`, an aggregate
-Hub catalog, schema mismatch or pagination fails closed; there is no legacy ask or
-direct Intelligence fallback. Review deployed Hub/service parity separately.
+The direct Agent service exposes versioned JSON HTTP `/api/v1`. Each call first
+checks authenticated `GET /api/v1/capabilities`: API version 1, exact four core
+operations (`health`, `sessions.open`, `ask_scoped`, `ask_availability`) and the
+four optional settings operations when enabled. The POST route receives the
+existing service DTO directly, without an MCP wrapper. A legacy `/mcp` endpoint,
+fixed-agent contract or incompatible capability list fails closed. Existing
+external Agent MCP compatibility remains independent of this Studio client.
+There is no Hub negotiation or direct Intelligence fallback.
 
 `POST /api/assistant/availability` requires login and CSRF, opens/reuses an Agent
 principal session and asks Agent-owned availability. At most two probes per Studio
@@ -58,9 +61,9 @@ never enables send. Browser checks while the panel is open, preserves unsent
 questions while offline/busy and disables stale observations. Opening a panel can
 establish a short-lived binding but performs no inference or activation.
 
-Default direct Agent execution cannot produce reviewed assistant readiness. Use
-Agent's explicitly approved local-only Intelligence MCP target and configuration
-from its owning [INTELLIGENCE_MCP.md](https://github.com/flamoris-jp/flamoris-ai-agent/blob/main/docs/INTELLIGENCE_MCP.md).
+Agent uses its reviewed non-MCP ExecutionClient adapter and exact approved target
+configuration. Agent owns readiness, allowed models and consent policy; an external
+Intelligence MCP connection is not a prerequisite.
 Discovery is not loaded-model/locality attestation. Agent still validates actual
 approved DB/model identity and full prompt budgets before its own writes/dispatch.
 There is no implicit remote export/fallback or API-target selection in this UI.
@@ -93,7 +96,7 @@ automatically deleted; separate reviewed reference retention is needed before
 removing them. DB downgrade refuses to silently erase these durable fences.
 
 Fresh Agent availability is checked on send. Before the paid tool call, current
-Studio login/mapping/session are checked again after MCP negotiation. A durable
+Studio login/mapping/session are checked again after HTTP API compatibility checking. A durable
 uncertain marker is committed before dispatch; the one process-wide ask slot
 prevents accidental concurrent local sends. A valid response binds exact request
 and upstream session IDs and safe public provenance. Login/config/session are
@@ -111,17 +114,17 @@ are not an Agent job state machine or fabricated Intelligence polling job.
 
 ## Transport and rollout
 
-Each call opens/closes its own official MCP SDK transport/task groups. Metadata
+Each call opens/closes its own bounded HTTP client. Metadata
 calls are bounded to 20 seconds, ask to 150 seconds; no proxy environment,
 HTTP redirects, compressed responses or HTTP transport retry. Wire responses are
-bounded to 256 KiB and structured replies to 128 KiB. Private SDK/HTTP diagnostics
+bounded to 256 KiB and structured replies to 128 KiB. Private HTTP diagnostics
 are redacted within these calls; upstream error strings are never forwarded.
 All assistant responses use private/no-store and nosniff.
 
 Apply Studio migration `20261003_05` with the existing migration-role/backup
 procedure before starting this code, even if the optional assistant remains off.
-Deploy Agent's scoped contract and migrations 002/003, exact grants, local-only
-Intelligence target and verified catalog separately. Configure explicit bounded
+Deploy Agent's scoped contract and migrations 002/003, exact grants, reviewed non-MCP
+execution target and HTTP API contract separately. Configure explicit bounded
 Agent owner maintenance using
 [PRINCIPAL_RETENTION.md](https://github.com/flamoris-jp/flamoris-ai-agent/blob/main/docs/PRINCIPAL_RETENTION.md).
 This source delivery does not run migrations, provision mappings/credentials or
@@ -130,7 +133,7 @@ process-local concurrency is not a distributed inference scheduler.
 
 ## Acceptance boundaries
 
-Tests cover actual in-process MCP negotiation/Bearer transport, fixed-catalog
+Tests cover actual in-process HTTP API/Bearer transport, fixed-contract
 refusal, private malformed responses/no retries, question/context bounds, real
 PostgreSQL two-user mapping/continuation/duplicate fences, in-flight logout and
 configuration changes, no Generation dispatch, explicit attachment, stale/offline

@@ -1,5 +1,9 @@
 # Workflow Image operation
 
+> Superseded by [architecture cleanup](ARCHITECTURE_CLEANUP.md) and AI #18.
+> Custom definitions/v3 execution and reference-image expansion are retired/held.
+> The following records the previous design and evidence, not current implementation instructions.
+
 Apply the `20261001_04` migration before starting this version. Deploy matching
 Generation MCP and Hub schemas first, with ingress paused and provider work
 drained/reconciled; a mixed schema rejects the entire Generation connection.
