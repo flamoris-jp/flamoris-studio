@@ -62,16 +62,38 @@ def test_empty_invalid_seed_domains_fail_closed(spec):
         seed_domain(spec)
 
 
-def test_managed_injection_and_unsupported_loras_rejected():
-    item = normalize_catalog({"descriptors": [descriptor("img2img")]})[0]
-    values = {"checkpoint": "model", "positivePrompt": "x", "width": 512, "height": 512, "seed": 8, "denoise": 0.5}
+@pytest.mark.parametrize("mode", ["txt2img", "img2img"])
+def test_retired_reference_descriptors_cannot_masquerade_as_builtins(mode):
+    raw = descriptor(mode)
+    raw["parameters"]["source"] = {"type": "managed_input", "role": "initial_image"}
+    assert normalize_catalog({"descriptors": [raw]}) == []
+
+
+def test_fixed_dimensions_and_reference_semantics_are_not_retained_templates():
+    raw = descriptor()
+    raw["image"]["dimensions"] = {"mode": "fixed", "width": 512, "height": 512}
+    assert not normalize_catalog({"descriptors": [raw]})[0]["selectable"]
+    raw = descriptor()
+    raw["image"]["reference_semantics"] = "initial_image"
+    assert not normalize_catalog({"descriptors": [raw]})[0]["selectable"]
+
+
+def test_reference_and_unsupported_loras_are_rejected_by_retained_mapping():
+    item = normalize_catalog({"descriptors": [descriptor()]})[0]
+    values = {"checkpoint": "model", "positivePrompt": "prompt", "width": 512, "height": 512}
+    for extra in ({"referenceInputId": "owned-id"}, {"loras": [{"name": "lora"}]}):
+        with pytest.raises(ValueError):
+            map_parameters(item, {**values, **extra})
     with pytest.raises(ValueError):
-        map_parameters(item, {**values, "additionalParameters": {"source": "raw-id"}}, "owned-id")
+        validate_value({"type": "managed_input"}, "owned-id")
+
+
+def test_selected_request_rejects_a_reference_before_upstream_dispatch():
+    from flamoris_studio.app import WorkflowImageRequest
+    from test_studio import image_request
     with pytest.raises(ValueError):
-        map_parameters(item, {**values, "loras": [{"name": "lora"}]}, "owned-id")
-    with pytest.raises(ValueError):
-        map_parameters(item, values)
-    assert map_parameters(item, values, "owned-id")["source"] == "owned-id"
+        WorkflowImageRequest(**image_request(), workflowId="text-to-image", workflowKind="builtin",
+                             referenceInputId="00000000-0000-0000-0000-000000000001")
 
 
 @pytest.mark.parametrize("field,value", [("image", []), ("readiness", None), ("parameters", [])])

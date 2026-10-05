@@ -19,7 +19,6 @@ ROLES = {
     "scheduler": "scheduler",
     "denoise": "denoise",
     "loras": "loras",
-    "initial_image": "referenceInputId",
 }
 SPEC_FIELDS = {
     "max_bytes",
@@ -35,7 +34,6 @@ SPEC_FIELDS = {
     "max_length",
     "model_kind",
     "pattern",
-    "media_types",
     "max_items",
     "min_items",
     "items",
@@ -85,7 +83,7 @@ def validate_value(spec, value):
                     or not -20 <= item[key] <= 20
                 ):
                     raise ValueError("unsupported_parameter")
-    elif kind != "managed_input":
+    else:
         raise ValueError("unsupported_parameter")
     if "max_bytes" in spec and len(json.dumps(value, ensure_ascii=False, allow_nan=False,
                                               separators=(",", ":")).encode()) > spec["max_bytes"]:
@@ -167,13 +165,9 @@ def normalize_descriptor(raw):
     supported = (
         raw.get("metadata_schema_version") == 2 and image.get("profile") == "image-v1"
         and image.get("mode") == "txt2img"
-        and dimensions.get("mode") in {"fixed", "parameters"}
+        and dimensions.get("mode") == "parameters"
+        and "reference_semantics" not in image and "resize_policy" not in image
     )
-    if dimensions.get("mode") == "fixed" and any(
-        type(dimensions.get(k)) is not int or not 64 <= dimensions[k] <= 4096 or dimensions[k] % 8
-        for k in ("width", "height")
-    ):
-        supported = False
     parameters = {}
     roles = set()
     source = raw.get("parameters", {})
@@ -186,7 +180,7 @@ def normalize_descriptor(raw):
         # All public metadata is bounded scalar data; never forward graph bindings
         # or arbitrary nested objects from upstream metadata.
         spec.pop("items", None)
-        if spec.get("type") not in {"string", "integer", "number", "boolean", "ordered_loras", "managed_input"}:
+        if spec.get("type") not in {"string", "integer", "number", "boolean", "ordered_loras"}:
             raise ValueError("unsupported_parameter")
         for field in ("minimum", "maximum"):
             if field in spec and (type(spec[field]) not in (int, float) or not math.isfinite(spec[field])):
@@ -205,11 +199,6 @@ def normalize_descriptor(raw):
                 re.compile(spec["pattern"])
             except re.error as exc:
                 raise ValueError("unsupported_parameter") from exc
-        if "media_types" in spec and (
-            not isinstance(spec["media_types"], list) or len(spec["media_types"]) > 8
-            or any(v not in {"image/png", "image/jpeg", "image/webp"} for v in spec["media_types"])
-        ):
-            raise ValueError("unsupported_parameter")
         if "enum" in spec and (
             not isinstance(spec["enum"], list) or not 1 <= len(spec["enum"]) <= 64
             or any(type(v) not in (str, int, float, bool) or (isinstance(v, str) and len(v) > 20000)
@@ -229,13 +218,11 @@ def normalize_descriptor(raw):
                 "checkpoint": "string", "positive_prompt": "string", "negative_prompt": "string",
                 "width": "integer", "height": "integer", "steps": "integer", "seed": "integer",
                 "cfg": "number", "denoise": "number", "sampler": "string", "scheduler": "string",
-                "loras": "ordered_loras", "initial_image": "managed_input",
+                "loras": "ordered_loras",
             }.get(role)
             if spec.get("type") != expected_type:
                 supported = False
-        elif spec["type"] in {"ordered_loras", "managed_input"}:
-            supported = False
-        if spec.get("type") == "managed_input" and role != "initial_image":
+        elif spec["type"] == "ordered_loras":
             supported = False
         if role == "seed":
             seed_domain(spec)
@@ -246,17 +233,7 @@ def normalize_descriptor(raw):
         ):
             raise ValueError("unsupported_parameter")
         parameters[key] = spec
-    if supported:
-        required = {"checkpoint", "positive_prompt"}
-        if image.get("dimensions", {}).get("mode") == "parameters":
-            required |= {"width", "height"}
-        if image.get("mode") == "img2img":
-            required |= {"initial_image", "denoise"}
-            supported = (
-                image.get("reference_semantics") == "initial_image"
-                and image.get("resize_policy") == "center-crop-resize"
-            )
-        supported = supported and required <= roles
+    supported = supported and {"checkpoint", "positive_prompt", "width", "height"} <= roles
     ready = readiness.get("state") == "ready"
     ready = (ready and readiness.get("basis") == "builtin_compatibility"
              and raw.get("definition_version") is None and raw.get("definition_digest") is None)
@@ -269,15 +246,8 @@ def normalize_descriptor(raw):
         "selectable": bool(supported and ready),
         "reason": None if supported and ready else "workflow_unavailable",
         "image": {
-            k: image[k]
-            for k in (
-                "profile",
-                "mode",
-                "reference_semantics",
-                "resize_policy",
-            )
-            if k in image
-        } | {"dimensions": {k: dimensions[k] for k in ("mode", "width", "height") if k in dimensions}},
+            k: image[k] for k in ("profile", "mode") if k in image
+        } | {"dimensions": {"mode": dimensions.get("mode")}},
         "parameters": parameters,
     }
 
@@ -299,7 +269,9 @@ def normalize_catalog(raw):
     return result
 
 
-def map_parameters(descriptor, request, upstream_input=None):
+def map_parameters(descriptor, request):
+    if not descriptor.get("selectable") or request.get("referenceInputId") is not None:
+        raise ValueError("unsupported_parameter")
     params = {}
     extras = request.get("additionalParameters", {})
     if not isinstance(extras, dict) or len(extras) > 64:
@@ -307,7 +279,7 @@ def map_parameters(descriptor, request, upstream_input=None):
     allowed_extras = {
         key
         for key, spec in descriptor["parameters"].items()
-        if not spec.get("role") and spec.get("type") != "managed_input"
+        if not spec.get("role")
     }
     if set(extras) - allowed_extras:
         raise ValueError("unsupported_parameter")
@@ -319,11 +291,7 @@ def map_parameters(descriptor, request, upstream_input=None):
     for key, spec in descriptor["parameters"].items():
         role = spec.get("role")
         field = ROLES.get(role)
-        if role == "initial_image":
-            if not upstream_input:
-                raise ValueError("input_unavailable")
-            value = upstream_input
-        elif role == "seed" and request.get(field) is None:
+        if role == "seed" and request.get(field) is None:
             value = random_seed(spec)
         elif role == "loras":
             value = [

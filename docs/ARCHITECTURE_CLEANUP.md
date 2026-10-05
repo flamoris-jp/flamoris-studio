@@ -96,5 +96,26 @@ live provider qualification.
 
 Previous contracts remain at the
 [pre-cleanup source](https://github.com/flamoris-jp/flamoris-studio/tree/cdaa2f93b39fbdeae1909d45ee22c84cda6eeef7)
-and in the superseded Image/v3/multimodal documents. They preserve history, not
+and in pinned Git history of the superseded Image/v3/multimodal documents. They preserve history, not
 instructions to restore the retired direction.
+
+## Follow-up audit on 2026-10-05
+
+Current Image discovery/dispatch admits only the two original builtin txt2img
+templates with parameter dimensions. Retired managed-input bindings, img2img
+injection and custom fixed-dimension branches are removed. Historical selections
+and reference handles remain readable; they cannot submit new work. Image admission
+and response publication recheck the active Studio session and Generation route
+after upstream awaits. Saved executions retain accepted or uncertain outcomes even
+when a caller is no longer authorized to receive the late response.
+
+Obsolete custom Image and v3 runbooks are removed from the current tree. Their
+contracts and prior acceptance records remain available in pinned Git history:
+
+- [Image integration](https://github.com/flamoris-jp/flamoris-studio/blob/abba5963a5e680f74b7fda717de5c7dc96a7d571/docs/WORKFLOW_IMAGE_INTEGRATION.md)
+- [Image operation](https://github.com/flamoris-jp/flamoris-studio/blob/abba5963a5e680f74b7fda717de5c7dc96a7d571/docs/WORKFLOW_IMAGE_OPERATION.md)
+- [Multimodal proposal](https://github.com/flamoris-jp/flamoris-studio/blob/abba5963a5e680f74b7fda717de5c7dc96a7d571/docs/MULTIMODAL_STUDIO.md)
+- [Image v3 operation](https://github.com/flamoris-jp/flamoris-studio/blob/abba5963a5e680f74b7fda717de5c7dc96a7d571/docs/IMAGE_V3_OPERATION.md)
+
+Use [current real-machine acceptance](REAL_MACHINE_ACCEPTANCE.md) for a separately
+authorized operational handoff. Source review performs no deployment or provider call.

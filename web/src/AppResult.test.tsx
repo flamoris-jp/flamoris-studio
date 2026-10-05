@@ -83,7 +83,7 @@ test('offline image service still allows reference upload and recheck preserves 
   await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Check again')!.dispatchEvent(new MouseEvent('click', { bubbles: true })))
   expect(prompt.value).toBe('keep my reference draft')
   expect(host.querySelector('img[src="/private-upload-thumb"]')).not.toBeNull()
-  expect(host.textContent).toContain('or remove the reference')
+  expect(host.textContent).toContain('Remove the reference')
   expect(generate().disabled).toBe(true)
   expect(api.submit).not.toHaveBeenCalled()
 })
