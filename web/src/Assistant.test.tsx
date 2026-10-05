@@ -53,16 +53,19 @@ test('switching after a turn preserves the conversation handle and unsent questi
 
 test('an unconfirmed switch can only be checked with the same request identity', async () => {
   vi.spyOn(api, 'assistantModels').mockResolvedValue({ models: [{ id: 'local', display_name: 'Local', data_flow: 'local_only' }], defaultModelId: 'local' })
-  vi.spyOn(api, 'assistantAvailability').mockImplementation(async () => ({ ...ready(), modelId: 'local' }))
+  const availability = vi.spyOn(api, 'assistantAvailability').mockImplementation(async () => ({ ...ready(), modelId: 'local' }))
+  const start = vi.spyOn(api, 'assistantStart')
   const handoff = vi.spyOn(api, 'assistantSwitch').mockRejectedValue(new Error('Acknowledgement lost'))
   await show(); await type('keep this')
   await click('Switch selected model')
   expect(host.querySelector('select')!.disabled).toBe(true)
   expect(button('Send question').disabled).toBe(true)
+  availability.mockRejectedValue(new Error('Old upstream session is unavailable'))
   await click('Check availability')
   expect(handoff).toHaveBeenCalledTimes(1)
   await click('Check model switch')
   expect(handoff.mock.calls[0][0]).toEqual(handoff.mock.calls[1][0])
+  expect(start).not.toHaveBeenCalled()
   expect(host.querySelector('textarea')!.value).toBe('keep this')
 })
 async function show(initiallyOpen = true) {

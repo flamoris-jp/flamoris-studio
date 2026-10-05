@@ -99,7 +99,7 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
         <button disabled={!modelId || remote && !remoteConsent || sending || selecting || uncertain} onClick={async () => {
           setSelecting(true); setNotice('')
           try {
-            const continuing = !!state.sessionKey && !!state.modelId
+            const continuing = !!pendingSwitch.current || !!state.sessionKey && !!state.modelId
             if (continuing && !pendingSwitch.current) pendingSwitch.current = { requestId: crypto.randomUUID(), sessionKey: state.sessionKey!, expectedModelId: state.modelId!, modelId, remoteConsent }
             const result = continuing ? await api.assistantSwitch(pendingSwitch.current!, csrf) : await api.assistantStart(modelId, remoteConsent, csrf)
             if (!alive.current) return

@@ -371,6 +371,14 @@ def mount_assistant(app):
                             "remoteConsent": binding.remote_consent}
                 if binding.upstream_session_id != record.source_session_id:
                     raise HTTPException(409, "Assistant selection changed")
+                if record.state == "rejected":
+                    pending = db.scalar(select(AssistantRequest.id).where(
+                        AssistantRequest.user_id == user, AssistantRequest.session_id == binding.id,
+                        AssistantRequest.state != "completed"))
+                    if pending:
+                        raise HTTPException(409, "An earlier question is unconfirmed")
+                    record.state = "uncertain"
+                    db.commit()
             else:
                 if binding.model_id != selection.expectedModelId:
                     raise HTTPException(409, "Assistant model changed; refresh before switching")
@@ -406,6 +414,8 @@ def mount_assistant(app):
                 "request_id": str(selection.requestId), "model_id": selection.modelId,
                 "remote_consent": selection.remoteConsent}, before_dispatch=before_dispatch)
             reauthorize(request, db, user, actor)
+            db.scalar(select(AssistantSession).where(
+                AssistantSession.user_id == user).with_for_update())
             binding = owned_binding(db, user, actor, selection.sessionKey)
             if binding.upstream_session_id != source or not now() < expiry <= now() + timedelta(hours=1):
                 raise HTTPException(409, "Assistant selection changed; handoff result withheld")
