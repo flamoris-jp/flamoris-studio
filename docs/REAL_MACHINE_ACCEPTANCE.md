@@ -17,7 +17,9 @@ operator's private records; publish only sanitized counts/hashes and failure cod
 
 Use [DEPLOYMENT.md](DEPLOYMENT.md) and two dedicated Studio test accounts with
 separate sessions. Apply the checked-out migration head through the migration role;
-current source includes `20261004_11` for assistant model settings. Agent has its
+current source includes `20261004_11` for assistant model settings and
+`20261005_12` for durable handoff fences; matched Agent continuation requires
+migration 005 after 002–004. Agent has its
 own schema, delegation, membership and model grants. Applying schema is not a
 principal grant or an instruction to populate production data.
 
@@ -51,11 +53,16 @@ Only execute these steps under separate operational authorization:
 3. Deploy the reviewed Generation/Hub pair and refresh only the tool definitions
    in deployment-local YAML. Follow the Hub's
    [catalog/rollback handoff](https://github.com/flamoris-jp/flamoris-mcp-hub/blob/main/docs/GENERATION_ROLLOUT.md).
-   The current Generation export contains 23 retained tools; registration,
-   verification and all v3 tools are absent. Preserve private routing and auth.
+   The current Generation export contains 25 tools: 23 retained operations and
+   `comfy.register/get`. Old `workflows.register/verify` and all v3 tools are absent.
+   The external registered init-image profile requires `COMFYUI_INPUT_ROOT` and
+   schema-7-aware state/rollback handling; Studio Image remains builtin-only. Preserve private routing and auth.
 4. Configure the direct Intelligence and Agent HTTP paths, DB grants and opt-in
-   settings separately. Create a fresh authorized conversation for a changed
-   model/target; never silently retarget existing history or enable remote fallback.
+   settings separately. Use the explicit model-switch contract to preserve a
+   valid conversation through authorized child-session lineage; check both DB
+   migration chains, current grants and full-context remote consent. An unrelated
+   fresh session cannot inherit a parent. Never silently retarget history or
+   enable remote fallback; unknown turns/switches block admission.
 5. Obtain fresh deployed catalog and route receipts before admitting provider work.
    Keep the previous compatible image/configuration pair available for rollback.
 
