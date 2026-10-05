@@ -23,6 +23,51 @@ async function type(value: string) {
 }
 const ready = (session = 'studio-session'): AssistantAvailability => ({ available: true, state: 'ready', sessionKey: session, expiresAt: new Date(Date.now() + 5000).toISOString() })
 const draft = () => ({ ...initialImageDraft('private-model'), positivePrompt: 'current draft', negativePrompt: 'noise' })
+
+test('switching after a turn preserves the conversation handle and unsent question', async () => {
+  let currentModel = 'local'
+  vi.spyOn(api, 'assistantModels').mockResolvedValue({ models: [
+    { id: 'local', display_name: 'Local', data_flow: 'local_only' },
+    { id: 'second', display_name: 'Second', data_flow: 'local_only' },
+  ], defaultModelId: 'local' })
+  vi.spyOn(api, 'assistantAvailability').mockImplementation(async () => ({ ...ready(), modelId: currentModel }))
+  const ask = vi.spyOn(api, 'assistantAsk').mockResolvedValue({ requestHandle: 'previous-owned', sessionKey: 'studio-session', text: 'previous answer', provenance: { model: 'local', provider: 'approved' } })
+  const handoff = vi.spyOn(api, 'assistantSwitch').mockImplementation(async () => {
+    currentModel = 'second'
+    return { sessionKey: 'studio-session', modelId: 'second', remoteConsent: false }
+  })
+  await show(); await type('first'); await click('Send question'); await type('unsent')
+  const selector = host.querySelector('select')!
+  expect(selector.disabled).toBe(false)
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(selector, 'second')
+    selector.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+  await click('Switch selected model')
+  expect(handoff).toHaveBeenCalledTimes(1)
+  expect(host.textContent).toContain('previous answer')
+  expect(host.querySelector('textarea')!.value).toBe('unsent')
+  await click('Send question')
+  expect(ask.mock.calls[1][0]).toHaveProperty('previousHandle', 'previous-owned')
+})
+
+test('an unconfirmed switch can only be checked with the same request identity', async () => {
+  vi.spyOn(api, 'assistantModels').mockResolvedValue({ models: [{ id: 'local', display_name: 'Local', data_flow: 'local_only' }], defaultModelId: 'local' })
+  const availability = vi.spyOn(api, 'assistantAvailability').mockImplementation(async () => ({ ...ready(), modelId: 'local' }))
+  const start = vi.spyOn(api, 'assistantStart')
+  const handoff = vi.spyOn(api, 'assistantSwitch').mockRejectedValue(new Error('Acknowledgement lost'))
+  await show(); await type('keep this')
+  await click('Switch selected model')
+  expect(host.querySelector('select')!.disabled).toBe(true)
+  expect(button('Send question').disabled).toBe(true)
+  availability.mockRejectedValue(new Error('Old upstream session is unavailable'))
+  await click('Check availability')
+  expect(handoff).toHaveBeenCalledTimes(1)
+  await click('Check model switch')
+  expect(handoff.mock.calls[0][0]).toEqual(handoff.mock.calls[1][0])
+  expect(start).not.toHaveBeenCalled()
+  expect(host.querySelector('textarea')!.value).toBe('keep this')
+})
 async function show(initiallyOpen = true) {
   await act(async () => root.render(<Assistant csrf="csrf" draft={draft()} initiallyOpen={initiallyOpen} />))
 }

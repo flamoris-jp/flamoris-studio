@@ -8,6 +8,11 @@ This repository contains FLAMORIS Studio, the creative control center for FLAMOR
 
 ## Current direction
 
+The pre-deployment feature request in Agent #42 authorizes the assistant model
+handoff UI/API and a source migration, with tests and reviewable PRs. Preserve
+the logical Studio conversation key; Agent owns immutable internal lineage.
+Merging and applying migrations to live databases remain outside this request.
+
 Studio is a creative control plane.
 
 Phase 1 advances through the smallest complete vertical slices needed to submit work, observe jobs, preview results, and retrieve generated assets. The authenticated multi-user shell and Image vertical slice already exist in current main; do not describe them as future scaffolding.

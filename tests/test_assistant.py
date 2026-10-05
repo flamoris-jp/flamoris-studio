@@ -288,7 +288,7 @@ async def test_agent_http_api_contract_and_bearer_are_private(
     calls, headers = [], []
     operations = {"health", "sessions.open", "ask_scoped", "ask_availability"}
     if settings:
-        operations |= {"models.allowed", "personality.get", "personality.history", "personality.save"}
+        operations |= {"sessions.continue", "models.allowed", "personality.get", "personality.history", "personality.save"}
 
     @app.get("/api/v1/capabilities")
     async def capabilities(request: Request):

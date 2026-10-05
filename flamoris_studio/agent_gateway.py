@@ -14,6 +14,7 @@ import httpx2
 
 CATALOG = {"health", "sessions.open", "ask_scoped", "ask_availability"}
 SETTINGS_TOOLS = {
+    "sessions.continue",
     "models.allowed",
     "personality.get",
     "personality.history",
@@ -140,6 +141,7 @@ class AgentGateway:
         routes = {
             "health": "/api/v1/health",
             "sessions.open": "/api/v1/sessions/open",
+            "sessions.continue": "/api/v1/sessions/continue",
             "ask_scoped": "/api/v1/ask-scoped",
             "ask_availability": "/api/v1/ask-availability",
             "models.allowed": "/api/v1/models/allowed",
@@ -230,6 +232,8 @@ class AgentGateway:
                                 "update_identity_mismatch",
                                 "model_forbidden",
                                 "model_selection_changed",
+                                "session_continuation_changed",
+                                "conversation_incomplete",
                                 "remote_consent_required",
                             }
                             else "uncertain"
@@ -342,6 +346,13 @@ class AgentGateway:
             or data["principal_revision"] != 1
         ):
             raise AgentError()
+        return canonical(data.get("session_id")), timestamp(data.get("expires_at"))
+
+    async def continue_session(self, payload, *, before_dispatch=None):
+        data = await self.call("sessions.continue", payload, before_dispatch=before_dispatch)
+        if set(data) != {"ok", "session_id", "expires_at", "principal_revision"} or type(
+                data.get("principal_revision")) is not int or data["principal_revision"] != 1:
+            raise AgentError("uncertain")
         return canonical(data.get("session_id")), timestamp(data.get("expires_at"))
 
     async def availability(self, session_id):
