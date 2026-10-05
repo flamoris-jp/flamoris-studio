@@ -240,7 +240,7 @@ def test_retired_upload_selection_preserves_input_and_historical_deletion_gate(c
     assert a.get("/api/generation/inputs/" + value["id"]).json()["available"]
     with factory() as db:
         row = db.get(ManagedInput, uuid.UUID(value["id"]))
-        db.add(Execution(user_id=row.user_id, workflow="retired-reference",
+        db.add(Execution(user_id=row.owner_user_id, workflow="retired-reference",
                          reference_input_id=row.id, request_snapshot=body,
                          last_known_status="submission_unknown"))
         db.commit()
