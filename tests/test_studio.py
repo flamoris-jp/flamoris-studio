@@ -919,6 +919,8 @@ def test_image_admission_and_publication_recheck_owner_and_route(clients, monkey
 
 @pytest.mark.parametrize("selected", [False, True])
 @pytest.mark.parametrize("job", [None, {"job_id": 7, "status": "queued"},
+                                {"job_id": "bad\x00id", "status": "queued"},
+                                {"job_id": "../bad", "status": "queued"},
                                 {"job_id": "accepted", "status": {"completed": True}},
                                 {"job_id": "accepted", "status": "not-a-state"}])
 def test_malformed_image_acknowledgement_preserves_unknown_submission(clients, selected, job):

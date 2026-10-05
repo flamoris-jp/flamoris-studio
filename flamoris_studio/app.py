@@ -1,6 +1,7 @@
 """Studio HTTP boundary: all user-owned lookups include the authenticated owner."""
 import os
 import secrets
+import re
 import asyncio
 import hashlib
 import uuid
@@ -544,7 +545,8 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 
     def accepted_image_job(job):
         if (type(job) is not dict or type(job.get("job_id")) is not str
-            or not 1 <= len(job["job_id"]) <= 128 or type(job.get("status")) is not str
+            or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", job["job_id"]) is None
+            or type(job.get("status")) is not str
             or job["status"] not in {"queued", "running", "completed", "failed", "cancelled", "unknown"}):
             raise GatewayError("upstream_failure")
         return job
