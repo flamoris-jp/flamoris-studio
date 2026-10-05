@@ -1,6 +1,8 @@
 # Assistant conversation model switching
 
-Agent #42 introduces `POST /api/assistant/switch`. The authenticated browser sends
+Accepted Studio #66, matched with Agent #43 (scope: Agent #42), introduces
+`POST /api/assistant/switch`. Source is merged; live migrations and provider
+acceptance remain pending. The authenticated browser sends
 `sessionKey`, `requestId`, `expectedModelId`, `modelId`, and `remoteConsent`.
 Studio keeps its logical conversation key and previous request handle, while
 Agent's internal HTTP continuation creates immutable model/principal lineage.

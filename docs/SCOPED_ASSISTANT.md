@@ -2,8 +2,10 @@
 
 Owning issue: [#43](https://github.com/flamoris-jp/flamoris-studio/issues/43),
 part of #39 and Agent #18/#24. This delivery adds text advice in the Image panel
-and standalone Intelligence view. It does not apply edits, run Generation, switch
-models, activate runtimes, fetch assets or execute proposals.
+and standalone Intelligence view. The ask operation does not apply edits, run
+Generation, change the selected model, activate runtimes, fetch assets or execute
+proposals. The separate explicit model selector is documented in
+[MODEL_CONTINUATION.md](MODEL_CONTINUATION.md).
 
 ## Account and service authority
 
@@ -109,7 +111,9 @@ Failure, cancellation, logout or a lost result keeps the original fence/snapshot
 identity. No automatic ask retry, new UUID, cached answer or request-recovery API
 exists. A duplicate does not prove success. The UI locks an uncertain send while
 preserving the question; explicit Start new conversation clears it before a new
-question. A fresh session cannot continue an old scoped parent. Studio observations
+question. An unrelated fresh session cannot continue an old scoped parent. Explicit model
+handoff can preserve the parent only through authorized immutable Agent lineage
+and the Studio switch fence described in [MODEL_CONTINUATION.md](MODEL_CONTINUATION.md). Studio observations
 are not an Agent job state machine or fabricated Intelligence polling job.
 
 ## Transport and rollout
@@ -123,7 +127,9 @@ All assistant responses use private/no-store and nosniff.
 
 Apply Studio migration `20261003_05` with the existing migration-role/backup
 procedure before starting this code, even if the optional assistant remains off.
-Deploy Agent's scoped contract and migrations 002/003, exact grants, reviewed non-MCP
+For the base scoped contract, deploy Agent migrations 002/003. Current opt-in
+model settings/continuation additionally require Agent 004/005 and the Studio
+Alembic chain through `20261005_12`. Deploy exact grants, reviewed non-MCP
 execution target and HTTP API contract separately. Configure explicit bounded
 Agent owner maintenance using
 [PRINCIPAL_RETENTION.md](https://github.com/flamoris-jp/flamoris-ai-agent/blob/main/docs/PRINCIPAL_RETENTION.md).

@@ -8,10 +8,11 @@ This repository contains FLAMORIS Studio, the creative control center for FLAMOR
 
 ## Current direction
 
-The pre-deployment feature request in Agent #42 authorizes the assistant model
-handoff UI/API and a source migration, with tests and reviewable PRs. Preserve
+The assistant model handoff UI/API and source migration are accepted in main
+through Studio #66 and Agent #43 after the explicit merge instruction. Preserve
 the logical Studio conversation key; Agent owns immutable internal lineage.
-Merging and applying migrations to live databases remain outside this request.
+Follow docs/MODEL_CONTINUATION.md and AI PROGRESS §4.9. The current request aligns
+documentation and postpones live acceptance; live migration remains unperformed.
 
 Studio is a creative control plane.
 
