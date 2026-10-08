@@ -5,11 +5,15 @@ from flamoris_update_core.errors import UpdateError
 from flamoris_update_core.owner import ApplicationOwner, DomainState
 from flamoris_update_core.owner_cli import serve
 
-SCHEMAS = {"configuration": "studio-config-1", "database": "20261005_12"}
+SCHEMAS = {
+    "configuration": "studio-config-1",
+    "database": "20261005_12",
+    "thumbnails": "studio-thumbnails-1",
+}
 
 
 def inspect_domain(config, resources):
-    check_resources(resources, ["configuration"], ["database"])
+    check_resources(resources, ["configuration", "thumbnails"], ["database"])
     database = resources["database"]
     if database.binding.schemas != ["public"]:
         raise UpdateError("invalid_profile")
