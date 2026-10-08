@@ -6,18 +6,18 @@ build-backend = "setuptools.build_meta"
 name = "flamoris-studio"
 version = "1.0.0"
 requires-python = ">=3.12"
-dependencies = ["flamoris-update-core[owner] @ https://github.com/flamoris-jp/flamoris-updater/archive/d5ec3408d2a9b43ce44efef6ab8209a6b8ffad25.zip#subdirectory=packages/update-core",
+dependencies = ["flamoris-update-core[owner] @ https://github.com/flamoris-jp/flamoris-updater/archive/797d6f4e7bd4089e7c162fa50c10a0afae68370a.zip#subdirectory=packages/update-core",
   "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "SQLAlchemy>=2.0,<3",
   "alembic>=1.15,<2", "psycopg[binary]>=3.2,<4", "argon2-cffi>=23,<26",
   "httpx2>=2.13,<3", "Pillow>=11,<13",
-  "flamoris-intelligence-mcp @ https://github.com/flamoris-jp/flamoris-intelligence-mcp/archive/274fc9196036a937f7059caac861ada2346d09e7.zip",
+  "flamoris-intelligence-mcp @ https://github.com/flamoris-jp/flamoris-intelligence-mcp/archive/f791bf236342e7c831e4d0291709bacb2f0e54bc.zip",
 ]
 
 [project.optional-dependencies]
 test = [
-  "flamoris-generation-controller[http] @ https://github.com/flamoris-jp/flamoris-generation-controller/archive/399ff53c2dbb8b13844ea8a40d6c4b65d9103fe9.zip",
+  "flamoris-generation-controller[http] @ https://github.com/flamoris-jp/flamoris-generation-controller/archive/eacf1086e28ca3eeb13b4297d4343fdec1163429.zip",
   "pytest>=8,<10", "pytest-asyncio>=1,<2", "httpx>=0.28,<1",
-  "flamoris-ai-agent @ https://github.com/flamoris-jp/flamoris-ai-agent/archive/9a41e3325525de8d26dde62912f4e42e04fe43e7.zip",
+  "flamoris-ai-agent @ https://github.com/flamoris-jp/flamoris-ai-agent/archive/8ac1e9555355a5cbb255e8939f43ad041a0d221c.zip",
 ]
 
 [tool.setuptools.packages.find]
