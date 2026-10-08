@@ -1,10 +1,11 @@
 from contextlib import nullcontext
 
 import pytest
-from flamoris_studio import updater
 from flamoris_update_core.errors import UpdateError
 from flamoris_update_core.postgres import PostgresBinding, PostgresResource
 from flamoris_update_core.resources import TreeBinding, TreeResource
+
+from flamoris_studio import updater
 
 
 def tree(tmp_path, name):
@@ -51,14 +52,25 @@ def test_owner_retains_history_and_unknown_requests(tmp_path, uncertain):
     history = ["20261005_12"]
     database = ReadOnlyDatabase(history, uncertain)
     configuration = tree(tmp_path, "configuration")
-    before = configuration.inventory()
+    thumbnails = tree(tmp_path, "thumbnails")
+    (thumbnails.root / "retained.webp").write_bytes(b"thumbnail")
+    before = {
+        "configuration": configuration.inventory(),
+        "thumbnails": thumbnails.inventory(),
+    }
     state = updater.inspect_domain(
-        None, {"configuration": configuration, "database": database}
+        None,
+        {
+            "configuration": configuration,
+            "database": database,
+            "thumbnails": thumbnails,
+        },
     )
     assert state.unknown_work is uncertain
     assert state.active_work is uncertain
     assert database.history == history
-    assert configuration.inventory() == before
+    assert configuration.inventory() == before["configuration"]
+    assert thumbnails.inventory() == before["thumbnails"]
     assert database.statements[0] == "SET TRANSACTION READ ONLY"
     assert all(
         statement.startswith(("SET TRANSACTION READ ONLY", "SELECT "))
@@ -71,7 +83,21 @@ def test_owner_rejects_unreviewed_schema_history(tmp_path):
     with pytest.raises(UpdateError) as error:
         updater.inspect_domain(
             None,
-            {"configuration": tree(tmp_path, "configuration"), "database": database},
+            {
+                "configuration": tree(tmp_path, "configuration"),
+                "database": database,
+                "thumbnails": tree(tmp_path, "thumbnails"),
+            },
         )
     assert error.value.code == "unsupported_migration"
     assert len(database.statements) == 2
+
+
+def test_owner_requires_thumbnail_storage(tmp_path):
+    database = ReadOnlyDatabase(["20261005_12"], False)
+    with pytest.raises(UpdateError) as error:
+        updater.inspect_domain(
+            None,
+            {"configuration": tree(tmp_path, "configuration"), "database": database},
+        )
+    assert error.value.code == "invalid_profile"

@@ -1,9 +1,10 @@
 # Updater compatibility (1.0.0)
 
-Source review/fixes and CI passed; the PR awaits human review/merge. Version
-metadata does not certify a published
-release or a real-host update. No production data, credentials or service is
-changed by this PR.
+The original adoption review/fix loop and CI passed. A later pre-deployment
+correction adds thumbnail storage to the explicit retained-resource contract;
+its current PR/CI state must be checked separately. Version metadata does not
+certify a published release or a real-host update. No production data,
+credentials or service is changed by source work.
 
 `flamoris-studio-update-owner --config /protected/owner.json` serves the application's
 separate bounded mTLS Owner endpoint. Its schema/resource validation lives in
@@ -27,3 +28,8 @@ isolation, fixed lifecycle bindings and failure handling. Private profiles and
 signed CI-built artifacts are required; source compatibility is not operational
 acceptance. Preserve all current data, grants, configuration identities and
 independently readable history.
+
+The Owner profile requires `configuration`, `database`, and `thumbnails`.
+PostgreSQL contains thumbnail locators but not the thumbnail bytes, so the
+configured `STUDIO_THUMBNAIL_DIR` tree must be fenced, snapshotted, restore
+verified, and activated with the database. Omitting it is an invalid profile.
