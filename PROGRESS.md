@@ -28,3 +28,17 @@ initialization, private profile/trust provisioning, release publication, live
 provider call, real-host update, enrollment or automatic merge occurred. Native
 deployment overlays and matched dependencies remain deployment-owned.
 See [Updater contract](docs/UPDATER.md).
+
+## Pre-deployment retained-resource correction
+
+The private inventory review confirmed that thumbnail bytes live outside
+PostgreSQL while the database retains their locators. The Owner contract now
+requires the `thumbnails` tree together with `configuration` and `database`, and
+rejects profiles that omit it. Linux verification: **233 passed, 147 skipped**
+plus targeted Ruff check/format. The repository-wide Ruff baseline still has
+pre-existing findings outside this change. Dependencies are fixed to merged
+Updater `d5ec3408d2a9b43ce44efef6ab8209a6b8ffad25`, Controller
+`399ff53c2dbb8b13844ea8a40d6c4b65d9103fe9`, Intelligence
+`274fc9196036a937f7059caac861ada2346d09e7`, and Agent
+`9a41e3325525de8d26dde62912f4e42e04fe43e7`. PR review and CI at this exact
+revision remain pending; no live service or data was changed.
