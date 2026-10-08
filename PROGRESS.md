@@ -37,8 +37,8 @@ requires the `thumbnails` tree together with `configuration` and `database`, and
 rejects profiles that omit it. Linux verification: **233 passed, 147 skipped**
 plus targeted Ruff check/format. The repository-wide Ruff baseline still has
 pre-existing findings outside this change. Dependencies are fixed to merged
-Updater `d5ec3408d2a9b43ce44efef6ab8209a6b8ffad25`, Controller
-`399ff53c2dbb8b13844ea8a40d6c4b65d9103fe9`, Intelligence
-`274fc9196036a937f7059caac861ada2346d09e7`, and Agent
-`9a41e3325525de8d26dde62912f4e42e04fe43e7`. PR review and CI at this exact
+Updater `797d6f4e7bd4089e7c162fa50c10a0afae68370a`, Controller
+`eacf1086e28ca3eeb13b4297d4343fdec1163429`, Intelligence
+`f791bf236342e7c831e4d0291709bacb2f0e54bc`, and Agent
+`8ac1e9555355a5cbb255e8939f43ad041a0d221c`. PR review and CI at this exact
 revision remain pending; no live service or data was changed.
