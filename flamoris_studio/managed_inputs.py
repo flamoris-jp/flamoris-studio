@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
+from flamoris_update_core.admission import guarded
+from flamoris_update_core.errors import UpdateError
 from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -282,14 +284,20 @@ async def reconcile_expired(app, cursor=None):
     return cursor
 
 
+@guarded()
+async def maintenance_pass(app, cursor):
+    cursor = await reconcile_expired(app, cursor)
+    with app.state.session_factory() as db:
+        prune(db, app.state.input_thumbnails)
+    return cursor
+
+
 async def maintenance(app):
     cursor = None
     while True:
         try:
-            cursor = await reconcile_expired(app, cursor)
-            with app.state.session_factory() as db:
-                prune(db, app.state.input_thumbnails)
-        except (SQLAlchemyError, HTTPException, OSError):
+            cursor = await maintenance_pass(app, cursor)
+        except (SQLAlchemyError, HTTPException, OSError, UpdateError):
             pass
         await asyncio.sleep(3600)
 
