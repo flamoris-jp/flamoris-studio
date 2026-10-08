@@ -12,6 +12,8 @@ from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from flamoris_update_core.admission import wait_for_admission
+from flamoris_update_core.asgi import AdmissionMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -217,6 +219,7 @@ def set_status(db: Session, execution: Execution, status: str):
 
 
 def create_app(session_factory=None, gateway=None, thumbnails=None):
+    wait_for_admission("flamoris-studio")
     @asynccontextmanager
     async def lifespan(app):
         task = asyncio.create_task(maintenance(app))
@@ -227,6 +230,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             await asyncio.gather(task, return_exceptions=True)
 
     app = FastAPI(title="FLAMORIS Studio", lifespan=lifespan)
+    app.add_middleware(AdmissionMiddleware)
     app.state.session_factory = session_factory or make_session_factory()
     app.state.gateway = gateway or GenerationGateway()
     app.state.thumbnails = thumbnails or Thumbnails(os.getenv("STUDIO_THUMBNAIL_DIR", ""))
