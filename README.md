@@ -307,7 +307,6 @@ Phase 1では、認証済みmulti-user shell、Image生成、Raw Intelligence、
 勝手に使ってください。  
 改造しても、組み込んでも、面白いものや変なものを作ってもOKです。
 
-## Updater entry release 1.0.0
+## Updater installation
 
-See [Updater compatibility](docs/UPDATER.md) for the implemented admission/Owner
-contract and pending signed release/private provisioning/real-host acceptance.
+See [repository-owned distribution](docs/UPDATER.md) for release 1.0.1, its catalog and post-install configuration. Publication and actual-host acceptance remain separately verified.
