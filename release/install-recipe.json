@@ -1,0 +1,223 @@
+{
+  "application_id": "flamoris-studio",
+  "sql_files": [],
+  "recipe": {
+    "application_id": "flamoris-studio",
+    "release": "1.0.1",
+    "platform": "linux/amd64",
+    "compatible_from": [],
+    "dependencies": {},
+    "settings": [
+      {
+        "key": "PORT",
+        "label": "待受ポート",
+        "default": "5087",
+        "secret": false,
+        "required": false,
+        "generate": false,
+        "kind": "port"
+      },
+      {
+        "key": "ADMIN_DSN",
+        "label": "PostgreSQL管理者の接続文字列",
+        "default": "",
+        "secret": true,
+        "required": true,
+        "generate": false,
+        "kind": "text"
+      },
+      {
+        "key": "PGHOST",
+        "label": "PostgreSQLホスト（ホスト・コンテナ双方から到達可能）",
+        "default": "",
+        "secret": false,
+        "required": true,
+        "generate": false,
+        "kind": "text"
+      },
+      {
+        "key": "PGPORT",
+        "label": "PostgreSQLポート",
+        "default": "5432",
+        "secret": false,
+        "required": false,
+        "generate": false,
+        "kind": "port"
+      },
+      {
+        "key": "DATABASE",
+        "label": "新しく作成するDB名",
+        "default": "flamoris_studio",
+        "secret": false,
+        "required": false,
+        "generate": false,
+        "kind": "name"
+      },
+      {
+        "key": "OWNER_PASSWORD",
+        "label": "新規DB所有者パスワード（空欄で生成）",
+        "default": "",
+        "secret": true,
+        "required": false,
+        "generate": true,
+        "kind": "url_password"
+      },
+      {
+        "key": "RUNTIME_PASSWORD",
+        "label": "アプリ用DBパスワード（空欄で生成）",
+        "default": "",
+        "secret": true,
+        "required": false,
+        "generate": true,
+        "kind": "url_password"
+      },
+      {
+        "key": "GENERATION_ENDPOINT",
+        "label": "Controller内部HTTP APIのURL（任意）",
+        "default": "",
+        "secret": false,
+        "required": false,
+        "generate": false,
+        "kind": "text"
+      },
+      {
+        "key": "GENERATION_TOKEN",
+        "label": "Controllerと同じ接続トークン（任意）",
+        "default": "",
+        "secret": true,
+        "required": false,
+        "generate": false,
+        "kind": "url_password"
+      },
+      {
+        "key": "AGENT_ENDPOINT",
+        "label": "Agent内部HTTP APIのURL（任意）",
+        "default": "",
+        "secret": false,
+        "required": false,
+        "generate": false,
+        "kind": "text"
+      },
+      {
+        "key": "AGENT_TOKEN",
+        "label": "Agentと同じ接続トークン（任意）",
+        "default": "",
+        "secret": true,
+        "required": false,
+        "generate": false,
+        "kind": "url_password"
+      },
+      {
+        "key": "INTELLIGENCE_ENDPOINT",
+        "label": "直接llama.cppのURL（任意）",
+        "default": "",
+        "secret": false,
+        "required": false,
+        "generate": false,
+        "kind": "text"
+      },
+      {
+        "key": "INTELLIGENCE_MODELS",
+        "label": "Studioのモデル一覧JSON",
+        "default": "[]",
+        "secret": false,
+        "required": false,
+        "generate": false,
+        "kind": "text"
+      },
+      {
+        "key": "ALLOW_REGISTRATION",
+        "label": "初回ユーザー登録を許可（1または0）",
+        "default": "0",
+        "secret": false,
+        "required": false,
+        "generate": false,
+        "kind": "text"
+      }
+    ],
+    "downloads": {},
+    "generated": {
+      "admin.dsn": "${ADMIN_DSN}",
+      "owner.password": "${OWNER_PASSWORD}",
+      "runtime.password": "${RUNTIME_PASSWORD}",
+      "migration.env": "STUDIO_DATABASE_URL=postgresql+psycopg://flamoris_studio_owner:${OWNER_PASSWORD}@${PGHOST}:${PGPORT}/${DATABASE}\n",
+      "runtime.env": "STUDIO_DATABASE_URL=postgresql+psycopg://flamoris_studio_app:${RUNTIME_PASSWORD}@${PGHOST}:${PGPORT}/${DATABASE}\nSTUDIO_THUMBNAIL_DIR=/data/thumbnails\nSTUDIO_GENERATION_ENDPOINT=${GENERATION_ENDPOINT}\nSTUDIO_GENERATION_TOKEN=${GENERATION_TOKEN}\nSTUDIO_AGENT_ENDPOINT=${AGENT_ENDPOINT}\nSTUDIO_AGENT_TOKEN=${AGENT_TOKEN}\nSTUDIO_INTELLIGENCE_ENDPOINT=${INTELLIGENCE_ENDPOINT}\nSTUDIO_INTELLIGENCE_MODELS=${INTELLIGENCE_MODELS}\nSTUDIO_INTELLIGENCE_DATA_FLOW=approved-local\nSTUDIO_ALLOW_REGISTRATION=${ALLOW_REGISTRATION}\n"
+    },
+    "application": {
+      "application_id": "flamoris-studio",
+      "release": "1.0.1",
+      "directories": [
+        {
+          "path": "${root}/config"
+        },
+        {
+          "path": "${root}/thumbnails",
+          "uid": 10001,
+          "gid": 10001,
+          "mode": 488
+        }
+      ],
+      "files": [
+        {
+          "source": {
+            "path": "${package}/runtime.env",
+            "digest": "generated",
+            "private": true
+          },
+          "destination": "${root}/config/runtime.env"
+        }
+      ],
+      "health_url": "http://127.0.0.1:${PORT}/api/system/status",
+      "kind": "docker",
+      "image_archive": {
+        "path": "${package}/image.tar",
+        "digest": "artifact",
+        "private": false
+      },
+      "image_id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "container_name": "flamoris-studio",
+      "environment_file": "${root}/config/runtime.env",
+      "mounts": [
+        {
+          "source": "${root}/thumbnails",
+          "target": "/data/thumbnails",
+          "read_only": false
+        }
+      ],
+      "database": {
+        "name": "${DATABASE}",
+        "admin_dsn": {
+          "path": "${package}/admin.dsn",
+          "digest": "generated",
+          "private": true
+        },
+        "owner": "flamoris_studio_owner",
+        "runtime_role": "flamoris_studio_app",
+        "owner_password": {
+          "path": "${package}/owner.password",
+          "digest": "generated",
+          "private": true
+        },
+        "runtime_password": {
+          "path": "${package}/runtime.password",
+          "digest": "generated",
+          "private": true
+        },
+        "studio_migration_environment": {
+          "path": "${package}/migration.env",
+          "digest": "generated",
+          "private": true
+        }
+      },
+      "network": "bridge",
+      "ports": [
+        {
+          "host": {
+            "setting_int": "PORT"
+          },
+          "container": 5087
+        }
+      ]
+    }
+  }
+}
