@@ -7,6 +7,40 @@ retained behavior after custom ComfyWorkFlow/v3 retirement. Source tests and mer
 PRs do not establish deployment, installed models, physical GPU capacity or output
 quality. This document performs no rollout or inference.
 
+## Fresh-install Assistant acceptance — 2026-10-11
+
+This checkpoint supersedes blanket Assistant-live-pending guidance for the selected
+new deployment after the operator-authorized reset. Earlier Image/reference-image
+receipts belong to the former deployment.
+
+- Both configured principals passed HTTPS gateway/model discovery. Local
+  `gpt-oss-20b` and operator-enabled `gpt-6.1-sol` were selectable; editable persona
+  revisions contain names only, without a personality body.
+- [#75](https://github.com/flamoris-jp/flamoris-studio/issues/75) /
+  [#76](https://github.com/flamoris-jp/flamoris-studio/pull/76) fixed legitimate
+  ready replies rejected when Agent time was 28.3 ms ahead. Future observation
+  skew is bounded to one second; local validity stays at most five seconds and
+  expired/invalid replies still fail closed.
+- [Studio 1.0.3](https://github.com/flamoris-jp/flamoris-studio/releases/tag/v1.0.3)
+  source `29d67ee5afc5791a521afcbc62e88a1755efc351` passed Python (**395 tests**),
+  web/container and amd64/arm64 actual-Updater installation checks. Publication
+  and merged-source CI also passed. No live GPU or paid credentials were used in CI.
+- Operator accepted the ordinary Updater tool API update from 1.0.2 to 1.0.3:
+  succeeded, environment preserved. Schema/migration unchanged; update execution
+  itself performed no inference or GPU transition.
+- At 23:31 JST the operator independently reported successful browser conversation,
+  model switching and conversation continuation after the switch. This is current
+  fresh-install UI acceptance, separate from the no-inference update output.
+- This report does not identify an independent second-account browser conversation
+  or supply a new turn/token/cost transcript. Comprehensive consent, revocation,
+  race and cross-account negative checks are not inferred from conversation success.
+- Controller HTTPS settings are configured; Studio Controller model discovery,
+  real generation, preview/download and remaining native/raw/external routes are
+  pending on the fresh installation. Do not replay accepted conversations or setup.
+
+See [AI PROGRESS §4.21](https://github.com/flamoris-jp/flamoris-ai/blob/main/PROGRESS.md)
+for the coordinated status; exact deployment identities and secrets remain private.
+
 ## Record the actual deployment
 
 Record UTC time, each deployed commit, running image digest, clean/dirty source,
