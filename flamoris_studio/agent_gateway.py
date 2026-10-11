@@ -6,7 +6,7 @@ import logging
 import os
 import re
 from contextvars import ContextVar
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -373,10 +373,16 @@ class AgentGateway:
             timestamp(data.get("expires_at")),
         )
         now = datetime.now(UTC)
+        lifetime = (expires - observed).total_seconds()
+        # Independent hosts can differ slightly even while time-synchronized.
+        # Reject stale/long-lived replies and cap the local lifetime to five seconds.
         if not (
-            0 < (expires - observed).total_seconds() <= 5 and observed <= now < expires
+            0 < lifetime <= 5
+            and observed <= now + timedelta(seconds=1)
+            and now < expires
         ):
             raise AgentError()
+        expires = min(expires, now + timedelta(seconds=lifetime))
         if data["available"] is not (data["state"] == "ready"):
             raise AgentError()
         return {
