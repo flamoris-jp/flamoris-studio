@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flamoris-studio"
-version = "1.0.1"
+version = "1.0.2"
 requires-python = ">=3.12"
 dependencies = ["flamoris-update-core[owner] @ https://github.com/flamoris-jp/flamoris-updater/archive/797d6f4e7bd4089e7c162fa50c10a0afae68370a.zip#subdirectory=packages/update-core",
   "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "SQLAlchemy>=2.0,<3",
