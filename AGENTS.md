@@ -11,8 +11,12 @@ This repository contains FLAMORIS Studio, the creative control center for FLAMOR
 The assistant model handoff UI/API and source migration are accepted in main
 through Studio #66 and Agent #43 after the explicit merge instruction. Preserve
 the logical Studio conversation key; Agent owns immutable internal lineage.
-Follow docs/MODEL_CONTINUATION.md and AI PROGRESS §4.9. The current request aligns
-documentation and postpones live acceptance; live migration remains unperformed.
+Follow docs/MODEL_CONTINUATION.md and AI PROGRESS §4.9. The 2026-10-11 fresh-install checkpoint accepts the operator's Assistant conversation,
+model switching and continuation after the Studio 1.0.3 clock-skew fix (#76).
+See docs/REAL_MACHINE_ACCEPTANCE.md and AI PROGRESS §4.21. Studio Controller
+model discovery/real generation and independent second-account/comprehensive
+fence checks remain open. Do not replay successful setup or infer live readiness
+for unrelated providers from source/CI or historical pre-reset receipts.
 
 Studio is a creative control plane.
 

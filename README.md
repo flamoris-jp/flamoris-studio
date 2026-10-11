@@ -211,7 +211,7 @@ Later, `flamoris-studio-client` will make large desktop-local projects and media
 
 For a generic Docker/Compose deployment, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). The public setup does not assume a particular FLAMORIS host. PostgreSQL, thumbnail storage, bind address/port, Controller API, reverse proxy, and secrets are supplied by the deployment environment.
 
-[Real-machine acceptance](docs/REAL_MACHINE_ACCEPTANCE.md) records the reviewed source baselines, two-user Image/result retrieval checks, independent Agent-service checks and the remaining provider/runtime/Studio integration gates. CI success and merged source do not certify a deployment or live provider result.
+[Real-machine acceptance](docs/REAL_MACHINE_ACCEPTANCE.md) records the reviewed source baselines, historical two-user Image/result checks, and the fresh-install Studio 1.0.3 Assistant conversation/model-switching acceptance. Fresh Controller generation and remaining account/provider checks stay separate. CI success and merged source do not certify a deployment or live provider result.
 
 The optional [scoped Image assistant](docs/SCOPED_ASSISTANT.md) connects authenticated accounts to operator-granted Agent principals for text advice and explicit Image draft attachment. Apply migration `20261003_05` and configure the private endpoint/token/account mapping before enabling it. Agent owns conversations/inference; the panel does not submit generation or apply edits.
 
