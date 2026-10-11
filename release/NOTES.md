@@ -1,5 +1,5 @@
-# flamoris-studio v1.0.2
+# flamoris-studio v1.0.3
 
-このリポジトリ自身のUpdater配布物とカタログを公開するパッチ版です。amd64/arm64向け配布物はカタログから個別取得できます。初回設定、GPU/モデル動作、実機への導入は別の作業です。既存の集中配布は上書きしません。詳しくはdocs/UPDATER.mdを参照してください。
+Agentの利用可否応答を、StudioとAgent間の小さな時計差で拒否してしまう問題を修正します。Agentの時計が最大1秒進んでいる応答を許容し、応答の有効時間は5秒以下を維持します。期限切れ・長すぎる期限・大きな時計差は引き続き拒否します。
 
-Docker images now declare the application/version labels required by the Updater installer. Fresh-install recipes remain owned by this repository.
+1.0.2から設定・既存DB・アカウント・接続情報・サムネイルを保持して更新できます。DBスキーマ変更や移行はありません。amd64/arm64の個別配布物をカタログから取得します。実機での会話・生成の受け入れは公開成功とは別に確認してください。
