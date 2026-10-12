@@ -3,6 +3,7 @@ import { api, AssistantFailure, HTTPFailure, type AssistantAvailability, type As
 import type { ImageDraft } from './App'
 import type { AgentModel } from './api'
 import PersonalityEditor from './Personality'
+import { readAssistantModel, saveAssistantModel } from './assistantModelPreference'
 
 export function attachedImageDraft(form: ImageDraft) {
   const draft: Record<string, string | number> = { positive_prompt: form.positivePrompt, negative_prompt: form.negativePrompt }
@@ -21,9 +22,10 @@ export function attachedImageDraft(form: ImageDraft) {
   return draft
 }
 
-export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf: string; draft?: ImageDraft; initiallyOpen?: boolean }) {
+export default function Assistant({ csrf, accountKey, draft, initiallyOpen = false }: { csrf: string; accountKey: string; draft?: ImageDraft; initiallyOpen?: boolean }) {
   const [models, setModels] = useState<AgentModel[]>([])
-  const [modelId, setModelId] = useState('')
+  const [preferredModel, setPreferredModel] = useState<string | null>(() => readAssistantModel(accountKey))
+  const [defaultModel, setDefaultModel] = useState('')
   const [switchUncertain, setSwitchUncertain] = useState(false)
   const pendingSwitch = useRef<Parameters<typeof api.assistantSwitch>[0] | null>(null)
   const [selecting, setSelecting] = useState(false)
@@ -78,9 +80,12 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
   useEffect(() => {
     if (!open) return
     let active = true
-    api.assistantModels(csrf).then(result => { if (active) { setModels(result.models); setModelId(old => old || result.defaultModelId || '') } }).catch(() => { if (active) setModels([]) })
+    api.assistantModels(csrf).then(result => { if (active) { setModels(result.models); setDefaultModel(result.defaultModelId || '') } }).catch(() => { if (active) setModels([]) })
     return () => { active = false }
   }, [open, csrf])
+  const allowed = (id: string | undefined) => models.some(model => model.id === id)
+  const modelId = preferredModel !== null ? (allowed(preferredModel) ? preferredModel : '') :
+    allowed(state.modelId) ? state.modelId! : allowed(defaultModel) ? defaultModel : ''
   const selectionMatches = !models.length || state.modelId === modelId
   const capturedDraft = draft ? attachedImageDraft(draft) : null
   const ready = state.available && state.state === 'ready' && !!state.sessionKey &&
@@ -91,7 +96,12 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
     {open && <><p role="status">{ready ? 'Ready' : state.state === 'ready' ? 'Checking availability' : state.state}</p>
       <button disabled={sending} onClick={() => setRefresh(value => value + 1)}>Check availability</button>
       {models.length > 0 && <section aria-label="Assistant model selection">
-        <label>Conversation model<select value={modelId} disabled={sending || selecting || switchUncertain || uncertain} onChange={e => setModelId(e.target.value)}><option value="">Select a model</option>{models.map(m => <option key={m.id} value={m.id}>{m.display_name} · {m.data_flow === 'local_only' ? 'Internal LLM' : 'OpenAI API'}</option>)}</select></label>
+        <label>Conversation model<select value={modelId} disabled={sending || selecting || switchUncertain || uncertain} onChange={e => {
+          const selected = e.target.value
+          setPreferredModel(selected)
+          if (!saveAssistantModel(accountKey, selected)) setNotice('Model choice is kept for navigation, but this browser could not save it for a reload.')
+        }}><option value="">Select a model</option>{models.map(m => <option key={m.id} value={m.id}>{m.display_name} · {m.data_flow === 'local_only' ? 'Internal LLM' : 'OpenAI API'}</option>)}</select></label>
+        {preferredModel && !allowed(preferredModel) && <p role="alert">Your saved model is unavailable. Select an available model to continue.</p>}
         <p>You can switch models while keeping this conversation and its personality.</p>
         <button disabled={!modelId || sending || selecting || uncertain} onClick={async () => {
           setSelecting(true); setNotice('')
@@ -100,10 +110,12 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
             if (continuing && !pendingSwitch.current) pendingSwitch.current = { requestId: crypto.randomUUID(), sessionKey: state.sessionKey!, expectedModelId: state.modelId!, modelId }
             const result = continuing ? await api.assistantSwitch(pendingSwitch.current!, csrf) : await api.assistantStart(modelId, csrf)
             if (!alive.current) return
+            setPreferredModel(result.modelId)
+            const saved = saveAssistantModel(accountKey, result.modelId)
             if (!continuing) { previous.current = undefined; setAnswer(null) }
             pendingSwitch.current = null; setSwitchUncertain(false); session.current = result.sessionKey
             setState({ available: false, state: 'unknown', sessionKey: result.sessionKey, modelId: result.modelId })
-            setNotice(continuing ? 'Model switched. This conversation and your unsent question are preserved.' : 'Selected model started. Your unsent question is preserved.'); setRefresh(v => v + 1)
+            setNotice((continuing ? 'Model switched. This conversation and your unsent question are preserved.' : 'Selected model started. Your unsent question is preserved.') + (saved ? '' : ' This browser could not save the model choice for a reload.')); setRefresh(v => v + 1)
           }
           catch (error) { if (alive.current) { setSwitchUncertain(!!pendingSwitch.current); setNotice(error instanceof Error ? error.message : 'Model selection could not be confirmed.') } }
           finally { if (alive.current) setSelecting(false) }
@@ -138,13 +150,16 @@ export default function Assistant({ csrf, draft, initiallyOpen = false }: { csrf
       <button disabled={sending || selecting || models.length > 0 && !modelId} onClick={async () => {
         setSelecting(true)
         try {
+          let saved = true
           if (models.length > 0) {
             const result = await api.assistantStart(modelId, csrf)
             if (!alive.current) return
+            setPreferredModel(result.modelId)
+            saved = saveAssistantModel(accountKey, result.modelId)
             session.current = result.sessionKey
             setState({ available: false, state: 'unknown', sessionKey: result.sessionKey, modelId: result.modelId })
           }
-          previous.current = undefined; pendingSwitch.current = null; setAnswer(null); setQuestion(''); setNotice(''); setUncertain(false); setSwitchUncertain(false); setAttach(false); setRefresh(value => value + 1)
+          previous.current = undefined; pendingSwitch.current = null; setAnswer(null); setQuestion(''); setNotice(saved ? '' : 'This browser could not save the model choice for a reload.'); setUncertain(false); setSwitchUncertain(false); setAttach(false); setRefresh(value => value + 1)
         } catch (error) { if (alive.current) setNotice(error instanceof Error ? error.message : 'New conversation could not be confirmed.') }
         finally { if (alive.current) setSelecting(false) }
       }}>Start new conversation</button>

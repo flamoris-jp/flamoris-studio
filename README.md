@@ -18,6 +18,8 @@ Phase 1 uses a Python FastAPI backend with PostgreSQL-backed local accounts and 
 
 Assistant model selection in Studio 1.0.4 uses the Agent-authorized catalog without an additional remote-transmission consent checkbox. Existing conversations, model switching and request fences are retained; no Agent upgrade or DB migration is needed.
 
+Assistant and the Image assistant share the signed-in account’s remembered model selection in this browser. Reopening or reloading restores only an authorized picker choice; session starts and model switches remain explicit.
+
 See [assistant settings and model integration](docs/ASSISTANT_SETTINGS.md) for the opt-in extension and migration gates.
 
 ## Current integration boundaries
@@ -313,4 +315,4 @@ Phase 1では、認証済みmulti-user shell、Image生成、Raw Intelligence、
 
 Before filling the form, read [input values and post-install setup](docs/FIRST_SETUP.md) for each field's purpose, value source, generation behavior and remaining app configuration.
 
-See [repository-owned distribution](docs/UPDATER.md) for release 1.0.3 (including updates from 1.0.2), its catalog and post-install configuration. Publication and actual-host acceptance remain separately verified.
+See [repository-owned distribution](docs/UPDATER.md) for release 1.0.5 (including updates from 1.0.4), its catalog and post-install configuration. Publication and actual-host acceptance remain separately verified.

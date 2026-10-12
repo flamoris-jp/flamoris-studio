@@ -7,7 +7,7 @@ RUN npm run build
 
 FROM python:3.12-slim
 LABEL org.opencontainers.image.title="flamoris-studio" \
-    org.opencontainers.image.version="1.0.4"
+    org.opencontainers.image.version="1.0.5"
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     STUDIO_WEB_DIST=/app/web/dist \

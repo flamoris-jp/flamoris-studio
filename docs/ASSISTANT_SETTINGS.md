@@ -24,6 +24,25 @@ requires explicit start when no valid session exists. The active conversation mo
 is displayed separately from a proposed selection. There is no hidden local/API
 fallback, no GPU switch and no inferred permission from a provider key.
 
+### Remembered model selection (#83)
+
+Studio remembers the explicitly chosen model ID in browser local storage under
+`flamoris.assistant.model:<accountKey>`. The stable account key isolates users;
+Assistant and the contextual Image assistant share the preference across
+navigation, collapse/reopen, page reloads and sign-out/sign-in in that browser.
+It is a browser preference, not a cross-device account setting. Storage contains
+no session, credential, transcript, draft or authorization flag. A blocked storage
+write reports that reload persistence is unavailable and retains navigation state.
+
+Each opened panel checks the preference against the current Agent-authorized
+catalog. A removed/revoked model stays unselected with an explanation; an outage
+does not erase the preference or choose another model. Explicitly clearing the
+picker also stays cleared. With no saved choice, an authorized active conversation
+model takes precedence over an authorized catalog default, regardless of which
+response arrives first. Restoring the picker never starts a session, performs a
+handoff or runs inference. A proposed choice that differs from the active
+conversation still requires the existing explicit model switch.
+
 Personality editing is available only after Agent's independent read/edit grants.
 Load the current revision, edit display name and ordered titles/Markdown bodies,
 add/remove/reorder sections, confirm shared impact and Save. The editor displays

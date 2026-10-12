@@ -1,3 +1,11 @@
+# Remember Assistant model selection — 2026-10-12 (#83)
+
+- Prepares Studio 1.0.5 and its app-owned Updater catalog for updates from 1.0.4. Publication and real-host acceptance remain separate.
+- Remembers the explicitly chosen model ID per stable account key in this browser; Assistant and Image share it across navigation and page reloads.
+- Restores only models in the currently authorized catalog. Removed models stay unselected; discovery failures retain the saved preference. With no saved choice, the active authorized conversation model takes precedence over the catalog default.
+- Restoring the selector performs no session start, model handoff or inference. Explicit switching, immutable pending payloads and existing account/session fences remain unchanged.
+- Frontend suite: 115 passed; TypeScript/Vite build and five packaging tests passed. Initial GitHub server/web/container CI passed. The distribution check caught a stale Docker version label; Docker and Owner version metadata are corrected to 1.0.5, with final-head CI pending. No Agent, backend behavior, DB schema, dependency or configuration changes. GitHub CI, merge, release and real-host update remain pending.
+
 # Studio 1.0.4 published — 2026-10-12 (#68)
 
 - Accepted PR [#81](https://github.com/flamoris-jp/flamoris-studio/pull/81), source `4f5552abef4c8e33c005430182a5fb3ba02053f3`; Issue #68 is closed.
