@@ -1,3 +1,13 @@
+# Studio 1.0.5 published and updated — 2026-10-12 (#83)
+
+- PR [#84](https://github.com/flamoris-jp/flamoris-studio/pull/84) merged as `a7650fdaf73961351e0d258547903e3a403bdcdd`; Issue #83 closed.
+- [Studio v1.0.5](https://github.com/flamoris-jp/flamoris-studio/releases/tag/v1.0.5) published from that source with amd64/arm64 images, platform/combined catalogs and SHA256SUMS. Update edge: 1.0.4 -> 1.0.5.
+- Final PR CI and merged-source CI passed: 412 server tests against PostgreSQL, 115 browser tests, web/production container builds, and disposable actual-Updater installation/start on both architectures. Merged-source runs: [application CI](https://github.com/flamoris-jp/flamoris-studio/actions/runs/38228320209), [distribution](https://github.com/flamoris-jp/flamoris-studio/actions/runs/38228320192).
+- Remembers the explicitly selected/confirmed Assistant model ID per stable account key in the current browser. Assistant and Image share it across navigation/reloads; other devices do not synchronize. Restore revalidates the allowed catalog without starting a session, switching models or invoking inference.
+- decopon Updater job `job-bce6226b4683afe1a0532fbf78562693` succeeded for 1.0.4 -> 1.0.5. Digest verification, existing-container checks, health and `verify_running` completed. Recorded environment/configuration, DB/account references and thumbnail mount are retained. Server Manager independently observed the new Studio container running.
+- Non-blocking Updater follow-up: post-success cleanup returned `unsafe_storage` with `cleanup_pending=true`. The stopped prior containers remain; no manual deletion or forced cleanup was attempted. Runtime update remains succeeded.
+- Live browser interaction remains operator acceptance; no provider inference was performed. Agent, DB schema, credentials and provider/runtime configuration were not changed. Reference-workflow PR #80 remains separate.
+
 # Remember Assistant model selection — 2026-10-12 (#83)
 
 - Prepares Studio 1.0.5 and its app-owned Updater catalog for updates from 1.0.4. Publication and real-host acceptance remain separate.

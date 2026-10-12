@@ -8,7 +8,9 @@ This repository contains FLAMORIS Studio, the creative control center for FLAMOR
 
 ## Current direction
 
-The latest 2026-10-12 user instruction prioritizes #83: persist Assistant model selection across navigation and page reloads with stable per-account browser preferences. Preserve allowed-model validation and explicit session/model-switch authority. The earlier #68 instruction authorized source/test review, merge and release. Remove the remote-transmission consent control; derive the existing Agent authorization flag after allowed-model discovery. Preserve Agent grants, account/CSRF checks, sessions/history and immutable pending handoff payloads. No Agent change, DB migration or live rollout is included. Reference-workflow PR #80 remains a separate unmerged scope.
+The latest 2026-10-12 work implements #83: remember Assistant model selection across navigation/reloads under stable per-account browser preferences. Studio #84 is merged and 1.0.5 published; decopon's Updater update succeeded and Server Manager observed Studio running. Preserve allowed-model validation, explicit start/switch authority and immutable handoff payloads. Browser interaction remains operator acceptance. Updater post-success old-version cleanup is pending with `unsafe_storage`; do not describe that as a failed runtime update or force-delete retained files. No Agent, DB schema or provider/runtime configuration change was needed.
+
+The earlier #68 consent-removal scope was delivered in 1.0.4. Agent grants, account/CSRF checks, sessions/history and immutable pending handoff payloads remain enforced. Reference-workflow PR #80 remains a separate unmerged scope.
 
 The assistant model handoff UI/API and source migration are accepted in main
 through Studio #66 and Agent #43 after the explicit merge instruction. Preserve
