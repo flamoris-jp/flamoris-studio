@@ -1,3 +1,11 @@
+# Studio 1.0.4 published — 2026-10-12 (#68)
+
+- Accepted PR [#81](https://github.com/flamoris-jp/flamoris-studio/pull/81), source `4f5552abef4c8e33c005430182a5fb3ba02053f3`; Issue #68 is closed.
+- [Studio v1.0.4](https://github.com/flamoris-jp/flamoris-studio/releases/tag/v1.0.4) is published with amd64/arm64 images, per-platform/combined Updater catalogs and SHA256SUMS. Update compatibility is 1.0.3 -> 1.0.4.
+- Final PR and merged-source CI passed: 412 server tests against PostgreSQL 17, 107 browser tests, web/production container builds and actual disposable Updater installation/start for both architectures. Published catalog bytes and seven published checksums match GitHub Release asset digests; tag source matches the accepted merge.
+- This release implements #68 only. Explicit permitted-model selection replaces the extra consent control; Agent grants, owned sessions/history and immutable handoff/request fences remain enforced. No Agent change, new setting or DB migration is required.
+- Reference-workflow PR #80 remains unmerged. Real-host update and provider inference were not performed. The following entries preserve earlier preparation checkpoints.
+
 # Assistant consent removal — 2026-10-12 (#68)
 
 - Prepares Studio 1.0.4 from current main for #68 only. Reference-workflow PR #80 is separate and unmerged.
