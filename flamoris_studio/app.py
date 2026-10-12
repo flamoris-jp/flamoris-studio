@@ -14,19 +14,19 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from flamoris_update_core.admission import wait_for_admission
 from flamoris_update_core.asgi import AdmissionMiddleware
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .auth import COOKIE, CSRF_COOKIE, DUMMY_PASSWORD_HASH, authenticated_user, clear_session, current_user, database, digest, hasher, new_csrf, require_csrf, start_session
-from .db import Asset, Execution, ExternalAssetClaim, ExternalImport, ImagePreference, ImageStyle, LoginSession, User, make_session_factory, now
+from .db import Asset, Execution, ExecutionInput, ExternalAssetClaim, ExternalImport, ImagePreference, ImageStyle, LoginSession, User, make_session_factory, now
 from .gateway import GatewayError, GenerationGateway
 from .media import Thumbnails, filename, generated_filename, inspect_image
 from .logging_setup import configure_logging
 from .managed_inputs import (Limits, owned_input, usable, input_view, reserve, check_input,
     create_snapshot, maintenance, prune, protected, quota_guard)
-from .workflow_contract import ROLES, map_parameters
+from .workflow_contract import REFERENCE_FIELDS, ROLES, map_parameters
 from .input_thumbnails import InputThumbnails
 from .input_uploads import mount_input_uploads
 from .transfer import CHUNK_BYTES, MAX_TRANSFER_BYTES, PreviewAdmission, chunk, metadata, read_with_retry
@@ -114,13 +114,23 @@ class WorkflowImageRequest(ImageRequest):
     sampler: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_]+$", max_length=80)
     scheduler: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_]+$", max_length=80)
     workflowId: str = Field(min_length=1, max_length=128)
-    workflowKind: str = Field(pattern="^builtin$")
+    workflowKind: str = Field(pattern="^(builtin|registered-comfy)$")
     # Retain nullable DTO fields for existing builtin clients. Non-null legacy
     # definition pins are rejected before any reservation or upstream request.
-    definitionVersion: None = None
-    definitionDigest: None = None
-    referenceInputId: None = None
+    definitionVersion: int | None = Field(default=None, ge=1, le=1, strict=True)
+    definitionDigest: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    referenceInputId: uuid.UUID | None = None
+    characterInputId: uuid.UUID | None = None
+    styleInputId: uuid.UUID | None = None
+    controlInputId: uuid.UUID | None = None
     additionalParameters: dict = Field(default_factory=dict, max_length=64)
+
+    @model_validator(mode="after")
+    def builtin_contract(self):
+        if self.workflowKind == "builtin" and (self.definitionVersion is not None or self.definitionDigest is not None
+            or any(getattr(self, field) is not None for field in REFERENCE_FIELDS.values())):
+            raise ValueError("Builtin templates do not accept reference images or definition pins")
+        return self
 
 
 class InputCreate(BaseModel):
@@ -506,6 +516,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                            user_id: uuid.UUID = Depends(authenticated_user)):
         row = owned_input(db, input_id, user_id)
         quota_guard(db)
+        db.refresh(row, with_for_update=True)
         if protected(db, row.id):
             raise HTTPException(409, "Reference image is in use")
         row.state = "revoking"
@@ -556,13 +567,22 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         return job
 
     async def selected_submit(input, request, db, user_id, route):
+        # Verify ALL references before even discovery calls the shared upstream.
+        for field in REFERENCE_FIELDS.values():
+            handle = getattr(input, field)
+            if handle:
+                row = owned_input(db, handle, user_id)
+                if (not usable(row) or row.mime_type not in {"image/png", "image/jpeg", "image/webp"}
+                    or not row.size_bytes or row.size_bytes > 8 * 1024**2):
+                    raise HTTPException(409, "Reference unavailable; replace or remove it")
         discovery = await app.state.gateway.discover()
         image_access(request, db, user_id, route)
         selected = next((item for item in discovery.get("workflows", []) if item["id"] == input.workflowId), None)
         if (not discovery["available"] or not selected or not selected["selectable"]
-            or selected["kind"] != "builtin" or selected["kind"] != input.workflowKind
-            or selected["id"] not in {"text-to-image", "text-to-image-lora"}
-            or selected["image"].get("mode") != "txt2img"):
+            or selected["kind"] != input.workflowKind
+            or selected["definitionVersion"] != input.definitionVersion
+            or selected["definitionDigest"] != input.definitionDigest
+            or selected.get("referenceRoles") and not discovery.get("managedInputReady")):
             raise HTTPException(409, "Image template unavailable; select a ready template")
         values = input.model_dump(mode="json", exclude_none=True)
         try:
@@ -575,13 +595,37 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             role = spec.get("role")
             if role in ROLES and role != "loras" and key in parameters:
                 values[ROLES[role]] = parameters[key]
-        snapshot = {**values, "snapshotVersion": 2, "normalizedParameters": parameters}
+        reference_rows = {}
+        for role in selected.get("referenceRoles", []):
+            handle = getattr(input, REFERENCE_FIELDS[role])
+            row = owned_input(db, handle, user_id)
+            reference_rows[role] = row
+        # Lock in a stable order, then persist every deletion fence before upstream IO.
+        for row in sorted(reference_rows.values(), key=lambda row: row.id.int):
+            db.refresh(row, with_for_update=True)
+            if not usable(row):
+                raise HTTPException(409, "Reference unavailable; replace or remove it")
+        snapshot = {**values, "snapshotVersion": 3, "normalizedParameters": parameters}
         execution = Execution(user_id=user_id, workflow=selected["id"], request_snapshot=snapshot)
         db.add(execution)
+        db.flush()
+        for role, row in reference_rows.items():
+            db.add(ExecutionInput(execution_id=execution.id, role=role, input_id=row.id))
+        if "initial_image" in reference_rows:
+            execution.reference_input_id = reference_rows["initial_image"].id
         db.commit()
         try:
+            parameters = dict(parameters)
+            for role, row in reference_rows.items():
+                upstream_id = await check_input(app.state.gateway, row)
+                key = next(key for key, spec in selected["parameters"].items() if spec.get("role") == role)
+                parameters[key] = upstream_id
             workflow = await app.state.gateway.build_selected(selected, parameters)
             image_access(request, db, user_id, route)
+            for row in reference_rows.values():
+                db.refresh(row)
+                if row.owner_user_id != user_id or not usable(row):
+                    raise HTTPException(409, "Reference changed; replace or remove it")
         except (GatewayError, HTTPException):
             set_status(db, execution, "failed")
             raise
@@ -650,7 +694,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         request = execution.request_snapshot if isinstance(execution.request_snapshot, dict) else {}
         settings = {key: request[key] for key in ("positivePrompt", "negativePrompt", "checkpoint",
                     "seed", "steps", "cfg", "width", "height", "loras", "sampler", "scheduler", "denoise", "workflowId", "workflowKind", "definitionVersion", "definitionDigest",
-                    "referenceInputId", "additionalParameters") if key in request}
+                    "referenceInputId", "characterInputId", "styleInputId", "controlInputId", "additionalParameters") if key in request}
         reference = None
         if settings.get("referenceInputId"):
             try:
@@ -664,6 +708,16 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                         reference["available"] = False
             except (ValueError, HTTPException):
                 reference = {"id": settings["referenceInputId"], "available": False, "thumbnailUrl": None}
+        references = {}
+        for role, field in REFERENCE_FIELDS.items():
+            if settings.get(field):
+                try:
+                    mapping = owned_input(db, uuid.UUID(settings[field]), user_id)
+                    references[role] = input_view(mapping)
+                    if usable(mapping):
+                        await check_input(app.state.gateway, mapping)
+                except (ValueError, HTTPException, GatewayError):
+                    references[role] = {"id": settings[field], "available": False, "thumbnailUrl": None}
         workflow_available = True
         if settings.get("workflowId"):
             try:
@@ -674,7 +728,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 workflow_available = False
         return {**asset_view(asset), "state": execution.last_known_status,
                 "submittedAt": execution.submitted_at.isoformat(), "settings": settings,
-                "referenceInput": reference, "workflowAvailable": workflow_available}
+                "referenceInput": reference, "referenceInputs": references, "workflowAvailable": workflow_available}
 
     @app.post("/api/assets/delete")
     async def delete_generated_assets(input: DeleteAssetsRequest, db: Session = Depends(database),

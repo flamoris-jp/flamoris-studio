@@ -1,3 +1,5 @@
+> Source target 1.0.4 is prepared for updates from 1.0.3. The app-owned additive migration to 20261012_13 is required for multi-reference history. Existing installer/update machinery invokes Studio migrations; this PR does not publish a release or update a host. The earlier 1.0.3 receipt below remains history.
+
 # Repository-owned Updater release 1.0.3
 
 インストールを始める前に、[入力値の用途・取得元・自動生成と導入後の設定](FIRST_SETUP.md)を確認してください。Updaterの項目名だけで値を推測せず、このアプリの手順に沿って進めます。

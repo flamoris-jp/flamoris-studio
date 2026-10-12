@@ -1,5 +1,5 @@
-# flamoris-studio v1.0.3
+# Studio v1.0.4 — release preparation
 
-Agentの利用可否応答を、StudioとAgent間の小さな時計差で拒否してしまう問題を修正します。Agentの時計が最大1秒進んでいる応答を許容し、応答の有効時間は5秒以下を維持します。期限切れ・長すぎる期限・大きな時計差は引き続き拒否します。
+Connects registered img2img, IPAdapter character/style and prepared-map ControlNet ComfyWorkFlows to the Image editor. Distinct reference pickers, individual influence settings, owner-scoped multi-image admission and complete Use settings restoration are included. Existing text-to-image and LoRA behavior remain.
 
-1.0.2から設定・既存DB・アカウント・接続情報・サムネイルを保持して更新できます。DBスキーマ変更や移行はありません。amd64/arm64の個別配布物をカタログから取得します。実機での会話・生成の受け入れは公開成功とは別に確認してください。
+Updates from 1.0.3 preserve configuration, accounts, conversations, inputs and assets. Studio's app-owned Alembic migration adds execution_inputs (20261012_13) and the normal app installer/update runs migrations. The Owner reports the actual recognized old/new DB schema. No release publication, host update, model installation or actual generation is performed by this source change.

@@ -35,6 +35,8 @@ local vendor API, exact served aliases and explicit operator resource limits.
 This route has no remote export policy or provider fallback. The Agent route
 retains its independent approved-target grants and complete-context export consent.
 
+> Subsequent source feature: Studio #79 (2026-10-12) connects current registered img2img and reviewed IPAdapter/ControlNet profiles; see [REFERENCE_IMAGES.md](REFERENCE_IMAGES.md). The old custom/v3 execution and qualification described below remain retired.
+
 ## Retired generation behavior
 
 The custom/v3 Image normalization, discovery, composition and dispatch path is

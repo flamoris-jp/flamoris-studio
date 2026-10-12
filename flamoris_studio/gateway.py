@@ -234,8 +234,21 @@ class GenerationGateway:
         catalog = await self._json("workflows.list")
         try:
             descriptors = normalize_catalog(catalog)
+            if health.get("managed_input_support", {}).get("ready") is not True:
+                for descriptor in descriptors:
+                    if descriptor.get("referenceRoles"):
+                        descriptor.update(selectable=False, reason="reference_storage_unavailable")
         except (ValueError, TypeError):
             raise GatewayError("upstream_failure") from None
+        conditioned = [d for d in descriptors if d.get("recipeSchema") == 8]
+        if conditioned:
+            discovered_models = await self._json("models.list", {"kind": None})
+            installed = {(m.get("kind"), m.get("name")) for m in discovered_models.get("models", []) if isinstance(m, dict)}
+            for descriptor in conditioned:
+                required = {(spec.get("model_kind"), spec.get("default")) for spec in descriptor["parameters"].values()
+                            if spec.get("model_kind") in {"checkpoint", "ipadapter", "clip_vision", "controlnet"}}
+                if not required <= installed:
+                    descriptor.update(selectable=False, reason="reference_models_unavailable")
         return {
             "available": True,
             "workflows": descriptors,
@@ -257,21 +270,46 @@ class GenerationGateway:
         return result["workflow_id"]
 
     async def build_selected(self, descriptor, parameters):
-        if (
-            descriptor.get("kind") != "builtin"
-            or descriptor.get("id") not in {"text-to-image", "text-to-image-lora"}
-            or descriptor.get("definitionVersion") is not None
-            or descriptor.get("definitionDigest") is not None
-        ):
+        registered = descriptor.get("kind") == "registered-comfy"
+        if registered:
+            if (re.fullmatch(r"comfy-[a-f0-9]{64}", descriptor.get("id", "")) is None
+                or descriptor.get("definitionVersion") != 1
+                or descriptor.get("definitionDigest") != descriptor["id"][6:]
+                or descriptor.get("recipeSchema") not in {7, 8}):
+                raise GatewayError("validation")
+        elif (descriptor.get("kind") != "builtin"
+              or descriptor.get("id") not in {"text-to-image", "text-to-image-lora"}
+              or descriptor.get("definitionVersion") is not None
+              or descriptor.get("definitionDigest") is not None):
             raise GatewayError("retired_recipe")
         args = {"template": descriptor["id"], "parameters": parameters}
+        if registered:
+            args.update(definition_version=1, definition_digest=descriptor["definitionDigest"])
         result = await self._json("workflows.build", args)
-        if (
-            result.get("template") != descriptor["id"]
-            or result.get("parameters") != parameters
-        ):
-            raise GatewayError("validation")
-        if result.get("schema_version") != 1:
+        if registered:
+            schema = descriptor["recipeSchema"]
+            expected_images = {key: parameters[key] for key, spec in descriptor["parameters"].items()
+                               if spec.get("role") in {"initial_image", "character_image", "style_image", "control_image"}}
+            if (result.get("template") != "registered-comfy"
+                or result.get("definition_id") != descriptor["id"]
+                or type(result.get("schema_version")) is not int
+                or result.get("schema_version") != schema):
+                raise GatewayError("validation")
+            if schema == 7:
+                if result.get("reference_image") != parameters.get("reference_image"):
+                    raise GatewayError("validation")
+            elif result.get("images") != expected_images:
+                raise GatewayError("validation")
+            image_values = result.get("parameters")
+            controls = result.get("conditioning", {}) if schema == 8 else {}
+            if not isinstance(image_values, dict) or not isinstance(controls, dict):
+                raise GatewayError("validation")
+            for key, value in parameters.items():
+                if key not in expected_images and ({**image_values, **controls}.get(key) != value):
+                    raise GatewayError("validation")
+        elif (result.get("template") != descriptor["id"]
+              or result.get("parameters") != parameters or type(result.get("schema_version")) is not int
+              or result.get("schema_version") != 1):
             raise GatewayError("validation")
         workflow_id = result.get("workflow_id")
         if not isinstance(workflow_id, str) or not re.fullmatch(

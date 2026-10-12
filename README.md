@@ -50,20 +50,16 @@ positive and negative prompts; applying it leaves an editable draft. The editor
 also exposes size presets, ordered optional LoRAs, sampler, scheduler, denoise,
 and a random seed action. Generated result details show Studio's original request
 snapshot and offer **Use settings** to return to the Image editor. The recipe
-picker accepts only the original builtin `text-to-image` and `text-to-image-lora`
-descriptors. Custom definitions and v3 execution are retired. A restored custom
-selection remains blocked until the user explicitly selects a supported builtin;
-Studio does not silently retarget the draft.
+picker accepts the original builtin text-to-image/LoRA recipes and the current registered checkpoint ComfyWorkFlow profiles. The [reference-image editor](docs/REFERENCE_IMAGES.md) connects img2img, IPAdapter appearance/style and prepared-map ControlNet through Controller HTTP. Legacy custom definitions and v3 execution remain retired; restoring an unsupported selection preserves the draft and requires explicit reselection.
 
 Existing owned Assets and immutable PNG/JPEG/WebP inputs retain their bounded
 upload, preview and deletion APIs. Uploads remain limited to 8 MiB and 24 hours.
-Neither retained builtin accepts reference images: an attached reference blocks
-generation until explicitly removed. Historical executions and uncertain input
+The two retained builtin txt2img recipes still reject attached references. Registered reference profiles declare their own initial/appearance/style/control image roles, with one picker per required role. Historical executions and uncertain input
 references keep their ownership and deletion fences. Source cleanup deletes no
-stored inputs or assets and does not implement a replacement img2img path.
+stored inputs or assets and is separate from the subsequent registered reference profiles.
 
 **Clear inputs** resets the Image draft: both prompts, Style selection/name,
-reference attachment, Workflow and additional parameters, LoRAs, seed and advanced
+all reference attachments, Workflow and additional parameters, LoRAs, seed and advanced
 settings. It restores 512 × 512, 20 steps, CFG 7, Euler/normal, denoise 1 and the
 first discovered model; valid numeric defaults use the existing per-user autosave.
 The reference picker closes and focus returns to the positive prompt. The action
@@ -311,4 +307,4 @@ Phase 1では、認証済みmulti-user shell、Image生成、Raw Intelligence、
 
 Before filling the form, read [input values and post-install setup](docs/FIRST_SETUP.md) for each field's purpose, value source, generation behavior and remaining app configuration.
 
-See [repository-owned distribution](docs/UPDATER.md) for release 1.0.3 (including updates from 1.0.2), its catalog and post-install configuration. Publication and actual-host acceptance remain separately verified.
+See [repository-owned distribution](docs/UPDATER.md) for source target 1.0.4 (release preparation, updates from 1.0.3), its catalog and post-install configuration. Publication and actual-host acceptance remain separately verified.

@@ -31,3 +31,7 @@ Direct transport tests cover authentication configuration, bounds, safe errors, 
 The Controller test dependency remains pinned to extraction commit
 `b57140954c8bc8176d882a053df70f00fad2be31`; it verifies Studio's retained generation
 contract, not the subsequent external registration profile. Production Studio uses HTTP and does not import the Controller runtime. Source tests do not activate a provider, load weights or deploy. Operational cutover must drain/reconcile and stop the old pre-lock authority, preserve/back up records and update matched host/Studio configuration. Different output roots/hosts and old binaries are not constrained by the new local lifetime lock.
+
+## Reference-image profiles
+
+The matching source uses the same authenticated HTTP API for schema-7 registered img2img and schema-8 IPAdapter appearance/style and prepared-map ControlNet. Studio verifies all owned handles, pins the current definition digest and maps private upstream IDs only in the backend. It persists all execution/input links before build/submit and preserves response/session checks and unknown outcomes. See [reference setup and editor](REFERENCE_IMAGES.md).

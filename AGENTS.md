@@ -8,6 +8,9 @@ This repository contains FLAMORIS Studio, the creative control center for FLAMOR
 
 ## Current direction
 
+The 2026-10-12 request resumes source work for registered img2img, IPAdapter appearance/style and prepared-map ControlNet under Studio #79 / Controller #13. Follow docs/REFERENCE_IMAGES.md. Preserve the former cleanup of custom/v3/Runtime delegation; use current registered profiles through Controller HTTP and one generation authority. Source/tests/docs/PRs are authorized; deployment/model downloads/inference and merges remain separate.
+
+
 The assistant model handoff UI/API and source migration are accepted in main
 through Studio #66 and Agent #43 after the explicit merge instruction. Preserve
 the logical Studio conversation key; Agent owns immutable internal lineage.

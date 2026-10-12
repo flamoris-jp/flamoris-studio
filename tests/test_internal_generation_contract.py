@@ -77,8 +77,11 @@ async def matched(tmp_path, monkeypatch):
             )
         raise AssertionError(f"Unexpected provider request: {path}")
 
+    shared_inputs = tmp_path / "comfy-inputs"
+    shared_inputs.mkdir()
     controller = GenerationController(
         Settings(
+            comfyui_input_root=shared_inputs,
             model_root=tmp_path / "models",
             workflow_dir=tmp_path / "recipes",
             output_dir=tmp_path / "outputs",
@@ -144,3 +147,80 @@ async def test_real_controller_gateway_upload_publication_and_delete(matched):
     await gateway.delete_input(record["input_id"])
     with pytest.raises(GatewayError):
         await gateway.get_input(record["input_id"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("conditioning", [False, True])
+async def test_registered_reference_gateway_controller_provider_flow(
+    matched, conditioning
+):
+    from flamoris_generation_controller.registered_comfy import image_prompt
+    from flamoris_generation_controller.reference_comfy import conditioning_prompt
+    from flamoris_generation_controller.workflows import Conditioning, Parameters
+    from flamoris_studio.workflow_contract import normalize_catalog
+
+    gateway, controller, state, image = matched
+    params = Parameters(checkpoint="base.safetensors", positive_prompt="A new scene")
+    roles = (
+        ["character_image", "style_image", "control_image"]
+        if conditioning
+        else ["reference_image"]
+    )
+    if conditioning:
+        for folder, name in (
+            ("ipadapter", "adapter.safetensors"),
+            ("clip_vision", "vision.safetensors"),
+            ("controlnet", "control.safetensors"),
+        ):
+            path = controller.settings.model_root / folder / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"metadata only")
+        graph = conditioning_prompt(
+            params,
+            Conditioning(
+                character_adapter="adapter.safetensors",
+                style_adapter="adapter.safetensors",
+                clip_vision="vision.safetensors",
+                controlnet="control.safetensors",
+            ),
+            roles,
+        )
+    else:
+        graph = image_prompt(params, reference=True)
+    raw = controller.workflows.definitions.register("References", graph)
+    selected = normalize_catalog({"descriptors": [raw]})[0]
+    assert selected["selectable"] and selected["liveProviderVerified"] is False
+    discovered = await gateway.discover()
+    assert next(
+        item for item in discovered["workflows"] if item["id"] == selected["id"]
+    )["selectable"]
+    if conditioning:
+        encoder = controller.settings.model_root / "clip_vision/vision.safetensors"
+        encoder.unlink()
+        unavailable = await gateway.discover()
+        entry = next(
+            item for item in unavailable["workflows"] if item["id"] == selected["id"]
+        )
+        assert (
+            not entry["selectable"]
+            and entry["reason"] == "reference_models_unavailable"
+        )
+        assert state["submissions"] == 0
+        encoder.write_bytes(b"metadata only")
+    uploaded = {
+        role: await gateway.upload_input(uuid.uuid4().hex, image, "image/png")
+        for role in roles
+    }
+    built = await gateway.build_selected(
+        selected, {role: value["input_id"] for role, value in uploaded.items()}
+    )
+    job = await gateway.submit(built)
+    prompt = state["pending"][0][2]
+    assert all(
+        node["inputs"]["image"].startswith("flamoris-inputs/")
+        for node in prompt.values()
+        if node["class_type"] == "LoadImage"
+    )
+    assert state["submissions"] == 1
+    state.update(completed=True, pending=[])
+    assert (await gateway.result(job["job_id"]))["status"] == "completed"
