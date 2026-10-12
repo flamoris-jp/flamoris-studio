@@ -1,15 +1,15 @@
-# Repository-owned Updater release 1.0.3
+# Repository-owned Updater release 1.0.5
 
 インストールを始める前に、[入力値の用途・取得元・自動生成と導入後の設定](FIRST_SETUP.md)を確認してください。Updaterの項目名だけで値を推測せず、このアプリの手順に沿って進めます。
 
 このリポジトリがソース・ビルド・Release・配布物・インストールカタログを管理します。Updaterは配布物を集め直さず、カタログに記載したこのリポジトリのReleaseから、選択したアプリとCPU向けのファイルだけを取得します。
 
 公開成功後のカタログURL：
-`https://github.com/flamoris-jp/flamoris-studio/releases/download/v1.0.3/catalog.json`
+`https://github.com/flamoris-jp/flamoris-studio/releases/download/v1.0.5/catalog.json`
 
 `.github/workflows/publish-updater-release.yml` はこのアプリだけをamd64/arm64でビルドし、固定image IDまたは完全なoffline wheelhouse、ファイルのSHA-256、設定と起動方法をカタログへ記録します。`release/install-recipe.json` がアプリ所有のインストール定義です。公開前にUpdater自身の型と実際のprofile展開処理で検証します。検証用のUpdater依存はCIツール環境だけに入れ、アプリのランタイムへは追加しません。
 
-Release/tagが存在する場合は上書きしません。以前の集中配布と別のパッチ版で、URL・バイト列・カタログ内容の衝突を避けます。`compatible_from` は `1.0.2` のみです。1.0.3は利用可否の時刻判定だけを変更し、DBスキーマ・設定配置・データ配置は変更しません。更新では既存の設定ファイル・DB・アカウント・サムネイルを保持します。初回設定の再実行やDB移行は不要です。
+Release/tagが存在する場合は上書きしません。以前の集中配布と別のパッチ版で、URL・バイト列・カタログ内容の衝突を避けます。`compatible_from` は `1.0.4` のみです。1.0.5はアシスタントのモデル選択を同じブラウザで保存し、DBスキーマ・設定配置・データ配置は変更しません。更新では既存の設定ファイル・DB・アカウント・サムネイルを保持します。初回設定の再実行やDB移行は不要です。
 
 PostgreSQLの新規DBへ、このイメージのAlembicを適用します。既存DBの初期化は拒否します。Studio自身のアカウント認証は維持します。初回ユーザーはアプリの管理CLI、または意図して許可した登録画面で作成します。
 
