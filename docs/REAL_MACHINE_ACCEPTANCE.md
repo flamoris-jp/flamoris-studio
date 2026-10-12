@@ -1,5 +1,9 @@
 # Current real-machine acceptance handoff
 
+## Studio 1.0.4 source update — #68
+
+The additional remote-transmission consent control is removed. Explicit model selection and Agent-approved grants authorize the complete context through the existing internal API. Existing sessions, switch identities and unknown fences are retained; no DB migration, Agent upgrade or new operator setting is needed. Publication/CI does not establish a real-host update. Earlier dated consent receipts below remain historical evidence.
+
 Source authority: [architecture cleanup](ARCHITECTURE_CLEANUP.md),
 [AI progress](https://github.com/flamoris-jp/flamoris-ai/blob/main/PROGRESS.md) and
 [AI #18](https://github.com/flamoris-jp/flamoris-ai/issues/18). This handoff describes
@@ -61,7 +65,7 @@ principal grant or an instruction to populate production data.
 | --- | --- |
 | Image | Studio -> authenticated Controller HTTP -> shared Controller -> ComfyUI; two builtin txt2img templates, model discovery, optional ordered LoRAs and bounded image retrieval |
 | Raw Intelligence | Studio -> shared non-MCP llama.cpp adapter; exact configured model alias and bounded text/reasoning/code responses |
-| Agent Assistant | Studio -> Agent HTTP `/api/v1` -> shared Intelligence adapter; authorized principal/session, optional local/OpenAI model grants and complete-context remote consent |
+| Agent Assistant | Studio -> Agent HTTP `/api/v1` -> shared Intelligence adapter; authorized principal/session, optional local/OpenAI model grants and complete-context remote authorization |
 | Speech | Opt-in native Irodori recipe/CLI adapter; configured immutable resources, Japanese no-reference output up to 30 seconds, owned WAV retrieval |
 | Music | Opt-in native YuE2 generation and SheetSage2 transcription contracts; owned WAV/ABC or MIDI/annotation outputs and existing request fences |
 | External ChatGPT | Hub -> current external Generation/Intelligence/Agent catalogs; configured authentication and a fresh client tool listing |
@@ -94,7 +98,7 @@ Only execute these steps under separate operational authorization:
 4. Configure the direct Intelligence and Agent HTTP paths, DB grants and opt-in
    settings separately. Use the explicit model-switch contract to preserve a
    valid conversation through authorized child-session lineage; check both DB
-   migration chains, current grants and full-context remote consent. An unrelated
+   migration chains, current grants and full-context remote authorization. An unrelated
    fresh session cannot inherit a parent. Never silently retarget history or
    enable remote fallback; unknown turns/switches block admission.
 5. Obtain fresh deployed catalog and route receipts before admitting provider work.
@@ -116,7 +120,7 @@ ports, storage and configuration; a distinct Compose project name alone is insuf
   a paid call, hidden fallback or fabricated successful result.
 - Agent: open two separately granted users' conversations; check personality/model
   snapshots, continuation, revocation and request uncertainty. If OpenAI is enabled,
-  test explicit full-context export consent and the configured cost/input ceilings.
+  test full-context export grants and the configured cost/input ceilings.
   Declined or legacy-local history must not be sent remotely.
 - Speech/Music: explicitly enable only the installed native contracts. Confirm
   expected output roles, decoding/playback, complete retrieval and actual model

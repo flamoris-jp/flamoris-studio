@@ -33,7 +33,8 @@ For raw Intelligence, existing endpoint/model variables now configure the actual
 local vendor API, exact served aliases and explicit operator resource limits.
 `approved-local` is an operator assertion, not model discovery attestation.
 This route has no remote export policy or provider fallback. The Agent route
-retains its independent approved-target grants and complete-context export consent.
+retains its independent approved-target grants and complete-context export authorization. Studio 1.0.4 removes the browser consent
+control and derives the existing internal flag only for the selected allowed model.
 
 ## Retired generation behavior
 
@@ -64,7 +65,7 @@ deleted ComfyWorkFlow subsystem or instantiate a second job authority.
 
 - Login, CSRF, account bindings and ownership are checked independently of
   upstream UUIDs. Credentials and private topology stay in the backend.
-- Principal/model/personality snapshots and full-context remote consent remain
+- Principal/model/personality snapshots and full-context remote authorization remain
   Agent-owned. Attached drafts are untrusted data, never system policy or grants.
 - Studio commits its existing owner-scoped request fence before dispatch. Login
   and configuration are checked immediately before sending and before publishing

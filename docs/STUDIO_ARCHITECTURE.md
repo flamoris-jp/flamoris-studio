@@ -56,8 +56,10 @@ settings mode. Old `/mcp` URLs fail, without protocol fallback or resubmission.
 
 Intelligence/Agent credentials and approved endpoint/model configuration are
 operator-controlled. Personality text and requests cannot select arbitrary URLs,
-paths, models or credentials. Remote Agent selection retains explicit consent for
-all sent personality/history/question/attached context, plus independent grants.
+paths, models or credentials. Remote Agent selection uses explicit model choice and independent Agent-approved
+model/export grants for all personality/history/question/attached context.
+Studio 1.0.4 removes the extra consent control and derives the existing internal
+authorization flag; MODEL_CONTINUATION.md describes legacy handoff retention.
 Drafts and prior/model messages remain untrusted context below system policy.
 
 ## Retained generation and retirement
