@@ -203,7 +203,10 @@ async def bounded_body(request, limit):
 class ModelSelection(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     modelId: StrictStr = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-    remoteConsent: StrictBool = False
+    remoteConsent: StrictBool = Field(
+        default=False, json_schema_extra={"deprecated": True},
+        description="Legacy browser field; remote authorization comes from the allowed model.",
+    )
 
 
 class ModelSwitch(ModelSelection):
@@ -313,11 +316,11 @@ def mount_assistant(app):
             )
             if not chosen:
                 raise HTTPException(403, "Model is not permitted")
-            if (
-                chosen["data_flow"] == "remote_authorized"
-                and not selection.remoteConsent
-            ):
-                raise HTTPException(422, "Confirm remote context transmission")
+            # The operator's Agent grant authorizes this explicitly selected model.
+            # Preserve the Agent wire flag, without requiring a browser consent step.
+            selection = selection.model_copy(update={
+                "remoteConsent": chosen["data_flow"] == "remote_authorized"
+            })
             binding = await session_for(
                 request, db, user, actor, gateway, selection=selection
             )
@@ -357,13 +360,17 @@ def mount_assistant(app):
             chosen = next((m for m in catalog["models"] if m["id"] == selection.modelId), None)
             if chosen is None:
                 raise HTTPException(403, "Model is not permitted")
-            if chosen["data_flow"] == "remote_authorized" and not selection.remoteConsent:
-                raise HTTPException(422, "Confirm remote transmission of the complete conversation context")
+            selection = selection.model_copy(update={
+                "remoteConsent": chosen["data_flow"] == "remote_authorized"
+            })
             record = db.get(AssistantModelSwitch, (user, selection.requestId))
             if record is not None:
                 if (record.session_id != selection.sessionKey or record.binding_digest != actor[3]
-                        or record.model_id != selection.modelId or record.remote_consent != selection.remoteConsent):
+                        or record.model_id != selection.modelId):
                     raise HTTPException(409, "Handoff identity changed; no new handoff was made")
+                # An existing handoff must keep its original immutable Agent payload.
+                # This also reconciles legacy local handoffs whose flag was true.
+                selection = selection.model_copy(update={"remoteConsent": record.remote_consent})
                 if record.state == "completed":
                     if binding.upstream_session_id != record.target_session_id:
                         raise HTTPException(409, "This model handoff was superseded")

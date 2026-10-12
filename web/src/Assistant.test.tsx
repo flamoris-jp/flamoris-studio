@@ -24,6 +24,72 @@ async function type(value: string) {
 const ready = (session = 'studio-session'): AssistantAvailability => ({ available: true, state: 'ready', sessionKey: session, expiresAt: new Date(Date.now() + 5000).toISOString() })
 const draft = () => ({ ...initialImageDraft('private-model'), positivePrompt: 'current draft', negativePrompt: 'noise' })
 
+async function selectModel(id: string) {
+  const selector = host.querySelector('select')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(selector, id)
+    selector.dispatchEvent(new Event('change', { bubbles: true }))
+  })
+}
+
+function expectNoConsent() {
+  expect(host.querySelector('[aria-label="Assistant model selection"] input[type=checkbox]')).toBe(null)
+  expect(host.textContent).not.toContain('Allow this conversation')
+}
+
+test('remote conversation starts and restarts with normal model controls', async () => {
+  let started = false
+  vi.spyOn(api, 'assistantModels').mockResolvedValue({ models: [
+    { id: 'api', display_name: 'Remote', data_flow: 'remote_authorized' },
+  ], defaultModelId: 'api' })
+  vi.spyOn(api, 'assistantAvailability').mockImplementation(async () => started ? { ...ready(), modelId: 'api' } : { available: false, state: 'unavailable' })
+  const start = vi.spyOn(api, 'assistantStart').mockImplementation(async () => {
+    started = true
+    return { sessionKey: 'studio-session', modelId: 'api' }
+  })
+  const confirm = vi.spyOn(window, 'confirm')
+  await show(); await type('keep my draft')
+  expectNoConsent()
+  expect(button('Start selected model').disabled).toBe(false)
+  await click('Start selected model')
+  expect(start).toHaveBeenCalledWith('api', 'csrf')
+  expect(host.querySelector('textarea')!.value).toBe('keep my draft')
+  expect(button('Send question').disabled).toBe(false)
+  await click('Start new conversation')
+  expect(start).toHaveBeenCalledTimes(2)
+  expectNoConsent()
+  expect(confirm).not.toHaveBeenCalled()
+})
+
+test.each(['local', 'api'])('switching from %s to remote needs no consent and preserves context', async source => {
+  let currentModel = source
+  vi.spyOn(api, 'assistantModels').mockResolvedValue({ models: [
+    { id: 'local', display_name: 'Internal', data_flow: 'local_only' },
+    { id: 'api', display_name: 'Remote', data_flow: 'remote_authorized' },
+    { id: 'api2', display_name: 'Other remote', data_flow: 'remote_authorized' },
+  ], defaultModelId: source })
+  vi.spyOn(api, 'assistantAvailability').mockImplementation(async () => ({ ...ready(), modelId: currentModel, remoteConsent: source === 'api' }))
+  const ask = vi.spyOn(api, 'assistantAsk').mockResolvedValue({ requestHandle: 'previous-owned', sessionKey: 'studio-session', text: 'previous answer', provenance: { model: source, provider: 'approved' } })
+  const handoff = vi.spyOn(api, 'assistantSwitch').mockImplementation(async payload => {
+    currentModel = payload.modelId
+    return { sessionKey: 'studio-session', modelId: currentModel, remoteConsent: true }
+  })
+  const confirm = vi.spyOn(window, 'confirm')
+  await show(); await type('first'); await click('Send question'); await type('unsent')
+  expectNoConsent()
+  await selectModel('api2')
+  expect(button('Send question').disabled).toBe(true)
+  expect(button('Switch selected model').disabled).toBe(false)
+  await click('Switch selected model')
+  expect(handoff.mock.calls[0][0]).not.toHaveProperty('remoteConsent')
+  expect(host.querySelector('textarea')!.value).toBe('unsent')
+  expect(host.textContent).toContain('previous answer')
+  expectNoConsent()
+  await click('Send question')
+  expect(ask.mock.calls[1][0]).toHaveProperty('previousHandle', 'previous-owned')
+  expect(confirm).not.toHaveBeenCalled()
+})
+
 test('switching after a turn preserves the conversation handle and unsent question', async () => {
   let currentModel = 'local'
   vi.spyOn(api, 'assistantModels').mockResolvedValue({ models: [

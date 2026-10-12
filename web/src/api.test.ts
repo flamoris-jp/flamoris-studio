@@ -3,6 +3,18 @@ import { api, IntelligenceFailure, type IntelligenceInput } from './api'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 
+test('assistant start and switch use explicit model selection without browser consent fields', async () => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify({ sessionKey: 'owned-session', modelId: 'api' }) })
+  vi.stubGlobal('fetch', fetch)
+  await api.assistantStart('api', 'csrf')
+  const payload = { requestId: 'request', sessionKey: 'owned-session', expectedModelId: 'local', modelId: 'api' }
+  await api.assistantSwitch(payload, 'csrf')
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ modelId: 'api' })
+  expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual(payload)
+  expect(fetch.mock.calls.every(([, options]) => options.credentials === 'same-origin' && options.headers['X-CSRF-TOKEN'] === 'csrf')).toBe(true)
+  expect(fetch).toHaveBeenCalledTimes(2)
+})
+
 test('image submission includes CSRF token and same-origin credentials', async () => {
   const fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify({ id: 'studio-id', state: 'queued', assets: [] }) })
   vi.stubGlobal('fetch', fetch)

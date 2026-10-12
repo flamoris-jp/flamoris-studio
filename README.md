@@ -16,6 +16,8 @@ Phase 1 uses a Python FastAPI backend with PostgreSQL-backed local accounts and 
 
 **Current main contains the authenticated multi-user shell, Image generation, opt-in native Speech and Music slices, and the per-user Generated results catalog with metadata/details, download, and confirmed deletion.** Runtime/model qualification and additional provider contracts remain separate acceptance gates.
 
+Assistant model selection in Studio 1.0.4 uses the Agent-authorized catalog without an additional remote-transmission consent checkbox. Existing conversations, model switching and request fences are retained; no Agent upgrade or DB migration is needed.
+
 See [assistant settings and model integration](docs/ASSISTANT_SETTINGS.md) for the opt-in extension and migration gates.
 
 ## Current integration boundaries

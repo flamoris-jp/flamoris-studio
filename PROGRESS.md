@@ -1,3 +1,10 @@
+# Assistant consent removal — 2026-10-12 (#68)
+
+- Prepares Studio 1.0.4 from current main for #68 only. Reference-workflow PR #80 is separate and unmerged.
+- Removed browser consent text/checkbox and consent-based button gates. Start/switch/continuation use explicit permitted-model selection and existing Agent model/export authorization.
+- Legacy browser fields remain accepted; existing session rows and pending/completed handoff payloads are retained without replay. No Agent change, new setting or DB migration.
+- Browser tests (107), TypeScript/Vite build and wheel/sdist passed. First PostgreSQL CI passed the 411 application/contract tests and exposed one outdated release-test predecessor assertion; it is corrected to 1.0.3. Both amd64/arm64 actual-Updater installation jobs passed. Final-head CI remains required before merge/publication. No real-host rollout or provider calls occurred.
+
 # Repository-owned distribution preparation — 2026-10-11
 
 The operator explicitly requested preparing this repository for individual Updater installation. Release 1.0.1 adds an app-owned installer definition, per-platform packaging, direct Release URLs and typed/profile validation. No centralized app distribution, live deployment, DB/data/credential change or provider invocation is performed. CI/publication and actual-host acceptance will be reported separately. This is a new-install recipe; no unverified compatibility edge is declared.

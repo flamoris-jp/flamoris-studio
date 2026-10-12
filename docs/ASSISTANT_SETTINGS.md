@@ -11,9 +11,11 @@ account UUID → Human/Agent/Project bindings remain operator managed. Hub is no
 required: this uses the existing reviewed private Studio-backend → Agent path.
 
 The Assistant panel exposes only the Agent-authorized public model list. Choose
-Internal LLM or OpenAI API, then explicitly Start selected model. API selection
-requires consent covering personality, previous turns, question and explicitly
-attached draft. Explicit [model switching](MODEL_CONTINUATION.md) preserves the
+Internal LLM or OpenAI API, then explicitly Start selected model. For Studio 1.0.4 (#68), remote selection requires no consent checkbox or extra
+confirmation. Studio checks the selected model against Agent's allowed catalog
+and passes the model's remote authorization through the existing internal API.
+Agent still enforces its model/export grants for personality, previous turns,
+question and explicitly attached draft. Explicit [model switching](MODEL_CONTINUATION.md) preserves the
 logical conversation key, previous request handle, answer, original personality
 snapshot and unsent question through immutable Agent child-session lineage.
 An uncertain switch blocks new questions; explicit Check model switch reuses the
@@ -38,7 +40,7 @@ the original revision for an identical duplicate. History loads one full revisio
 per page to bound response size. Restore copies a historical version into the
 current draft and requires a new ordinary expected-revision save.
 
-Studio stores only an owner-scoped principal session reference/model ID/consent and
+Studio stores only an owner-scoped principal session reference/model ID/internal remote authorization flag and
 its existing conversation/request references and metadata-only durable switch fences.
 Agent retains the transcript and immutable lineage. All reads and writes recheck login,
 account binding and owner session after private I/O; saves also check immediately
