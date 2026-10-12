@@ -315,4 +315,7 @@ Phase 1では、認証済みmulti-user shell、Image生成、Raw Intelligence、
 
 Before filling the form, read [input values and post-install setup](docs/FIRST_SETUP.md) for each field's purpose, value source, generation behavior and remaining app configuration.
 
-See [repository-owned distribution](docs/UPDATER.md) for release 1.0.5 (including updates from 1.0.4), its catalog and post-install configuration. Publication and actual-host acceptance remain separately verified.
+See [repository-owned distribution](docs/UPDATER.md) for release 1.0.6 (including updates from 1.0.5), its catalog and post-install configuration. Publication and actual-host acceptance remain separately verified.
+
+
+Linked external generations can appear automatically in Assets while the gallery is open. Configure an individual Hub credential, signed Generation provenance and the operator-provisioned Studio account binding; shared anonymous connections cannot establish ownership. Assets offers All/Image/Video/Music/Speech/Other filters. Music bundles show WAV cards; owned ABC/MIDI/metadata downloads are in the detail dialog. See [external import](docs/EXTERNAL_GENERATION_IMPORT.md) and [multimedia results](docs/MULTIMEDIA_RESULTS.md).

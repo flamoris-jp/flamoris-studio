@@ -186,3 +186,8 @@ Generated media does not automatically inherit this repository's code license.
 FLAMORIS does not provide guaranteed individual support.
 
 Repository documentation, Issues, tests, logs, and source code are the primary references. AI-assisted self-support is encouraged.
+
+
+## 2026-10-13 linked external gallery scope
+
+Studio #86 / Controller #16 add automatic linked-client result registration, category filters and WAV/sidecar detail presentation. The user explicitly authorizes implementation through release and real-host changes. Preserve account/CSRF checks, binding reauthorization, permanent claims/tombstones and generation-owned media authority. The matched Controller pin is required for discovery. Source/CI acceptance and actual individual-credential/provenance/binding acceptance must be recorded separately; never assign historical anonymous jobs automatically.

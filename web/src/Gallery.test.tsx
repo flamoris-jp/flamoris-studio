@@ -12,6 +12,72 @@ const item = (id: string): Asset => ({
   previewUrl: '/preview/' + id, thumbnailUrl: '/thumbnail/' + id, downloadUrl: '/download/' + id,
 })
 
+test('kind filters reset selection and music detail offers the owned sidecar downloads', async () => {
+  const view = await show(['image'])
+  await click(view.querySelector('article input')!)
+  const wav = { ...item('song'), mediaKind: 'audio', mimeType: 'audio/wav' }
+  const score = { ...item('score'), mediaKind: 'score', mimeType: 'text/vnd.abc' }
+  const info = { ...item('info'), mediaKind: 'metadata', mimeType: 'application/json' }
+  vi.mocked(api.assets).mockResolvedValue({ items: [wav], nextOffset: null })
+  vi.spyOn(api, 'asset').mockResolvedValue({ ...wav, state: 'completed', submittedAt: wav.createdAt,
+    settings: {}, attachments: [score, info] })
+  await click(Array.from(view.querySelectorAll('nav button')).find(b => b.textContent === 'Music')!)
+  expect(api.assets).toHaveBeenLastCalledWith(0, 'music')
+  expect(view.querySelector('nav [aria-pressed="true"]')?.textContent).toBe('Music')
+  expect(view.querySelectorAll('article')).toHaveLength(1)
+  expect(view.querySelector('button')?.textContent).toContain('(0)')
+  await click(Array.from(view.querySelectorAll('button')).find(b => b.textContent === 'View details')!)
+  const links = Array.from(view.querySelectorAll('[role="dialog"] a'))
+  expect(links.map(a => a.textContent)).toEqual(['Download ↓', 'ABC score ↓', 'Generation information ↓'])
+  expect(links.map(a => a.getAttribute('href'))).toEqual(['/download/song', '/download/score', '/download/info'])
+})
+
+test('late page and detail responses cannot restore a previous kind', async () => {
+  const view = await show(['image'])
+  let resolveDetail!: (value: Awaited<ReturnType<typeof api.asset>>) => void
+  vi.spyOn(api, 'asset').mockImplementation(() => new Promise(resolve => { resolveDetail = resolve }))
+  await click(Array.from(view.querySelectorAll('button')).find(b => b.textContent === 'View details')!)
+  vi.mocked(api.assets).mockResolvedValue({ items: [item('different')], nextOffset: null })
+  await click(Array.from(view.querySelectorAll('nav button')).find(b => b.textContent === 'Video')!)
+  await act(async () => resolveDetail({ ...item('image'), state: 'completed', submittedAt: item('image').createdAt, settings: {} }))
+  expect(view.querySelector('[role="dialog"]')).toBeNull()
+  expect(view.querySelector('article strong')?.textContent).toBe('different.png')
+})
+
+test('linked results sync with bounded pages and pause while hidden, then cancel on unmount', async () => {
+  vi.useFakeTimers()
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+  const sync = vi.spyOn(api, 'syncExternal').mockResolvedValueOnce({ imported: 1, nextCursor: 1, hasMore: true })
+    .mockResolvedValue({ imported: 0, nextCursor: 2, hasMore: false })
+  const view = await show(['external'], true)
+  expect(sync).toHaveBeenCalledWith(0, 'csrf', expect.any(AbortSignal))
+  expect(view.querySelector('article strong')?.textContent).toBe('external.png')
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+  expect(sync).toHaveBeenLastCalledWith(1, 'csrf', expect.any(AbortSignal))
+  visibility.mockReturnValue('hidden')
+  await act(async () => { await vi.advanceTimersByTimeAsync(15000) })
+  expect(sync).toHaveBeenCalledTimes(2)
+  visibility.mockReturnValue('visible')
+  await act(async () => { await vi.advanceTimersByTimeAsync(15000) })
+  expect(sync).toHaveBeenLastCalledWith(2, 'csrf', expect.any(AbortSignal))
+  const signal = sync.mock.calls.at(-1)![2]!
+  await act(async () => { root!.unmount() }); root = undefined
+  expect(signal.aborted).toBe(true)
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+test('external sync failure preserves the owned gallery and unlinked accounts never sync', async () => {
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+  const sync = vi.spyOn(api, 'syncExternal').mockRejectedValue(new Error('offline'))
+  const view = await show(['saved'], true)
+  expect(view.querySelector('[role="status"]')?.textContent).toContain('Could not sync')
+  expect(view.querySelector('article strong')?.textContent).toBe('saved.png')
+  await act(async () => { root!.unmount() }); root = undefined; view.remove()
+  sync.mockClear()
+  await show(['private'], false)
+  expect(sync).not.toHaveBeenCalled()
+})
+
 let root: Root | undefined
 let host: HTMLDivElement | undefined
 beforeEach(() => vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true))
@@ -241,3 +307,4 @@ test('imported images without a request snapshot cannot apply invented settings'
   await click(Array.from(host.querySelectorAll('button')).find(node => node.textContent === 'View details')!)
   expect(host.querySelector('[role="dialog"]')?.textContent).not.toContain('Use settings')
 })
+

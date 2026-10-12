@@ -1,9 +1,7 @@
-# flamoris-studio v1.0.5
+# FLAMORIS Studio v1.0.6
 
-Assistantで選択したモデルを、アカウントごとに同じブラウザで保存します。AssistantとImageのアシスタントで共通に利用し、画面移動・開き直し・再読み込み後も選択を復元します。モデルIDだけを保存し、別端末との同期は行いません。
+Automatically imports recent completed generations from the account's linked individually authenticated Hub client while Assets is open. Reuses verified provenance, current session/binding checks, opaque Asset handles and permanent ownership/deletion claims; anonymous connections and foreign jobs cannot establish ownership. Older exact-job imports remain available. Requires Generation MCP 1.0.5 / Controller 1.0.2 plus operator connection/binding settings.
 
-復元時はAgentの現在の許可モデル一覧を確認します。保存したモデルが利用できない場合は未選択と理由を表示します。復元による会話開始・モデル切替・推論は行いません。保存済みの選択がない場合は、許可された現在の会話モデルを既定モデルより優先します。
+Adds All/Image/Video/Music/Speech/Other Asset filters with scoped pagination. Music bundles show WAV cards; details expose owned ABC score, MIDI and generation-information downloads. Individual-file deletion remains explicit; surviving sidecars can be found under Other files after WAV deletion.
 
-1.0.4から設定・DB・アカウント・接続情報・サムネイル・会話参照を保持して更新できます。Agent変更・DB移行・新規設定は不要です。amd64/arm64の配布物とUpdaterカタログを準備します。実機更新・受入確認は別工程です。
-
-対応はStudio #83のみです。参照画像・ComfyWorkFlow対応のPR #80は含みません。
+No DB migration, model activation, output relocation or Assistant configuration change is required. Compatible updates from 1.0.5 retain environment, accounts and catalog data. Publication and actual deployment/configuration acceptance are separate.
