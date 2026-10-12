@@ -3,7 +3,7 @@
 - Prepares Studio 1.0.4 from current main for #68 only. Reference-workflow PR #80 is separate and unmerged.
 - Removed browser consent text/checkbox and consent-based button gates. Start/switch/continuation use explicit permitted-model selection and existing Agent model/export authorization.
 - Legacy browser fields remain accepted; existing session rows and pending/completed handoff payloads are retained without replay. No Agent change, new setting or DB migration.
-- Browser tests (107), TypeScript/Vite build and wheel/sdist passed. Local server checks: 248 passed, 164 PostgreSQL cases deferred to CI. Full PostgreSQL CI and amd64/arm64 package/Updater checks are required before merge/publication. No real-host rollout or provider calls occurred.
+- Browser tests (107), TypeScript/Vite build and wheel/sdist passed. First PostgreSQL CI passed the 411 application/contract tests and exposed one outdated release-test predecessor assertion; it is corrected to 1.0.3. Both amd64/arm64 actual-Updater installation jobs passed. Final-head CI remains required before merge/publication. No real-host rollout or provider calls occurred.
 
 # Repository-owned distribution preparation — 2026-10-11
 
