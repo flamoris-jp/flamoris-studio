@@ -221,3 +221,4 @@ def make_session_factory():
     if not dsn:
         raise RuntimeError("STUDIO_DATABASE_URL must be configured")
     return sessionmaker(create_engine(dsn, pool_pre_ping=True), expire_on_commit=False)
+

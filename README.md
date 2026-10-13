@@ -16,6 +16,10 @@ Phase 1 uses a Python FastAPI backend with PostgreSQL-backed local accounts and 
 
 **Current main contains the authenticated multi-user shell, Image generation, opt-in native Speech and Music slices, and the per-user Generated results catalog with metadata/details, download, and confirmed deletion.** Runtime/model qualification and additional provider contracts remain separate acceptance gates.
 
+Assistant model selection in Studio 1.0.4 uses the Agent-authorized catalog without an additional remote-transmission consent checkbox. Existing conversations, model switching and request fences are retained; no Agent upgrade or DB migration is needed.
+
+Assistant and the Image assistant share the signed-in account’s remembered model selection in this browser. Reopening or reloading restores only an authorized picker choice; session starts and model switches remain explicit.
+
 See [assistant settings and model integration](docs/ASSISTANT_SETTINGS.md) for the opt-in extension and migration gates.
 
 ## Current integration boundaries
@@ -307,4 +311,8 @@ Phase 1では、認証済みmulti-user shell、Image生成、Raw Intelligence、
 
 Before filling the form, read [input values and post-install setup](docs/FIRST_SETUP.md) for each field's purpose, value source, generation behavior and remaining app configuration.
 
-See [repository-owned distribution](docs/UPDATER.md) for source target 1.0.4 (release preparation, updates from 1.0.3), its catalog and post-install configuration. Publication and actual-host acceptance remain separately verified.
+See [repository-owned distribution](docs/UPDATER.md) for release 1.0.6 (including updates from 1.0.5), its catalog and post-install configuration. Publication and actual-host acceptance remain separately verified.
+
+
+Linked external generations can appear automatically in Assets while the gallery is open. Configure an individual Hub credential, signed Generation provenance and the operator-provisioned Studio account binding; shared anonymous connections cannot establish ownership. Assets offers All/Image/Video/Music/Speech/Other filters. Music bundles show WAV cards; owned ABC/MIDI/metadata downloads are in the detail dialog. See [external import](docs/EXTERNAL_GENERATION_IMPORT.md) and [multimedia results](docs/MULTIMEDIA_RESULTS.md).
+

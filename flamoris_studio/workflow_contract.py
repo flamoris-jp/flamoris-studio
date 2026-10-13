@@ -356,3 +356,4 @@ def map_parameters(descriptor, request):
             continue
         params[key] = validate_value(spec, value)
     return params
+

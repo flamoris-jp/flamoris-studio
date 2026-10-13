@@ -11,9 +11,11 @@ account UUID → Human/Agent/Project bindings remain operator managed. Hub is no
 required: this uses the existing reviewed private Studio-backend → Agent path.
 
 The Assistant panel exposes only the Agent-authorized public model list. Choose
-Internal LLM or OpenAI API, then explicitly Start selected model. API selection
-requires consent covering personality, previous turns, question and explicitly
-attached draft. Explicit [model switching](MODEL_CONTINUATION.md) preserves the
+Internal LLM or OpenAI API, then explicitly Start selected model. For Studio 1.0.4 (#68), remote selection requires no consent checkbox or extra
+confirmation. Studio checks the selected model against Agent's allowed catalog
+and passes the model's remote authorization through the existing internal API.
+Agent still enforces its model/export grants for personality, previous turns,
+question and explicitly attached draft. Explicit [model switching](MODEL_CONTINUATION.md) preserves the
 logical conversation key, previous request handle, answer, original personality
 snapshot and unsent question through immutable Agent child-session lineage.
 An uncertain switch blocks new questions; explicit Check model switch reuses the
@@ -21,6 +23,25 @@ same handoff ID. Start new conversation explicitly clears the parent. Settings m
 requires explicit start when no valid session exists. The active conversation model
 is displayed separately from a proposed selection. There is no hidden local/API
 fallback, no GPU switch and no inferred permission from a provider key.
+
+### Remembered model selection (#83)
+
+Studio remembers the explicitly chosen model ID in browser local storage under
+`flamoris.assistant.model:<accountKey>`. The stable account key isolates users;
+Assistant and the contextual Image assistant share the preference across
+navigation, collapse/reopen, page reloads and sign-out/sign-in in that browser.
+It is a browser preference, not a cross-device account setting. Storage contains
+no session, credential, transcript, draft or authorization flag. A blocked storage
+write reports that reload persistence is unavailable and retains navigation state.
+
+Each opened panel checks the preference against the current Agent-authorized
+catalog. A removed/revoked model stays unselected with an explanation; an outage
+does not erase the preference or choose another model. Explicitly clearing the
+picker also stays cleared. With no saved choice, an authorized active conversation
+model takes precedence over an authorized catalog default, regardless of which
+response arrives first. Restoring the picker never starts a session, performs a
+handoff or runs inference. A proposed choice that differs from the active
+conversation still requires the existing explicit model switch.
 
 Personality editing is available only after Agent's independent read/edit grants.
 Load the current revision, edit display name and ordered titles/Markdown bodies,
@@ -38,7 +59,7 @@ the original revision for an identical duplicate. History loads one full revisio
 per page to bound response size. Restore copies a historical version into the
 current draft and requires a new ordinary expected-revision save.
 
-Studio stores only an owner-scoped principal session reference/model ID/consent and
+Studio stores only an owner-scoped principal session reference/model ID/internal remote authorization flag and
 its existing conversation/request references and metadata-only durable switch fences.
 Agent retains the transcript and immutable lineage. All reads and writes recheck login,
 account binding and owner session after private I/O; saves also check immediately

@@ -73,14 +73,33 @@ class SettingsAgent(FakeAgent):
         )
 
 
-def start(client, csrf, model="local", consent=False):
+def start(client, csrf, model="local", consent=None):
+    payload = {"modelId": model}
+    if consent is not None:
+        payload["remoteConsent"] = consent
     response = client.post(
         "/api/assistant/start",
-        json={"modelId": model, "remoteConsent": consent},
+        json=payload,
         headers={"X-CSRF-TOKEN": csrf},
     )
     assert response.status_code == 200, response.text
     return response.json()
+
+
+@pytest.mark.parametrize("model", ["local", "api"])
+@pytest.mark.parametrize("legacy", [None, False, True])
+def test_start_uses_granted_model_policy_without_browser_consent(clients, monkeypatch, model, legacy):
+    a, _, _, factory = clients
+    ca = register(a, "policy@settings.test")
+    configure(monkeypatch, factory)
+    monkeypatch.setenv("STUDIO_AGENT_SETTINGS_ENABLED", "1")
+    agent = SettingsAgent()
+    install(a, agent)
+    state = start(a, ca, model, legacy)
+    assert agent.opens[-1]["model_id"] == model
+    assert agent.opens[-1]["remote_consent"] is (model == "api")
+    assert probe(a, ca)["sessionKey"] == state["sessionKey"]
+    assert a.post("/api/assistant/ask", json=advice(state), headers={"X-CSRF-TOKEN": ca}).status_code == 200
 
 
 def test_model_selection_personality_routes_two_accounts_csrf_and_conflict(
@@ -97,16 +116,12 @@ def test_model_selection_personality_routes_two_accounts_csrf_and_conflict(
     ha = {"X-CSRF-TOKEN": ca}
     hb = {"X-CSRF-TOKEN": cb}
     assert (
-        a.post("/api/assistant/start", json={"modelId": "api"}, headers=ha).status_code
-        == 422
-    )
-    assert (
         a.post(
             "/api/assistant/start", json={"modelId": "not-granted"}, headers=ha
         ).status_code
         == 403
     )
-    sa = start(a, ca, "api", True)
+    sa = start(a, ca, "api")
     sb = start(b, cb)
     assert sa["sessionKey"] != sb["sessionKey"]
     state = probe(a, ca)

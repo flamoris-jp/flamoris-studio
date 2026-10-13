@@ -8,8 +8,9 @@ This repository contains FLAMORIS Studio, the creative control center for FLAMOR
 
 ## Current direction
 
-The 2026-10-12 request resumes source work for registered img2img, IPAdapter appearance/style and prepared-map ControlNet under Studio #79 / Controller #13. Follow docs/REFERENCE_IMAGES.md. Preserve the former cleanup of custom/v3/Runtime delegation; use current registered profiles through Controller HTTP and one generation authority. Source/tests/docs/PRs are authorized; deployment/model downloads/inference and merges remain separate.
+The latest 2026-10-12 work implements #83: remember Assistant model selection across navigation/reloads under stable per-account browser preferences. Studio #84 is merged and 1.0.5 published; decopon's Updater update succeeded and Server Manager observed Studio running. Preserve allowed-model validation, explicit start/switch authority and immutable handoff payloads. Browser interaction remains operator acceptance. Updater post-success old-version cleanup is pending with `unsafe_storage`; do not describe that as a failed runtime update or force-delete retained files. No Agent, DB schema or provider/runtime configuration change was needed.
 
+The earlier #68 consent-removal scope was delivered in 1.0.4. Agent grants, account/CSRF checks, sessions/history and immutable pending handoff payloads remain enforced. Reference-workflow PR #80 remains a separate unmerged scope.
 
 The assistant model handoff UI/API and source migration are accepted in main
 through Studio #66 and Agent #43 after the explicit merge instruction. Preserve
@@ -185,3 +186,13 @@ Generated media does not automatically inherit this repository's code license.
 FLAMORIS does not provide guaranteed individual support.
 
 Repository documentation, Issues, tests, logs, and source code are the primary references. AI-assisted self-support is encouraged.
+
+
+## 2026-10-13 linked external gallery scope
+
+Studio #86 / Controller #16 add automatic linked-client result registration, category filters and WAV/sidecar detail presentation. The user explicitly authorizes implementation through release and real-host changes. Preserve account/CSRF checks, binding reauthorization, permanent claims/tombstones and generation-owned media authority. The matched Controller pin is required for discovery. Source/CI acceptance and actual individual-credential/provenance/binding acceptance must be recorded separately; never assign historical anonymous jobs automatically.
+
+
+## 2026-10-13 reference-image continuation
+
+Resume the prepared reference-image PR against current main. Preserve linked external discovery, YuE2 output placement and remembered Assistant models. Match Controller/Generation/Studio dependency pins and new release versions; source CI and real-host model/shared-input acceptance remain distinct.

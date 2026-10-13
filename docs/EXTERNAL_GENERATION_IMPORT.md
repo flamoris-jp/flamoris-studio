@@ -79,3 +79,14 @@ conflicts and restart durability. Non-image rendering uses the existing bounded
 media catalog; this import does not assert that new generation providers/editors
 are ready. Real external credential → Hub → Generation → Studio import and two-user
 download/deletion remain deployment acceptance checks.
+
+
+## Automatic registration and gallery filters (1.0.6)
+
+With a matching Generation MCP 1.0.5 / Controller 1.0.2 and the operator binding above, Assets discovers completed results automatically while the gallery is visible. It polls every 15 seconds (1 second between nonfinal bounded pages), stops polling when unmounted, pauses when hidden and keeps saved Assets available if synchronization fails. Synchronization has a 100-second backend deadline, an 8-job page limit, two sync slots and two shared import slots and a 110-second browser deadline. It never submits generation or downloads media.
+
+The authenticated CSRF-protected `POST /api/generation/external-import/sync` accepts only an optional numeric cursor. Studio supplies the exact actor privately, validates the bounded response, and reuses the existing import checks for completed status, every output's provenance, current session/configuration and durable ownership claims. Browser responses expose only import count/cursor, never upstream Job IDs or private actor/configuration fields. Repeated visits/imports are idempotent; deleted claims do not resurrect Assets.
+
+Discovery retains at most 1,024 recent completed external identities across restart. Jobs predating that index or outside the window remain explicitly importable under **Import older results**. Shared anonymous credentials are still not identities; historical anonymous jobs are not retroactively assigned. Refresh the gallery after an operator changes the binding. Account data already imported remains owned even if the external grant is subsequently removed.
+
+Hub keeps credential identity and routing only; Controller owns the discovery receipt and generation authority; Studio owns the account catalog. No Hub-to-Studio callback, browser actor field, second JobStore, new external tool, or media folder migration is introduced.

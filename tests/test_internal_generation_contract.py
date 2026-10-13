@@ -224,3 +224,23 @@ async def test_registered_reference_gateway_controller_provider_flow(
     assert state["submissions"] == 1
     state.update(completed=True, pending=[])
     assert (await gateway.result(job["job_id"]))["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_gateway_external_discovery_uses_exact_actor_and_no_media_download(matched):
+    from flamoris_generation_controller.contracts import CallerContext
+    from flamoris_generation_controller.provenance import ExternalProvenance
+
+    gateway, controller, state, _ = matched
+    actor = {"issuer": "hub.example", "subject": "client-a"}
+    recipe = await gateway.build("text-to-image", {"checkpoint": "base.safetensors", "positive_prompt": "flowers"})
+    job = await controller.invoke("jobs.submit", {"workflow_id": recipe},
+                                 context=CallerContext.external(ExternalProvenance(**actor)))
+    state.update(completed=True, pending=[])
+    assert (await gateway.external_jobs({**actor, "subject": "foreign"}))["jobs"] == []
+    result = await gateway.external_jobs(actor)
+    assert result["jobs"] == [{"job_id": job["job_id"], "sequence": 1}]
+    assert (await gateway.external_jobs(actor, result["next_cursor"]))["jobs"] == []
+    assert state["submissions"] == 1
+
+

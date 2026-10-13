@@ -7,6 +7,7 @@ import hashlib
 import uuid
 from datetime import timedelta
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from argon2.exceptions import VerificationError
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
@@ -15,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from flamoris_update_core.admission import wait_for_admission
 from flamoris_update_core.asgi import AdmissionMiddleware
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, or_, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -38,6 +39,7 @@ from .login_throttle import admit_login
 from .external_import import catalog_guard, mount_external_import
 from .speech import mount_speech
 from .music import mount_music
+from .asset_catalog import category_expression
 from .music_contract import checked_music_outputs
 
 # Small known images use direct binary retrieval; larger or unknown sizes use
@@ -174,11 +176,12 @@ def save_style(db: Session, style: ImageStyle):
     return style_view(style)
 
 
-def asset_view(asset: Asset) -> dict:
+def asset_view(asset: Asset, category: str | None = None) -> dict:
     prefix = f"/api/executions/{asset.execution_id}/assets/{asset.id}"
     return {"id": str(asset.id), "executionId": str(asset.execution_id),
             "displayName": asset.display_name, "mimeType": asset.mime_type,
             "mediaKind": asset.media_kind, "sizeBytes": asset.size_bytes,
+            **({"category": category} if category is not None else {}),
             "source": asset.source, "previewKind": preview_kind(asset.media_kind, asset.mime_type),
             "origin": "external" if (asset.extra_metadata or {}).get("external_import") is True else "studio",
             "outputRole": output_role((asset.extra_metadata or {}).get("output_role")),
@@ -672,29 +675,36 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     @app.get("/api/assets")
     def list_generated_assets(limit: int = Query(default=24, ge=1, le=48),
                               offset: int = Query(default=0, ge=0, le=100000),
+                              kind: Literal["all", "image", "video", "music", "speech", "other"] = Query(default="all"),
                               db: Session = Depends(database),
                               user_id: uuid.UUID = Depends(authenticated_user)):
-        rows = db.execute(select(Asset, Execution).join(Execution, Asset.execution_id == Execution.id)
-                          .where(Asset.user_id == user_id, Execution.user_id == user_id,
-                                 Asset.availability != "deleted")
+        category = category_expression()
+        query = select(Asset, category).join(Execution, Asset.execution_id == Execution.id)
+        query = query.where(Asset.user_id == user_id, Execution.user_id == user_id,
+                            Asset.availability != "deleted",
+                            or_(category != "music", Asset.mime_type == "audio/wav"))
+        if kind != "all":
+            query = query.where(category == kind)
+        rows = db.execute(query
                           .order_by(Asset.created_at.desc(), Asset.id.desc())
                           .offset(offset).limit(limit + 1)).all()
-        return {"items": [asset_view(asset) for asset, _ in rows[:limit]],
+        return {"items": [asset_view(asset, category) for asset, category in rows[:limit]],
                 "nextOffset": offset + limit if len(rows) > limit else None}
 
     @app.get("/api/assets/{asset_id}")
-    async def generated_asset_detail(asset_id: uuid.UUID, db: Session = Depends(database),
+    async def generated_asset_detail(asset_id: uuid.UUID, request: Request, db: Session = Depends(database),
                                user_id: uuid.UUID = Depends(authenticated_user)):
-        row = db.execute(select(Asset, Execution).join(Execution, Asset.execution_id == Execution.id)
+        category = category_expression()
+        row = db.execute(select(Asset, Execution, category).join(Execution, Asset.execution_id == Execution.id)
                          .where(Asset.id == asset_id, Asset.user_id == user_id,
                                 Execution.user_id == user_id, Asset.availability != "deleted")).first()
         if row is None:
             raise HTTPException(404)
-        asset, execution = row
-        request = execution.request_snapshot if isinstance(execution.request_snapshot, dict) else {}
-        settings = {key: request[key] for key in ("positivePrompt", "negativePrompt", "checkpoint",
+        asset, execution, asset_category = row
+        snapshot = execution.request_snapshot if isinstance(execution.request_snapshot, dict) else {}
+        settings = {key: snapshot[key] for key in ("positivePrompt", "negativePrompt", "checkpoint",
                     "seed", "steps", "cfg", "width", "height", "loras", "sampler", "scheduler", "denoise", "workflowId", "workflowKind", "definitionVersion", "definitionDigest",
-                    "referenceInputId", "characterInputId", "styleInputId", "controlInputId", "additionalParameters") if key in request}
+                    "referenceInputId", "characterInputId", "styleInputId", "controlInputId", "additionalParameters") if key in snapshot}
         reference = None
         if settings.get("referenceInputId"):
             try:
@@ -726,7 +736,22 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 workflow_available = bool(item and item["selectable"] and item["definitionVersion"] == settings.get("definitionVersion") and item["definitionDigest"] == settings.get("definitionDigest"))
             except GatewayError:
                 workflow_available = False
-        return {**asset_view(asset), "state": execution.last_known_status,
+        db.rollback()
+        if current_user(request, db) != user_id:
+            raise HTTPException(401)
+        row = db.execute(select(Asset, Execution, category).join(Execution, Asset.execution_id == Execution.id)
+                         .where(Asset.id == asset_id, Asset.user_id == user_id,
+                                Execution.user_id == user_id, Asset.availability != "deleted")).first()
+        if row is None:
+            raise HTTPException(404)
+        asset, execution, asset_category = row
+        siblings = db.execute(select(Asset, category).join(Execution, Asset.execution_id == Execution.id)
+                              .where(Asset.execution_id == execution.id, Asset.user_id == user_id,
+                                     Execution.user_id == user_id, Asset.id != asset.id,
+                                     Asset.availability != "deleted")
+                              .order_by(Asset.created_at, Asset.id).limit(64)).all()
+        return {**asset_view(asset, asset_category), "state": execution.last_known_status,
+                "attachments": [asset_view(sibling, kind) for sibling, kind in siblings],
                 "submittedAt": execution.submitted_at.isoformat(), "settings": settings,
                 "referenceInput": reference, "referenceInputs": references, "workflowAvailable": workflow_available}
 
@@ -1070,3 +1095,5 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 def production_app():
     configure_logging().info("Studio process starting")
     return create_app()
+
+

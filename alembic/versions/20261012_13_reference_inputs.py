@@ -33,3 +33,4 @@ def downgrade():
     if op.get_bind().execute(sa.text("SELECT 1 FROM execution_inputs LIMIT 1")).first():
         raise RuntimeError("Reference history must be reconciled before downgrade")
     op.drop_table("execution_inputs")
+

@@ -9,11 +9,80 @@ from sqlalchemy import select
 
 from flamoris_studio.app import create_app
 from flamoris_studio.db import Asset, Execution, ExternalAssetClaim, ExternalImport, LoginSession, User
-from flamoris_studio.external_import import checked_outputs, checked_status, configured_binding
+from flamoris_studio.external_import import checked_jobs, checked_outputs, checked_status, configured_binding
+from flamoris_studio.gateway import GatewayError
 from test_studio import clients, register
 
 JOB = "a" * 32
 ACTOR = {"issuer": "hub.production", "subject": "client-001"}
+
+
+@pytest.mark.parametrize("value", [None, {}, {"jobs": [], "next_cursor": True, "has_more": False},
+    {"jobs": [], "next_cursor": 0, "has_more": True},
+    {"jobs": [{"job_id": JOB, "sequence": 0}], "next_cursor": 1, "has_more": False},
+    {"jobs": [{"job_id": JOB, "sequence": 1}] * 2, "next_cursor": 1, "has_more": False},
+    {"jobs": [{"job_id": "private-path", "sequence": 1}], "next_cursor": 1, "has_more": False}])
+def test_external_discovery_response_is_bounded_and_strict(value):
+    with pytest.raises(GatewayError):
+        checked_jobs(value, 0)
+
+
+def test_linked_sync_is_csrf_scoped_idempotent_and_preserves_deleted_claims(clients, monkeypatch):
+    a, b, gateway, factory, csrf, csrf_b, owner, calls = setup_external(clients, monkeypatch)
+    async def listing(actor, after, limit):
+        assert actor == ACTOR and after in (0, 1) and limit == 8
+        return {"jobs": [{"job_id": JOB, "sequence": 1}] if after == 0 else [], "next_cursor": 1, "has_more": False}
+    gateway.external_jobs = listing
+    route = "/api/generation/external-import/sync"
+    assert a.post(route, json={}).status_code == 403
+    assert b.post(route, json={}, headers={"X-CSRF-TOKEN": csrf_b}).status_code == 403
+    assert a.post(route, json={"actor": ACTOR}, headers={"X-CSRF-TOKEN": csrf}).status_code == 422
+    response = a.post(route, json={}, headers={"X-CSRF-TOKEN": csrf})
+    assert response.status_code == 200, response.text
+    assert response.json() == {"imported": 1, "nextCursor": 1, "hasMore": False}
+    assert calls == ["status", "assets", "status"]
+    assert JOB not in response.text and ACTOR["subject"] not in response.text
+    assets = a.get("/api/assets?kind=image").json()["items"]
+    assert len(assets) == 2 and b.get("/api/assets").json()["items"] == []
+    deleted = a.post("/api/assets/delete", json={"ids": [item["id"] for item in assets]}, headers={"X-CSRF-TOKEN": csrf})
+    assert all(row["deleted"] for row in deleted.json()["results"])
+    assert a.post(route, json={}, headers={"X-CSRF-TOKEN": csrf}).json()["imported"] == 0
+    assert a.get("/api/assets").json()["items"] == []
+    assert calls == ["status", "assets", "status"]
+
+
+@pytest.mark.parametrize("change,expected", [("logout", 401), ("binding", 409)])
+def test_sync_reauthorizes_after_discovery_before_import(clients, monkeypatch, change, expected):
+    a, _, gateway, factory, csrf, _, owner, calls = setup_external(clients, monkeypatch)
+    async def listing(actor, after, limit):
+        if change == "binding":
+            bind(monkeypatch, owner, {**ACTOR, "subject": "changed"})
+        else:
+            with factory() as db:
+                for session in db.scalars(select(LoginSession).where(LoginSession.user_id == owner)):
+                    db.delete(session)
+                db.commit()
+        return {"jobs": [{"job_id": JOB, "sequence": 1}], "next_cursor": 1, "has_more": False}
+    gateway.external_jobs = listing
+    response = a.post("/api/generation/external-import/sync", json={}, headers={"X-CSRF-TOKEN": csrf})
+    assert response.status_code == expected
+    assert calls == []
+    with factory() as db:
+        assert db.get(ExternalImport, JOB) is None
+
+
+def test_sync_does_not_publish_foreign_manifest_from_discovery(clients, monkeypatch):
+    a, _, gateway, factory, csrf, _, _, _ = setup_external(clients, monkeypatch)
+    async def listing(actor, after, limit):
+        return {"jobs": [{"job_id": JOB, "sequence": 1}], "next_cursor": 1, "has_more": False}
+    async def status(job):
+        return {"job_id": job, "status": "completed", "external_provenance": {**ACTOR, "subject": "foreign"}}
+    gateway.external_jobs, gateway.status = listing, status
+    response = a.post("/api/generation/external-import/sync", json={}, headers={"X-CSRF-TOKEN": csrf})
+    assert response.status_code == 200 and response.json()["imported"] == 0
+    assert a.get("/api/assets").json()["items"] == []
+    with factory() as db:
+        assert db.get(ExternalImport, JOB) is None
 
 
 def output(index=0, actor=ACTOR):
@@ -213,3 +282,4 @@ def test_session_revocation_during_metadata_reads_withholds_import(clients, monk
                   headers={"X-CSRF-TOKEN": csrf}).status_code == 401
     with factory() as db:
         assert db.scalar(select(ExternalImport)) is None
+

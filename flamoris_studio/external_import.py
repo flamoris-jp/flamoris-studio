@@ -27,6 +27,32 @@ class ImportRequest(BaseModel):
     jobId: str = Field(pattern=r"^[a-f0-9]{32}$")
 
 
+class SyncRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    cursor: int = Field(default=0, ge=0, le=2**53 - 1)
+
+
+def checked_jobs(value, cursor):
+    if (type(value) is not dict or set(value) != {"jobs", "next_cursor", "has_more"} or
+            type(value["jobs"]) is not list or len(value["jobs"]) > 8 or
+            type(value["next_cursor"]) is not int or
+            not cursor <= value["next_cursor"] <= 2**53 - 1 or
+            type(value["has_more"]) is not bool):
+        raise GatewayError("validation")
+    previous, seen = cursor, set()
+    for row in value["jobs"]:
+        if (type(row) is not dict or set(row) != {"job_id", "sequence"} or
+                type(row["job_id"]) is not str or not re.fullmatch(r"[a-f0-9]{32}", row["job_id"]) or
+                row["job_id"] in seen or type(row["sequence"]) is not int or
+                not previous < row["sequence"] <= value["next_cursor"]):
+            raise GatewayError("validation")
+        previous = row["sequence"]
+        seen.add(row["job_id"])
+    if value["has_more"] and (not value["jobs"] or previous != value["next_cursor"]):
+        raise GatewayError("validation")
+    return value
+
+
 def provenance(value):
     if (type(value) is not dict or set(value) != {"issuer", "subject"} or any(
             type(value[key]) is not str or not TOKEN.fullmatch(value[key])
@@ -114,6 +140,7 @@ def checked_outputs(listing, job_id, actor):
 def mount_external_import(app, view):
     router = APIRouter(prefix="/api/generation/external-import")
     app.state.external_import_slots = asyncio.Semaphore(2)
+    app.state.external_sync_slots = asyncio.Semaphore(2)
 
     @router.get("")
     def availability(user: uuid.UUID = Depends(authenticated_user)):
@@ -175,6 +202,9 @@ def mount_external_import(app, view):
         instant = now()
         kinds = {output.media_kind for output in outputs}
         category = next(iter(kinds)) if len(kinds) == 1 else "multimodal"
+        operation = status.get("operation")
+        if type(operation) is str and operation in {"image.generate", "video.generate", "music.generate", "music.transcribe", "speech.generate"}:
+            category = operation.split(".", 1)[0]
         execution = Execution(id=uuid.uuid4(), user_id=user, workflow="external-mcp",
             category=category, operation="external.import", upstream_job_id=input.jobId,
             request_snapshot={}, last_known_status="completed", submitted_at=instant,
@@ -198,4 +228,37 @@ def mount_external_import(app, view):
         db.commit()
         return view(execution, db)
 
+    @router.post("/sync")
+    async def sync_completed(input: SyncRequest, request: Request,
+                             db: Session = Depends(database),
+                             user: uuid.UUID = Depends(authenticated_user)):
+        binding = configured_binding(user)
+        db.rollback()
+        if app.state.external_sync_slots.locked():
+            raise HTTPException(429, "External sync is busy", headers={"Retry-After": "2"})
+        try:
+            async with app.state.external_sync_slots, asyncio.timeout(100):
+                listing = checked_jobs(await app.state.gateway.external_jobs(
+                    binding[0], input.cursor, 8), input.cursor)
+                reauthorize(request, db, user, binding)
+                imported = 0
+                for row in listing["jobs"]:
+                    existed = db.get(ExternalImport, row["job_id"]) is not None
+                    try:
+                        await import_completed(ImportRequest(jobId=row["job_id"]), request, db, user)
+                    except HTTPException as exc:
+                        if exc.status_code != 404:
+                            raise
+                        # Purged outputs or an invalid/foreign manifest cannot
+                        # publish metadata. Older manual import remains explicit.
+                        db.rollback()
+                        continue
+                    imported += not existed
+                reauthorize(request, db, user, binding)
+                return {"imported": imported, "nextCursor": listing["next_cursor"],
+                        "hasMore": listing["has_more"]}
+        except TimeoutError:
+            raise GatewayError("unavailable") from None
+
     app.include_router(router)
+

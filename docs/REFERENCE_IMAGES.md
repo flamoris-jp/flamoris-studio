@@ -46,3 +46,4 @@ Clear inputsは全参照を下書きから外し、生成設定もリセット�
 ## Verification
 
 Normal tests cover metadata/digest validation, user-scoped handles, multi-reference deletion fences and settings restoration, current gateway-to-Controller-to-fake-ComfyUI flows, and browser interactions. Actual model compatibility, GPU memory use and output quality remain host acceptance work.
+

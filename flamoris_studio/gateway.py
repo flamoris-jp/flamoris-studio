@@ -95,6 +95,7 @@ class GenerationGateway:
             "workflows.save",
             "jobs.submit",
             "jobs.status",
+            "jobs.external.list",
             "jobs.result",
             "jobs.cancel",
             "assets.list",
@@ -442,6 +443,9 @@ class GenerationGateway:
     async def status(self, job_id: str):
         return await self._json("jobs.status", {"job_id": job_id})
 
+    async def external_jobs(self, actor: dict, after: int = 0, limit: int = 8):
+        return await self._json("jobs.external.list", {"actor": actor, "after": after, "limit": limit})
+
     async def result(self, job_id: str):
         return await self._json("jobs.result", {"job_id": job_id})
 
@@ -483,3 +487,5 @@ class GenerationGateway:
         if not isinstance(result, dict):
             raise GatewayError("upstream_failure")
         return result
+
+
