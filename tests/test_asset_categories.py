@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import select
 from test_studio import clients, register
 
-from flamoris_studio.db import Asset, Execution, User
+from flamoris_studio.db import Asset, Execution, LoginSession, User
 
 
 def test_music_wav_cards_filters_owned_attachments_and_orphan_cleanup(clients):
@@ -18,7 +18,7 @@ def test_music_wav_cards_filters_owned_attachments_and_orphan_cleanup(clients):
         foreign = db.scalar(select(User).where(User.email == "gallery-other@example.test")).id
         def create(category, operation, outputs, user=owner):
             execution = Execution(user_id=user, category=category, operation=operation,
-                workflow="fixture", upstream_job_id=uuid.uuid4().hex, last_known_status="completed")
+                    workflow="fixture", upstream_job_id=uuid.uuid4().hex, last_known_status="completed", request_snapshot={})
             db.add(execution); db.flush()
             result = []
             for kind, mime in outputs:
@@ -80,7 +80,7 @@ def test_attachment_queries_do_not_mix_owners_even_with_inconsistent_rows(client
     with factory() as db:
         owner, foreign = [db.scalar(select(User).where(User.email == name)).id for name in
                           ("consistent@example.test", "foreign-row@example.test")]
-        execution = Execution(user_id=owner, category="music", operation="music.generate", workflow="fixture")
+        execution = Execution(user_id=owner, category="music", operation="music.generate", workflow="fixture", request_snapshot={})
         db.add(execution); db.flush()
         main = Asset(user_id=owner, execution_id=execution.id, upstream_asset_id="private-main",
             storage_locator="private-main", display_name="main.wav", original_filename="main.wav",
@@ -92,3 +92,25 @@ def test_attachment_queries_do_not_mix_owners_even_with_inconsistent_rows(client
         db.commit(); identifier = main.id
     assert a.get(f"/api/assets/{identifier}").json()["attachments"] == []
     assert b.get(f"/api/assets/{identifier}").status_code == 404
+
+
+def test_detail_reauthorizes_before_publishing_related_files_after_remote_check(clients):
+    a, _, gateway, factory = clients
+    register(a, "detail-session@example.test")
+    with factory() as db:
+        owner = db.scalar(select(User).where(User.email == "detail-session@example.test")).id
+        execution = Execution(user_id=owner, category="image", operation="image.generate", workflow="fixture",
+            request_snapshot={"workflowId": "fixture-definition", "definitionVersion": 1, "definitionDigest": "a" * 64})
+        db.add(execution); db.flush()
+        asset = Asset(user_id=owner, execution_id=execution.id, upstream_asset_id="fixture-main",
+            storage_locator="fixture-main", display_name="fixture.png", original_filename="fixture.png",
+            media_kind="image", mime_type="image/png")
+        db.add(asset); db.commit(); identifier = asset.id
+    async def discover():
+        with factory() as db:
+            for session in db.scalars(select(LoginSession).where(LoginSession.user_id == owner)):
+                db.delete(session)
+            db.commit()
+        return {"workflows": []}
+    gateway.discover = discover
+    assert a.get(f"/api/assets/{identifier}").status_code == 401

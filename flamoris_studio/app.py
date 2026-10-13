@@ -648,7 +648,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 "nextOffset": offset + limit if len(rows) > limit else None}
 
     @app.get("/api/assets/{asset_id}")
-    async def generated_asset_detail(asset_id: uuid.UUID, db: Session = Depends(database),
+    async def generated_asset_detail(asset_id: uuid.UUID, request: Request, db: Session = Depends(database),
                                user_id: uuid.UUID = Depends(authenticated_user)):
         category = category_expression()
         row = db.execute(select(Asset, Execution, category).join(Execution, Asset.execution_id == Execution.id)
@@ -682,6 +682,15 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 workflow_available = bool(item and item["selectable"] and item["definitionVersion"] == settings.get("definitionVersion") and item["definitionDigest"] == settings.get("definitionDigest"))
             except GatewayError:
                 workflow_available = False
+        db.rollback()
+        if current_user(request, db) != user_id:
+            raise HTTPException(401)
+        row = db.execute(select(Asset, Execution, category).join(Execution, Asset.execution_id == Execution.id)
+                         .where(Asset.id == asset_id, Asset.user_id == user_id,
+                                Execution.user_id == user_id, Asset.availability != "deleted")).first()
+        if row is None:
+            raise HTTPException(404)
+        asset, execution, asset_category = row
         siblings = db.execute(select(Asset, category).join(Execution, Asset.execution_id == Execution.id)
                               .where(Asset.execution_id == execution.id, Asset.user_id == user_id,
                                      Execution.user_id == user_id, Asset.id != asset.id,
