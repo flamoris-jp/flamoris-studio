@@ -12,7 +12,7 @@ from sqlalchemy import delete, select
 from flamoris_studio.db import Asset, Execution, LoginSession
 from flamoris_studio.app import create_app
 from flamoris_studio.gateway import GatewayError, GenerationGateway
-from flamoris_studio.speech_contract import PROOF, SpeechRequest, checked_build, qualified_speech
+from flamoris_studio.speech_contract import HTTP_PROOF, PROOF, SpeechRequest, checked_build, qualified_speech
 from test_studio import clients, register
 from test_multimedia_results import BytesGateway, install_bytes_gateway, output
 
@@ -21,6 +21,77 @@ REQUEST = "00000000-0000-4000-8000-000000000001"
 DESCRIPTOR = json.loads((Path(__file__).parent / "fixtures/speech-descriptor.json").read_text())
 CAPABILITIES = {"capabilities": [{"id": "speech.generate", "provider_id": "irodori",
                                  "available": True, "workflow_templates": ["speech-no-reference"]}]}
+
+
+def http_descriptor():
+    descriptor = copy.deepcopy(DESCRIPTOR)
+    descriptor.update(speech=HTTP_PROOF, qualification="configured-http-contract")
+    return descriptor
+
+
+def test_resident_http_contract_is_exact_and_distinct_from_cli():
+    descriptor = http_descriptor()
+    assert qualified_speech({"descriptors": [descriptor]}, CAPABILITIES)
+    for proof in (
+        {**HTTP_PROOF, "server_contract_revision": "a" * 40},
+        {**HTTP_PROOF, "reference_audio": True},
+        {**HTTP_PROOF, "candidates": True},
+        {**HTTP_PROOF, "source_revision": PROOF["source_revision"]},
+    ):
+        assert not qualified_speech({"descriptors": [{**descriptor, "speech": proof}]}, CAPABILITIES)
+    assert not qualified_speech({"descriptors": [{**descriptor, "qualification": "configured-local-resources"}]}, CAPABILITIES)
+    parameters = SpeechRequest(text="こんにちは").model_dump()
+    built = {"schema_version": 4, "workflow_id": "a" * 32, "template": "speech-no-reference",
+             "parameters": parameters, "prompt": None, "speech": HTTP_PROOF}
+    assert checked_build(built, parameters, HTTP_PROOF) == "a" * 32
+    with pytest.raises(GatewayError):
+        checked_build(built, parameters, PROOF)
+    with pytest.raises(GatewayError):
+        checked_build({**built, "speech": PROOF}, parameters, HTTP_PROOF)
+
+
+@pytest.mark.asyncio
+async def test_http_discovery_and_build_keep_the_selected_profile(monkeypatch):
+    monkeypatch.setenv("STUDIO_SPEECH_ENABLED", "true")
+    parameters = SpeechRequest(text="こんにちは").model_dump()
+    calls = []
+
+    async def call(name, arguments=None):
+        calls.append((name, arguments))
+        return {"system.health": {"healthy": True}, "capabilities.list": CAPABILITIES,
+                "workflows.list": {"descriptors": [http_descriptor()]},
+                "workflows.build": {"schema_version": 4, "workflow_id": "a" * 32,
+                    "template": "speech-no-reference", "parameters": parameters,
+                    "prompt": None, "speech": HTTP_PROOF}}[name]
+
+    gateway = GenerationGateway()
+    monkeypatch.setattr(gateway, "_json", call)
+    assert await gateway.discover_speech() == {"available": True, "speechContract": HTTP_PROOF}
+    assert await gateway.build_speech(parameters, HTTP_PROOF) == "a" * 32
+    assert calls[-1] == ("workflows.build", {"template": "speech-no-reference", "parameters": parameters})
+
+
+def test_http_submission_persists_profile_and_preserves_owner_and_replay_fences(clients, monkeypatch):
+    a, b, gateway, factory, csrf, builds, submissions = setup_speech(clients, monkeypatch)
+
+    async def discover():
+        return {"available": True, "speechContract": HTTP_PROOF}
+
+    async def build(parameters, proof):
+        assert proof == HTTP_PROOF
+        builds.append(dict(parameters))
+        return "a" * 32
+
+    gateway.discover_speech, gateway.build_speech = discover, build
+    body = {"text": "こんにちは", "requestId": REQUEST}
+    response = a.post("/api/generation/speech/jobs", json=body, headers={"X-CSRF-TOKEN": csrf})
+    assert response.status_code == 201, response.text
+    with factory() as db:
+        saved = db.get(Execution, uuid.UUID(response.json()["id"]))
+        assert saved.request_snapshot["speechContract"] == HTTP_PROOF
+    assert b.get(f"/api/generation/speech/requests/{REQUEST}").status_code == 404
+    assert a.post("/api/generation/speech/jobs", json=body, headers={"X-CSRF-TOKEN": csrf}).json() == response.json()
+    assert len(submissions) == len(builds) == 1
 
 
 def test_exact_native_catalog_qualification_is_independent_from_image_attestation():
@@ -228,3 +299,4 @@ def test_revoked_session_after_build_cannot_submit(clients, monkeypatch):
     assert response.status_code == 401 and submissions == []
     with factory() as db:
         assert db.scalar(select(Execution)).last_known_status == "failed"
+
