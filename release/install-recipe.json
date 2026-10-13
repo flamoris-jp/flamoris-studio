@@ -135,15 +135,6 @@
         "required": false,
         "generate": false,
         "kind": "text"
-      },
-      {
-        "key": "SPEECH_ENABLED",
-        "label": "音声生成を有効化（対応GenerationとIrodoriが必要）",
-        "default": "false",
-        "secret": false,
-        "required": false,
-        "generate": false,
-        "kind": "text"
       }
     ],
     "downloads": {},
@@ -152,7 +143,7 @@
       "owner.password": "${OWNER_PASSWORD}",
       "runtime.password": "${RUNTIME_PASSWORD}",
       "migration.env": "STUDIO_DATABASE_URL=postgresql+psycopg://flamoris_studio_owner:${OWNER_PASSWORD}@${PGHOST}:${PGPORT}/${DATABASE}\n",
-      "runtime.env": "STUDIO_DATABASE_URL=postgresql+psycopg://flamoris_studio_app:${RUNTIME_PASSWORD}@${PGHOST}:${PGPORT}/${DATABASE}\nSTUDIO_THUMBNAIL_DIR=/data/thumbnails\nSTUDIO_GENERATION_ENDPOINT=${GENERATION_ENDPOINT}\nSTUDIO_GENERATION_TOKEN=${GENERATION_TOKEN}\nSTUDIO_AGENT_ENDPOINT=${AGENT_ENDPOINT}\nSTUDIO_AGENT_TOKEN=${AGENT_TOKEN}\nSTUDIO_INTELLIGENCE_ENDPOINT=${INTELLIGENCE_ENDPOINT}\nSTUDIO_INTELLIGENCE_MODELS=${INTELLIGENCE_MODELS}\nSTUDIO_INTELLIGENCE_DATA_FLOW=approved-local\nSTUDIO_ALLOW_REGISTRATION=${ALLOW_REGISTRATION}\nSTUDIO_SPEECH_ENABLED=${SPEECH_ENABLED}\n"
+      "runtime.env": "STUDIO_DATABASE_URL=postgresql+psycopg://flamoris_studio_app:${RUNTIME_PASSWORD}@${PGHOST}:${PGPORT}/${DATABASE}\nSTUDIO_THUMBNAIL_DIR=/data/thumbnails\nSTUDIO_GENERATION_ENDPOINT=${GENERATION_ENDPOINT}\nSTUDIO_GENERATION_TOKEN=${GENERATION_TOKEN}\nSTUDIO_AGENT_ENDPOINT=${AGENT_ENDPOINT}\nSTUDIO_AGENT_TOKEN=${AGENT_TOKEN}\nSTUDIO_INTELLIGENCE_ENDPOINT=${INTELLIGENCE_ENDPOINT}\nSTUDIO_INTELLIGENCE_MODELS=${INTELLIGENCE_MODELS}\nSTUDIO_INTELLIGENCE_DATA_FLOW=approved-local\nSTUDIO_ALLOW_REGISTRATION=${ALLOW_REGISTRATION}\n"
     },
     "application": {
       "application_id": "flamoris-studio",
