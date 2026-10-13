@@ -1,3 +1,7 @@
+# Reference-image continuation — 2026-10-13
+
+Integrated current main into PR #80 and prepared Studio 1.0.7 for updates from 1.0.6. Preserves linked external gallery, YuE2 media and Assistant model preferences. Code CI passed, including PostgreSQL migration/server tests, frontend build/tests and both architecture disposable Updater installations. Actual shared-input/model setup and live generation remain pending. Earlier source targets below are historical.
+
 # Production reference editor — 2026-10-12
 
 Studio #79 implements current registered ComfyWorkFlow selection and digest pins, img2img and distinct appearance/style/control pickers, all-reference Use settings restoration and durable execution/input links (Alembic 20261012_13). Controller #13/#14 and matched Generation MCP are required. The app-owned migration is part of the existing install/update path; the Owner reports recognized old/new schema rather than fabricating a migration. Source target 1.0.4 / update from 1.0.3 is release preparation only. Local web/server checks and PostgreSQL CI evidence are attached to the PR. No release publication, live service/config change or actual inference occurred.
