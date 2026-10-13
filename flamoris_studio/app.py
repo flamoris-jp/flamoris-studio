@@ -657,10 +657,10 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         if row is None:
             raise HTTPException(404)
         asset, execution, asset_category = row
-        request = execution.request_snapshot if isinstance(execution.request_snapshot, dict) else {}
-        settings = {key: request[key] for key in ("positivePrompt", "negativePrompt", "checkpoint",
+        snapshot = execution.request_snapshot if isinstance(execution.request_snapshot, dict) else {}
+        settings = {key: snapshot[key] for key in ("positivePrompt", "negativePrompt", "checkpoint",
                     "seed", "steps", "cfg", "width", "height", "loras", "sampler", "scheduler", "denoise", "workflowId", "workflowKind", "definitionVersion", "definitionDigest",
-                    "referenceInputId", "additionalParameters") if key in request}
+                    "referenceInputId", "additionalParameters") if key in snapshot}
         reference = None
         if settings.get("referenceInputId"):
             try:
