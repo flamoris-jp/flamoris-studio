@@ -82,5 +82,3 @@ jobs:
             exit 1
           fi
           gh release create v1.0.7 distribution/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title 'flamoris-studio v1.0.7' --notes-file release/NOTES.md --latest
-
-

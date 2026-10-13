@@ -35,4 +35,3 @@ contract, not the subsequent external registration profile. Production Studio us
 ## Reference-image profiles
 
 The matching source uses the same authenticated HTTP API for schema-7 registered img2img and schema-8 IPAdapter appearance/style and prepared-map ControlNet. Studio verifies all owned handles, pins the current definition digest and maps private upstream IDs only in the backend. It persists all execution/input links before build/submit and preserves response/session checks and unknown outcomes. See [reference setup and editor](REFERENCE_IMAGES.md).
-

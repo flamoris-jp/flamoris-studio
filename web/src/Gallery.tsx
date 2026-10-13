@@ -203,5 +203,3 @@ export default function Gallery({ csrf, onUseSettings }: { csrf: string; onUseSe
     </div></div>}
   </section>
 }
-
-

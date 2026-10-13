@@ -242,5 +242,3 @@ async def test_gateway_external_discovery_uses_exact_actor_and_no_media_download
     assert result["jobs"] == [{"job_id": job["job_id"], "sequence": 1}]
     assert (await gateway.external_jobs(actor, result["next_cursor"]))["jobs"] == []
     assert state["submissions"] == 1
-
-

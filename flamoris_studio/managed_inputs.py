@@ -376,4 +376,3 @@ async def create_snapshot(app, db, row, content_reader):
             except SQLAlchemyError:
                 db.rollback()
         raise
-

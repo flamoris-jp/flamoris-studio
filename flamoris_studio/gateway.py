@@ -487,5 +487,3 @@ class GenerationGateway:
         if not isinstance(result, dict):
             raise GatewayError("upstream_failure")
         return result
-
-

@@ -1095,5 +1095,3 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
 def production_app():
     configure_logging().info("Studio process starting")
     return create_app()
-
-

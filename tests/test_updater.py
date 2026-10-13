@@ -103,4 +103,3 @@ def test_owner_requires_thumbnail_storage(tmp_path):
             {"configuration": tree(tmp_path, "configuration"), "database": database},
         )
     assert error.value.code == "invalid_profile"
-

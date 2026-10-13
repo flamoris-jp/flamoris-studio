@@ -196,4 +196,3 @@ export function ReferencePicker({ enabled, inputId, csrf, onChange, onBusy, labe
     {error && <p role="alert">{error}</p>}
   </div>
 }
-

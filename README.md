@@ -315,4 +315,3 @@ See [repository-owned distribution](docs/UPDATER.md) for release 1.0.6 (includin
 
 
 Linked external generations can appear automatically in Assets while the gallery is open. Configure an individual Hub credential, signed Generation provenance and the operator-provisioned Studio account binding; shared anonymous connections cannot establish ownership. Assets offers All/Image/Video/Music/Speech/Other filters. Music bundles show WAV cards; owned ABC/MIDI/metadata downloads are in the detail dialog. See [external import](docs/EXTERNAL_GENERATION_IMPORT.md) and [multimedia results](docs/MULTIMEDIA_RESULTS.md).
-

@@ -105,4 +105,3 @@ test('Clear inputs removes every role from the draft and preserves stored refere
   expect((host.querySelector('textarea') as HTMLTextAreaElement).value).toBe('')
   expect(deletion).not.toHaveBeenCalled()
 })
-

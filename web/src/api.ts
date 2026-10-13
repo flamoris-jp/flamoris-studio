@@ -166,5 +166,3 @@ export const api = {
   asset: (id: string) => request<AssetDetail>(`/api/assets/${encodeURIComponent(id)}`),
   deleteAssets: (ids: string[], csrf: string) => post<Deletion>('/api/assets/delete', { ids }, csrf),
 }
-
-

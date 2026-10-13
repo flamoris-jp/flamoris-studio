@@ -227,4 +227,3 @@ def test_durable_four_reference_fences_settings_restore_and_terminal_cleanup(
             assert all(
                 db.get(ManagedInput, uuid.UUID(handle)) for handle in handles.values()
             )
-

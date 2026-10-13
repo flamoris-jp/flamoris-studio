@@ -124,4 +124,3 @@ contracts and prior acceptance records remain available in pinned Git history:
 
 Use [current real-machine acceptance](REAL_MACHINE_ACCEPTANCE.md) for a separately
 authorized operational handoff. Source review performs no deployment or provider call.
-

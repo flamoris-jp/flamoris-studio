@@ -24,5 +24,3 @@ COPY --from=web /build/web/dist/ ./web/dist/
 USER 10001:10001
 EXPOSE 5087
 CMD ["python", "-m", "flamoris_studio.server"]
-
-

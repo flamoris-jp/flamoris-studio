@@ -330,4 +330,3 @@ export function ImageEditor({ discovery, onSubmit, onReset, busy, form, setForm,
     <div className="row actions"><button type="button" aria-describedby="image-clear-help" disabled={busy || referenceBusy || styleBusy} onClick={clearInputs}>Clear inputs</button><button className="primary" disabled={!valid || busy}>{busy ? 'Submitting…' : 'Generate image ↗'}</button></div>
   </form>
 }
-
