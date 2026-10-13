@@ -68,3 +68,12 @@ recovery and cancellation under the actual service. Keep Runtime/model expansion
 and genuine Music/Video provider work deferred until their independent gates
 are satisfied. Roll back by disabling `STUDIO_SPEECH_ENABLED`; keep durable
 request records and the migration in place while uncertain outcomes exist.
+
+
+## Resident Irodori HTTP transport (1.0.8)
+
+The matched Controller 1.0.4 / Generation 1.0.7 can use an already running Irodori API instead of spawning the CLI. Configure the Generation host with `FLAMORIS_IRODORI_URL` (an exact private HTTP origin) and optional model/token settings, remove any conflicting CLI configuration, and set `STUDIO_SPEECH_ENABLED=true` in the existing private Studio environment. Updater preserves current environment files during update; enabling this feature is a separate explicit configuration change. No DB migration or new service is needed.
+
+Studio accepts the exact `irodori-server-no-reference-v1` proof, server contract revision `61012c760f22f7b4a6c21c5c5f8f9e148120b6f9`, no references and one candidate. Qualification is `configured-http-contract`; readiness remains `not-attested`. The profile describes a reviewed API contract, not verified running source/model identities. Existing CLI profiles remain supported. A configured but stopped server makes Speech unavailable. Activate it through the existing runtime manager, then use Check Again.
+
+The submitted execution records the selected profile; the build must return that same proof. UUID digest identity remains stable across transport configuration changes so a previously admitted request is recovered without replay. Owner preview/download/range controls remain unchanged. The HTTP API has no targeted cancel: Cancel requests keep observing the original recording, which may complete. Lost or interrupted outcomes stay unknown/reserved. See [Controller HTTP transport](https://github.com/flamoris-jp/flamoris-generation-controller/blob/main/docs/IRODORI_HTTP.md) for configuration, uncertainty and live acceptance.

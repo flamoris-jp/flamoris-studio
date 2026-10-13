@@ -16,7 +16,7 @@ from .auth import authenticated_user, current_user, database
 from .db import Execution, SpeechRequestRecord
 from .gateway import GatewayError
 from .generation_requests import existing_request
-from .speech_contract import PROOF, SpeechRequest, TEMPLATE
+from .speech_contract import HTTP_PROOF, PROOF, SpeechRequest, TEMPLATE, exact
 
 
 class SpeechSubmission(SpeechRequest):
@@ -56,6 +56,9 @@ def mount_speech(app, view, set_status):
         availability = await app.state.gateway.discover_speech()
         if type(availability) is not dict or availability.get("available") is not True:
             raise GatewayError("unavailable")
+        proof = availability.get("speechContract", PROOF)
+        if not any(exact(proof, allowed) for allowed in (PROOF, HTTP_PROOF)):
+            raise GatewayError("validation")
         if input.seed is None:
             input.seed = secrets.randbelow(2**53)
         parameters = input.model_dump(exclude={"requestId"})
@@ -63,7 +66,7 @@ def mount_speech(app, view, set_status):
         if current_user(request, db) != user:
             raise HTTPException(401)
         execution = Execution(user_id=user, workflow=TEMPLATE, category="speech", operation="speech.generate",
-            request_snapshot={**parameters, "speechContract": PROOF, "snapshotVersion": 1})
+            request_snapshot={**parameters, "speechContract": proof, "snapshotVersion": 1})
         db.add(execution)
         try:
             db.flush()
@@ -77,7 +80,9 @@ def mount_speech(app, view, set_status):
                 raise HTTPException(503, "Speech request admission could not be confirmed") from None
             return view(cached, db)
         try:
-            workflow = await app.state.gateway.build_speech(parameters)
+            workflow = (await app.state.gateway.build_speech(parameters, proof)
+                        if exact(proof, HTTP_PROOF)
+                        else await app.state.gateway.build_speech(parameters))
             db.rollback()
             if current_user(request, db) != user:
                 raise HTTPException(401)
@@ -113,3 +118,4 @@ def mount_speech(app, view, set_status):
         return view(cached, db)
 
     app.include_router(router)
+

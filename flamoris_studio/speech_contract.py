@@ -11,6 +11,11 @@ TEMPLATE = "speech-no-reference"
 PROOF = {"profile": "irodori-no-reference-v1",
          "source_revision": "89f9d8fbd4d51ea019867ee1197725ede1df13c5",
          "reference_audio": False, "candidates": 1}
+HTTP_PROOF = {
+    "profile": "irodori-server-no-reference-v1",
+    "server_contract_revision": "61012c760f22f7b4a6c21c5c5f8f9e148120b6f9",
+    "reference_audio": False, "candidates": 1,
+}
 PARAMETERS = {
     "text": {"type": "string", "role": "text", "required": True,
              "min_length": 1, "max_length": 512, "max_bytes": 2048},
@@ -62,21 +67,25 @@ def qualified_speech(catalog, capabilities):
     if len(matching) != 1 or len(selected) != 1:
         return False
     raw, route = matching[0], selected[0]
+    http = exact(raw.get("speech"), HTTP_PROOF)
     fields = {"id": TEMPLATE, "kind": "native", "metadata_schema_version": 2,
               "schema_version": 4, "version": 1, "provider_id": "irodori",
               "capability_id": "speech.generate", "parameters": PARAMETERS,
               "input_roles": [], "output_roles": [{"port": "audio", "role": "audio", "media_kind": "audio"}],
-              "speech": PROOF, "qualification": "configured-local-resources",
+              "speech": HTTP_PROOF if http else PROOF,
+              "qualification": "configured-http-contract" if http else "configured-local-resources",
               "readiness": {"status": "not-attested"}}
     return (all(exact(raw.get(key), value) for key, value in fields.items()) and
             route.get("available") is True and route.get("provider_id") == "irodori" and
             exact(route.get("workflow_templates"), [TEMPLATE]))
 
 
-def checked_build(result, parameters):
+def checked_build(result, parameters, proof=PROOF):
+    if not any(exact(proof, allowed) for allowed in (PROOF, HTTP_PROOF)):
+        raise GatewayError("validation")
     if (type(result) is not dict or type(result.get("schema_version")) is not int or
             result["schema_version"] != 4 or result.get("template") != TEMPLATE or
-            result.get("parameters") != parameters or not exact(result.get("speech"), PROOF) or
+            result.get("parameters") != parameters or not exact(result.get("speech"), proof) or
             "prompt" not in result or result["prompt"] is not None or
             type(result.get("workflow_id")) is not str or not re.fullmatch(r"[a-f0-9]{32}", result["workflow_id"])):
         raise GatewayError("validation")
@@ -89,3 +98,4 @@ def checked_build(result, parameters):
     except (ValueError, TypeError):
         raise GatewayError("validation") from None
     return result["workflow_id"]
+

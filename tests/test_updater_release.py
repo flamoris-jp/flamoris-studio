@@ -52,7 +52,7 @@ def test_both_platforms_use_own_repository_payloads_and_exact_checksums(candidat
         "linux/arm64",
     }
     for recipe in catalog["recipes"]:
-        assert recipe["compatible_from"] == ["1.0.6"]
+        assert recipe["compatible_from"] == ["1.0.7"]
         prefix = (
             "https://github.com/flamoris-jp/"
             + recipe["application_id"]
@@ -100,3 +100,4 @@ def test_mismatched_or_unexpected_publication_inputs_fail_before_output(
     with pytest.raises(ValueError):
         PACKAGER.combine(source, output)
     assert not output.exists()
+

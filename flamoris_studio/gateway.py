@@ -392,23 +392,30 @@ class GenerationGateway:
     async def discover_speech(self):
         if os.getenv("STUDIO_SPEECH_ENABLED", "false").lower() != "true":
             return {"available": False}
-        from .speech_contract import qualified_speech
+        from .speech_contract import HTTP_PROOF, exact, qualified_speech
 
         health = await self._json("system.health")
         if health.get("healthy") is not True:
             return {"available": False}
         caps = await self._json("capabilities.list")
         catalog = await self._json("workflows.list")
-        return {"available": qualified_speech(catalog, caps)}
+        available = qualified_speech(catalog, caps)
+        if available and any(
+            exact(item.get("speech"), HTTP_PROOF) for item in catalog["descriptors"]
+            if item.get("id") == "speech-no-reference"
+        ):
+            return {"available": True, "speechContract": HTTP_PROOF}
+        return {"available": available}
 
-    async def build_speech(self, parameters):
-        from .speech_contract import TEMPLATE, checked_build
+    async def build_speech(self, parameters, proof=None):
+        from .speech_contract import PROOF, TEMPLATE, checked_build
 
         return checked_build(
             await self._json(
                 "workflows.build", {"template": TEMPLATE, "parameters": parameters}
             ),
             parameters,
+            PROOF if proof is None else proof,
         )
 
     async def discover_music(self):
@@ -487,3 +494,4 @@ class GenerationGateway:
         if not isinstance(result, dict):
             raise GatewayError("upstream_failure")
         return result
+

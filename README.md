@@ -79,7 +79,7 @@ Pinned historical references and retained-data rules are in
 
 The [native Speech editor](docs/SPEECH_OPERATION.md) submits one Japanese speech
 recording with text, optional voice description, duration, steps and seed. It
-requires an independent Studio opt-in and the exact configured Irodori contract.
+requires an independent Studio opt-in and the exact configured Irodori CLI or resident HTTP contract.
 Reference audio, voice cloning and model controls are unavailable. A durable
 owner-scoped request identifier prevents replay after an uncertain submission;
 the browser retains only that identifier until the outcome is terminal. WAV
@@ -315,3 +315,4 @@ See [repository-owned distribution](docs/UPDATER.md) for release 1.0.6 (includin
 
 
 Linked external generations can appear automatically in Assets while the gallery is open. Configure an individual Hub credential, signed Generation provenance and the operator-provisioned Studio account binding; shared anonymous connections cannot establish ownership. Assets offers All/Image/Video/Music/Speech/Other filters. Music bundles show WAV cards; owned ABC/MIDI/metadata downloads are in the detail dialog. See [external import](docs/EXTERNAL_GENERATION_IMPORT.md) and [multimedia results](docs/MULTIMEDIA_RESULTS.md).
+
