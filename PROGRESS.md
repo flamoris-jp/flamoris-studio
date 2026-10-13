@@ -81,3 +81,9 @@ Updater `797d6f4e7bd4089e7c162fa50c10a0afae68370a`, Controller
 `f791bf236342e7c831e4d0291709bacb2f0e54bc`, and Agent
 `8ac1e9555355a5cbb255e8939f43ad041a0d221c`. PR review and CI at this exact
 revision remain pending; no live service or data was changed.
+
+## 2026-10-13 — linked gallery source and app update accepted
+
+Studio #87 is merged and v1.0.6 published. Final CI passed 427 PostgreSQL tests, 121 web tests, frontend/container builds and both CPU Updater installations. Adds bounded automatic registration of an operator-linked external client's completed results, category filters and WAV cards with owned ABC/MIDI/metadata downloads in detail. Session/binding reauthorization and permanent claims/tombstones are preserved; no DB migration or output relocation.
+
+The operator-authorized app update from 1.0.5 succeeded and the current container is observed running. Matched Generation 1.0.5 / embedded Controller 1.0.2 is deployed. Individual Hub credential/signing configuration, exact Studio account bindings and real signed-generation/browser acceptance remain pending; #86 stays open for that gate. The available MCP update operation preserves settings and cannot provision those grants. A private operational record contains the verified app receipts and read-only next-session preflight. Post-success previous-executable cleanup remains pending; it is not a failed runtime update and protected data must not be force-deleted.
