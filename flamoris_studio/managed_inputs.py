@@ -11,10 +11,10 @@ from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException
 from flamoris_update_core.admission import guarded
 from flamoris_update_core.errors import UpdateError
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, text, update, or_
 from sqlalchemy.exc import SQLAlchemyError
 
-from .db import Execution, ManagedInput, now
+from .db import Execution, ExecutionInput, ManagedInput, now
 from .gateway import GatewayError
 
 THUMB_BYTES = 256 * 1024
@@ -162,12 +162,19 @@ async def check_input(gateway, row):
     return row.upstream_input_id
 
 
+def input_referenced(input_id):
+    return or_(Execution.reference_input_id == input_id,
+               select(ExecutionInput.execution_id).where(
+                   ExecutionInput.execution_id == Execution.id,
+                   ExecutionInput.input_id == input_id).correlate(Execution, ManagedInput).exists())
+
+
 def protected(db, input_id):
     return (
         db.scalar(
             select(Execution.id)
             .where(
-                Execution.reference_input_id == input_id,
+                input_referenced(input_id),
                 Execution.last_known_status.not_in(TERMINAL_STATES),
             )
             .limit(1)
@@ -197,7 +204,7 @@ def prune(db, thumbnails):
             ManagedInput.terminal_at <= instant - timedelta(hours=24),
             ~select(Execution.id)
             .where(
-                Execution.reference_input_id == ManagedInput.id,
+                input_referenced(ManagedInput.id),
                 Execution.last_known_status.not_in(TERMINAL_STATES),
             )
             .exists(),
@@ -207,6 +214,7 @@ def prune(db, thumbnails):
     ).all()
     count = 0
     for row in rows:
+        db.refresh(row, with_for_update=True)
         if protected(db, row.id):
             continue
         # The marker is committed before deletion so failure/restart stays accounted.
@@ -232,10 +240,12 @@ async def reconcile_expired(app, cursor=None):
     """Observe <=100 known jobs in <=60 seconds, without holding DB locks over IO."""
     query = (
         select(Execution.id, Execution.user_id, Execution.reference_input_id, Execution.upstream_job_id)
-        .join(ManagedInput, Execution.reference_input_id == ManagedInput.id)
         .where(
-            ManagedInput.owner_user_id == Execution.user_id,
-            ManagedInput.expires_at <= now(),
+            select(ManagedInput.id).where(
+                ManagedInput.owner_user_id == Execution.user_id,
+                ManagedInput.expires_at <= now(),
+                input_referenced(ManagedInput.id),
+            ).correlate(Execution).exists(),
             Execution.upstream_job_id.is_not(None),
             Execution.last_known_status.not_in(TERMINAL_STATES),
         )

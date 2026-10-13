@@ -6,6 +6,8 @@ import re
 import secrets
 
 MAX_SEED = 2**53 - 1
+REFERENCE_FIELDS = {"initial_image": "referenceInputId", "character_image": "characterInputId",
+                    "style_image": "styleInputId", "control_image": "controlInputId"}
 ROLES = {
     "checkpoint": "checkpoint",
     "positive_prompt": "positivePrompt",
@@ -19,6 +21,7 @@ ROLES = {
     "scheduler": "scheduler",
     "denoise": "denoise",
     "loras": "loras",
+    **REFERENCE_FIELDS,
 }
 SPEC_FIELDS = {
     "max_bytes",
@@ -153,7 +156,8 @@ def normalize_descriptor(raw):
     ):
         raise ValueError("unsupported_parameter")
     kind = raw.get("kind")
-    if kind != "builtin" or raw["id"] not in {"text-to-image", "text-to-image-lora"}:
+    registered = kind == "registered-comfy" and re.fullmatch(r"comfy-[a-f0-9]{64}", raw["id"]) is not None
+    if not registered and (kind != "builtin" or raw["id"] not in {"text-to-image", "text-to-image-lora"}):
         raise ValueError("retired_recipe")
     image = raw.get("image", {})
     readiness = raw.get("readiness", {})
@@ -168,6 +172,25 @@ def normalize_descriptor(raw):
         and dimensions.get("mode") == "parameters"
         and "reference_semantics" not in image and "resize_policy" not in image
     )
+    reference_roles = image.get("reference_roles", [])
+    if registered:
+        supported = (raw.get("metadata_schema_version") == 2
+                     and image.get("profile") in {"checkpoint-comfy-v1", "checkpoint-reference-v1"}
+                     and image.get("mode") in {"txt2img", "img2img"}
+                     and dimensions.get("mode") == "parameters"
+                     and type(raw.get("definition_version")) is int and raw.get("definition_version") == 1
+                     and raw.get("definition_digest") == raw["id"][6:]
+                     and readiness.get("state") == "validated"
+                     and readiness.get("basis") == "static_checkpoint_profile"
+                     and readiness.get("live_provider_verified") is False)
+        if image.get("profile") == "checkpoint-comfy-v1":
+            reference_roles = ["initial_image"] if image.get("reference_semantics") == "init_image" else []
+        if (not isinstance(reference_roles, list) or len(reference_roles) > 4
+            or any(type(v) is not str or v not in REFERENCE_FIELDS for v in reference_roles)
+            or len(set(reference_roles)) != len(reference_roles)):
+            raise ValueError("unsupported_parameter")
+    if registered and ((image.get("mode") == "img2img") != ("initial_image" in reference_roles)):
+        supported = False
     parameters = {}
     roles = set()
     source = raw.get("parameters", {})
@@ -177,6 +200,13 @@ def normalize_descriptor(raw):
         if not isinstance(key, str) or len(key) > 128 or not isinstance(value, dict):
             raise ValueError("unsupported_parameter")
         spec = {k: v for k, v in value.items() if k in SPEC_FIELDS}
+        if registered and spec.get("role") == "managed_input" and key == "reference_image" and "initial_image" in reference_roles:
+            spec["role"] = "initial_image"
+        if registered and spec.get("role") in REFERENCE_FIELDS:
+            # The browser receives only Studio UUID handles, never Controller input IDs.
+            if spec.get("type") != "string" or value.get("pattern") != "^[a-f0-9]{32}$" or spec.get("required") is not True:
+                raise ValueError("unsupported_parameter")
+            spec["pattern"] = r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}"
         # All public metadata is bounded scalar data; never forward graph bindings
         # or arbitrary nested objects from upstream metadata.
         spec.pop("items", None)
@@ -219,6 +249,7 @@ def normalize_descriptor(raw):
                 "width": "integer", "height": "integer", "steps": "integer", "seed": "integer",
                 "cfg": "number", "denoise": "number", "sampler": "string", "scheduler": "string",
                 "loras": "ordered_loras",
+                **{role: "string" for role in REFERENCE_FIELDS},
             }.get(role)
             if spec.get("type") != expected_type:
                 supported = False
@@ -234,9 +265,15 @@ def normalize_descriptor(raw):
             raise ValueError("unsupported_parameter")
         parameters[key] = spec
     supported = supported and {"checkpoint", "positive_prompt", "width", "height"} <= roles
+    if not registered and roles & set(REFERENCE_FIELDS):
+        supported = False
+    if registered and (roles & set(REFERENCE_FIELDS)) != set(reference_roles):
+        supported = False
     ready = readiness.get("state") == "ready"
     ready = (ready and readiness.get("basis") == "builtin_compatibility"
              and raw.get("definition_version") is None and raw.get("definition_digest") is None)
+    if registered:
+        ready = supported  # Static compatibility is explicit, never a fabricated live attestation.
     return {
         "id": raw["id"],
         "kind": kind,
@@ -249,6 +286,9 @@ def normalize_descriptor(raw):
             k: image[k] for k in ("profile", "mode") if k in image
         } | {"dimensions": {"mode": dimensions.get("mode")}},
         "parameters": parameters,
+        "referenceRoles": reference_roles if registered else [],
+        "liveProviderVerified": False if registered else None,
+        "recipeSchema": 8 if registered and image.get("profile") == "checkpoint-reference-v1" else 7 if registered else 1,
     }
 
 
@@ -270,7 +310,9 @@ def normalize_catalog(raw):
 
 
 def map_parameters(descriptor, request):
-    if not descriptor.get("selectable") or request.get("referenceInputId") is not None:
+    fields = {ROLES[spec["role"]] for spec in descriptor["parameters"].values() if spec.get("role") in REFERENCE_FIELDS}
+    if (not descriptor.get("selectable") or any(request.get(field) is not None and field not in fields
+                                               for field in REFERENCE_FIELDS.values())):
         raise ValueError("unsupported_parameter")
     params = {}
     extras = request.get("additionalParameters", {})

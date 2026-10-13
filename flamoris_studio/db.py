@@ -111,6 +111,13 @@ class Execution(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
 
 
+class ExecutionInput(Base):
+    __tablename__ = "execution_inputs"
+    execution_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("executions.id", ondelete="CASCADE"), primary_key=True)
+    role: Mapped[str] = mapped_column(String(32), primary_key=True)
+    input_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("managed_inputs.id", ondelete="SET NULL"), index=True)
+
+
 class ExternalImport(Base):
     __tablename__ = "external_imports"
     upstream_job_id: Mapped[str] = mapped_column(String(32), primary_key=True)

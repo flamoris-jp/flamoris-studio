@@ -48,8 +48,9 @@ class ReadOnlyDatabase(PostgresResource):
 
 
 @pytest.mark.parametrize("uncertain", [False, True])
-def test_owner_retains_history_and_unknown_requests(tmp_path, uncertain):
-    history = ["20261005_12"]
+@pytest.mark.parametrize("schema", ["20261005_12", "20261012_13"])
+def test_owner_retains_history_and_unknown_requests(tmp_path, uncertain, schema):
+    history = [schema]
     database = ReadOnlyDatabase(history, uncertain)
     configuration = tree(tmp_path, "configuration")
     thumbnails = tree(tmp_path, "thumbnails")
@@ -66,6 +67,7 @@ def test_owner_retains_history_and_unknown_requests(tmp_path, uncertain):
             "thumbnails": thumbnails,
         },
     )
+    assert state.schemas["database"] == schema
     assert state.unknown_work is uncertain
     assert state.active_work is uncertain
     assert database.history == history

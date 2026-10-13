@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { api, imageUploadLimit, imageUploadTypes, type Discovery, type Workflow, type ParameterSpec, type ManagedInput, type Asset } from './api'
 import type { ImageDraft, ImageSubmission } from './App'
 
-const fields: Record<string, keyof ImageDraft> = { checkpoint: 'checkpoint', positive_prompt: 'positivePrompt', negative_prompt: 'negativePrompt', width: 'width', height: 'height', seed: 'seed', steps: 'steps', cfg: 'cfg', sampler: 'sampler', scheduler: 'scheduler', denoise: 'denoise' }
+export const referenceFields: Record<string, keyof ImageDraft> = { initial_image: "referenceInputId", character_image: "characterInputId", style_image: "styleInputId", control_image: "controlInputId" }
+const fields: Record<string, keyof ImageDraft> = { ...referenceFields, checkpoint: 'checkpoint', positive_prompt: 'positivePrompt', negative_prompt: 'negativePrompt', width: 'width', height: 'height', seed: 'seed', steps: 'steps', cfg: 'cfg', sampler: 'sampler', scheduler: 'scheduler', denoise: 'denoise' }
 export const roleSpec = (item: Workflow | undefined, role: string) => Object.values(item?.parameters ?? {}).find(spec => spec.role === role)
 
 export function validValue(spec: ParameterSpec, value: unknown): boolean {
@@ -64,11 +65,17 @@ export function legalSeed(spec?: ParameterSpec): number | null {
 }
 
 export function workflowPayload(form: ImageDraft, item: Workflow): ImageSubmission | null {
-  if (item.kind !== 'builtin' || !['text-to-image', 'text-to-image-lora'].includes(item.id) ||
-      item.image.mode !== 'txt2img' || item.image.dimensions.mode !== 'parameters' || item.definitionVersion !== null || item.definitionDigest !== null ||
-      form.definitionVersion != null || form.definitionDigest != null || form.referenceInputId) return null
+  const registered = item.kind === 'registered-comfy' && /^comfy-[a-f0-9]{64}$/.test(item.id)
+  if ((!registered && (item.kind !== 'builtin' || !['text-to-image', 'text-to-image-lora'].includes(item.id))) ||
+      item.image.dimensions.mode !== 'parameters' ||
+      (registered ? item.definitionVersion !== 1 || item.definitionDigest !== item.id.slice(6) :
+        item.image.mode !== 'txt2img' || item.definitionVersion !== null || item.definitionDigest !== null) ||
+      (form.definitionVersion ?? null) !== item.definitionVersion || (form.definitionDigest ?? null) !== item.definitionDigest) return null
+  if (!registered && Object.values(item.parameters).some(s => s.type === "managed_input" || Boolean(s.role && referenceFields[s.role]))) return null
+  const supported = new Set(Object.values(item.parameters).filter(s => s.role && referenceFields[s.role]).map(s => referenceFields[s.role!]))
+  if (Object.values(referenceFields).some(field => form[field] && !supported.has(field))) return null
   if (!item.selectable || !form.positivePrompt || !form.checkpoint) return null
-  const values: Record<string, unknown> = { ...form }
+  const values: Record<string, unknown> = { ...form, workflowId: item.id, workflowKind: item.kind, definitionVersion: item.definitionVersion, definitionDigest: item.definitionDigest }
   for (const key of ['width', 'height', 'steps', 'cfg', 'denoise', 'seed']) {
     const raw = form[key as 'width']
     values[key] = raw.trim() === '' ? undefined : Number(raw)
@@ -97,27 +104,39 @@ export function workflowPayload(form: ImageDraft, item: Workflow): ImageSubmissi
   return values as unknown as ImageSubmission
 }
 
-export function WorkflowPicker({ discovery, form, setForm }: { discovery: Discovery; form: ImageDraft; setForm: React.Dispatch<React.SetStateAction<ImageDraft>> }) {
+export function WorkflowPicker({ discovery, form, setForm, disabled = false }: { discovery: Discovery; form: ImageDraft; setForm: React.Dispatch<React.SetStateAction<ImageDraft>>; disabled?: boolean }) {
   const selected = discovery.workflows?.find(item => item.id === form.workflowId)
   const stale = selected && (form.definitionVersion !== selected.definitionVersion || form.definitionDigest !== selected.definitionDigest)
-  return <><label>Image template<select value={stale ? '__stale' : form.workflowId ?? ''} onChange={event => {
+  return <><label>Image template<select disabled={disabled} value={stale ? '__stale' : form.workflowId ?? ''} onChange={event => {
     const item = discovery.workflows?.find(x => x.id === event.target.value)
-    setForm(old => ({ ...old, workflowId: item?.id, workflowKind: item?.kind, definitionVersion: item?.definitionVersion, definitionDigest: item?.definitionDigest,
+    const defaults: Record<string, string> = {}
+    if (item?.kind === 'registered-comfy') for (const role of ['width', 'height', 'steps', 'cfg', 'sampler', 'scheduler', 'denoise']) {
+      const value = roleSpec(item, role)?.default
+      if (typeof value === 'number' || typeof value === 'string') defaults[fields[role]] = String(value)
+    }
+    setForm(old => ({ ...old, ...defaults, workflowId: item?.id, workflowKind: item?.kind, definitionVersion: item?.definitionVersion, definitionDigest: item?.definitionDigest,
       additionalParameters: item ? Object.fromEntries(Object.entries(item.parameters).filter(([,v]) => !v.role && v.default !== undefined).map(([k,v]) => [k,v.default])) : undefined,
+      checkpoint: item?.kind === "registered-comfy" && typeof roleSpec(item, "checkpoint")?.default === "string" ? roleSpec(item, "checkpoint")!.default as string : old.checkpoint,
       referenceInputId: old.referenceInputId }))
   }}><option value="">Automatic builtin (LoRA aware)</option>{stale && <option value="__stale" disabled>Previous selection (reselect below)</option>}
     {form.workflowId && !selected && <option value={form.workflowId} disabled>{form.workflowId} (unavailable)</option>}
     {discovery.workflows?.map(item => <option key={item.id} value={item.id} disabled={!item.selectable}>{item.name}{item.selectable ? '' : ' (unavailable)'}</option>)}
   </select></label>
-    {selected && Object.entries(selected.parameters).filter(([,spec]) => !spec.role).map(([key,spec]) => <label key={key}>{key}
+    {selected?.reason === "reference_models_unavailable" && <p role="alert">Required reference models are missing from the generation service. Check the model setup below.</p>}
+    {selected?.reason === "reference_storage_unavailable" && <p role="alert">Shared reference image storage is unavailable on the generation service.</p>}
+    {selected?.kind === "registered-comfy" && <details><summary>Reference model setup</summary><ul>{Object.entries(selected.parameters).filter(([,spec]) => ['ipadapter', 'clip_vision', 'controlnet'].includes(spec.model_kind ?? '')).map(([key,spec]) => <li key={key}>{parameterLabel(key)}: {String(spec.default ?? '')}</li>)}</ul><a href="https://github.com/flamoris-jp/flamoris-generation-controller/blob/main/docs/REFERENCE_IMAGES.md" target="_blank" rel="noreferrer">Model and workflow setup</a></details>}
+    {selected?.kind === "registered-comfy" && <small>Choose reference images below. This workflow has not yet been verified on the generation service.</small>}
+    {selected && Object.entries(selected.parameters).filter(([,spec]) => !spec.role && !(spec.enum?.length === 1 && typeof spec.default === "string")).map(([key,spec]) => <label key={key}>{parameterLabel(key)}
       {spec.enum ? <select value={String(form.additionalParameters?.[key] ?? '')} onChange={e => setForm(old => ({ ...old, additionalParameters: { ...old.additionalParameters, [key]: spec.enum?.find(x => String(x) === e.target.value) } }))}>{spec.enum.map(v => <option key={String(v)} value={String(v)}>{String(v)}</option>)}</select> :
-      <input type={spec.type === 'boolean' ? 'checkbox' : ['integer','number'].includes(spec.type) ? 'number' : 'text'} value={spec.type === 'boolean' ? undefined : String(form.additionalParameters?.[key] ?? '')} checked={spec.type === 'boolean' ? Boolean(form.additionalParameters?.[key]) : undefined}
+      <input min={spec.minimum} max={spec.maximum} step={spec.type === "number" ? "any" : spec.multiple_of ?? 1} type={spec.type === 'boolean' ? 'checkbox' : ['integer','number'].includes(spec.type) ? 'number' : 'text'} value={spec.type === 'boolean' ? undefined : String(form.additionalParameters?.[key] ?? '')} checked={spec.type === 'boolean' ? Boolean(form.additionalParameters?.[key]) : undefined}
         onChange={e => setForm(old => ({ ...old, additionalParameters: { ...old.additionalParameters, [key]: spec.type === 'boolean' ? e.target.checked : ['integer','number'].includes(spec.type) ? Number(e.target.value) : e.target.value } }))} />}
     </label>)}
   </>
 }
 
-export function ReferencePicker({ enabled, inputId, csrf, onChange, onBusy }: { enabled: boolean; inputId?: string | null; csrf: string; onChange: (id: string | undefined) => void; onBusy: (busy: boolean) => void }) {
+const parameterLabel = (key: string) => (({ character_strength: "Character influence", style_strength: "Style influence", control_strength: "Pose / structure influence", character_start: "Character start", character_end: "Character end", style_start: "Style start", style_end: "Style end", control_start: "Structure start", control_end: "Structure end", character_adapter: "Character reference model", style_adapter: "Style reference model", clip_vision: "Reference image encoder", controlnet: "Pose / structure model" } as Record<string, string>)[key] ?? key)
+
+export function ReferencePicker({ enabled, inputId, csrf, onChange, onBusy, label = "Reference Image", help, disabled = false, onAvailability }: { enabled: boolean; inputId?: string | null; csrf: string; onChange: (id: string | undefined) => void; onBusy: (busy: boolean) => void; label?: string; help?: string; disabled?: boolean; onAvailability?: (available: boolean) => void }) {
   const [input, setInput] = useState<ManagedInput | null>(null)
   const [assets, setAssets] = useState<Asset[]>([])
   const [nextOffset, setNextOffset] = useState<number | null>(null)
@@ -126,25 +145,25 @@ export function ReferencePicker({ enabled, inputId, csrf, onChange, onBusy }: { 
   const picker = useRef<HTMLInputElement>(null), active = useRef(true), working = useRef(false)
   useEffect(() => { active.current = true; return () => { active.current = false } }, [])
   function start() {
-    if (working.current) return false
+    if (working.current || disabled) return false
     working.current = true; setBusy(true); onBusy(true); setError('')
     return true
   }
   function finish() { working.current = false; if (active.current) { setBusy(false); onBusy(false) } }
   useEffect(() => {
     let active = true
-    setInput(null); setMissingPreview(false)
+    setInput(null); setMissingPreview(false); onAvailability?.(!inputId)
     if (!inputId) return () => { active = false }
     const refresh = () => api.input(inputId).then(value => {
-      if (active) { setInput(value) }
-    }).catch(() => { if (active) { setError('Reference unavailable. Upload or choose another image.') } })
+      if (active) { setInput(value); onAvailability?.(value.available) }
+    }).catch(() => { if (active) { setError('Reference unavailable. Upload or choose another image.'); onAvailability?.(false) } })
     refresh()
     const timer = window.setInterval(refresh, 30000)
     return () => { active = false; clearInterval(timer) }
   }, [inputId])
   async function load(offset = 0) {
     if (!start()) return
-    try { const page = await api.assets(offset); if (active.current) { setAssets(old => [...(offset ? old : []), ...page.items.filter(a => a.mediaKind === 'image' && imageUploadTypes.includes(a.mimeType))]); setNextOffset(page.nextOffset); setOpen(true) } }
+    try { const page = await api.assets(offset); if (active.current) { setAssets(old => [...(offset ? old : []), ...page.items.filter(a => a.mediaKind === 'image' && imageUploadTypes.includes(a.mimeType) && (a.sizeBytes === null || a.sizeBytes <= imageUploadLimit))]); setNextOffset(page.nextOffset); setOpen(true) } }
     catch { if (active.current) setError('Could not load Assets.') } finally { finish() }
   }
   async function attach(asset: Asset) {
@@ -153,7 +172,7 @@ export function ReferencePicker({ enabled, inputId, csrf, onChange, onBusy }: { 
     catch { if (active.current) setError('Could not attach this Asset. No automatic retry was made.') } finally { finish() }
   }
   async function upload(files: File[]) {
-    if (working.current) return
+    if (working.current || disabled) return
     if (files.length !== 1 || !imageUploadTypes.includes(files[0].type) || files[0].size < 1 || files[0].size > imageUploadLimit) {
       setError('Choose one PNG, JPEG or WebP image up to 8 MiB.'); return
     }
@@ -162,18 +181,18 @@ export function ReferencePicker({ enabled, inputId, csrf, onChange, onBusy }: { 
     catch { if (active.current) setError('Could not upload this image. Your draft is preserved. No automatic retry was made.') }
     finally { finish() }
   }
-  return <div className="reference-note"><strong>Reference Image</strong>
-    <p>These image templates do not use a reference image. Saved images remain available.</p>
+  return <div className="reference-note"><strong>{label}</strong>
+    <p>{help ?? "These image templates do not use a reference image. Saved images remain available."}</p>
     <div className="reference-upload" role="group" aria-label="Upload reference image" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); void upload(Array.from(event.dataTransfer.files)) }}>
-      <input ref={picker} type="file" aria-label="Reference image file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" hidden disabled={busy} onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ''; if (files.length) void upload(files) }} />
-      <button type="button" disabled={busy} onClick={() => picker.current?.click()}>{inputId ? 'Replace with upload' : 'Upload image'}</button>
+      <input ref={picker} type="file" aria-label="Reference image file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" hidden disabled={busy || disabled} onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ''; if (files.length) void upload(files) }} />
+      <button type="button" disabled={busy || disabled} onClick={() => picker.current?.click()}>{inputId ? 'Replace with upload' : 'Upload image'}</button>
       <small>Or drop one PNG, JPEG or WebP here (up to 8 MiB). Reference images are private and expire after 24 hours.</small>
     </div>
     {busy && <p role="status">Preparing reference…</p>}
     {input && <div>{input.thumbnailUrl && !missingPreview ? <img width="128" src={input.thumbnailUrl} alt="Reference image" onError={() => setMissingPreview(true)} /> : <span>Preview unavailable</span>}{!input.available && <p>Reference expired or revoked. Upload or choose another image.</p>}</div>}
-    {inputId && <button type="button" disabled={busy} onClick={() => { onChange(undefined); setError('') }}>Remove reference</button>}
-    <button type="button" disabled={!enabled || busy} onClick={() => load()}>{inputId ? 'Replace from Assets' : 'Choose from Assets'}</button>
-    {open && <div role="dialog" aria-label="Choose reference Asset">{assets.length ? assets.map(asset => <button type="button" key={asset.id} disabled={busy} onClick={() => attach(asset)}>{asset.displayName}</button>) : <p>No eligible images. Generate an image first.</p>}{nextOffset !== null && <button type="button" disabled={busy} onClick={() => load(nextOffset)}>More Assets</button>}<button type="button" onClick={() => setOpen(false)}>Close picker</button></div>}
+    {inputId && <button type="button" disabled={busy || disabled} onClick={() => { onChange(undefined); setError('') }}>Remove reference</button>}
+    <button type="button" disabled={!enabled || busy || disabled} onClick={() => load()}>{inputId ? 'Replace from Assets' : 'Choose from Assets'}</button>
+    {open && <div role="dialog" aria-label="Choose reference Asset">{assets.length ? assets.map(asset => <button type="button" key={asset.id} disabled={busy || disabled} onClick={() => attach(asset)}>{asset.displayName}</button>) : <p>No eligible images. Generate an image first.</p>}{nextOffset !== null && <button type="button" disabled={busy || disabled} onClick={() => load(nextOffset)}>More Assets</button>}<button type="button" onClick={() => setOpen(false)}>Close picker</button></div>}
     {error && <p role="alert">{error}</p>}
   </div>
 }

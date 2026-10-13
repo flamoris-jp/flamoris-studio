@@ -1,3 +1,5 @@
+> Reference-image source target 1.0.7; compatible update retains current settings and data. Publication and live acceptance remain pending.
+
 # Repository-owned Updater release 1.0.6
 
 インストールを始める前に、[入力値の用途・取得元・自動生成と導入後の設定](FIRST_SETUP.md)を確認してください。Updaterの項目名だけで値を推測せず、このアプリの手順に沿って進めます。
@@ -16,4 +18,3 @@ PostgreSQLの新規DBへ、このイメージのAlembicを適用します。既�
 Updater 1.0.4へ更新後、このURLをカタログ画面へ登録して個別に導入します。アプリ自身の接続トークン・DBパスワード等は必要な設定であり、Updaterのログイン認証とは別です。初回導入後の設定、実際のプロキシ/トンネル、GPU・モデル動作は運用時に確認します。CI・公開成功を実機受入として報告しません。設定・DB・データは実行ファイルの更新対象から分離します。
 
 従来の高度なOwner/移行用SDKは内部統合用としてソースに残りますが、通常のこの新規インストールにOwnerプロファイル・mTLS・DBバックアップ・旧配置の取り込みは要求しません。
-

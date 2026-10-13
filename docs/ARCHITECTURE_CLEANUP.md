@@ -36,6 +36,8 @@ This route has no remote export policy or provider fallback. The Agent route
 retains its independent approved-target grants and complete-context export authorization. Studio 1.0.4 removes the browser consent
 control and derives the existing internal flag only for the selected allowed model.
 
+> Subsequent source feature: Studio #79 (2026-10-12) connects current registered img2img and reviewed IPAdapter/ControlNet profiles; see [REFERENCE_IMAGES.md](REFERENCE_IMAGES.md). The old custom/v3 execution and qualification described below remain retired.
+
 ## Retired generation behavior
 
 The custom/v3 Image normalization, discovery, composition and dispatch path is

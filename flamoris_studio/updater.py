@@ -7,7 +7,7 @@ from flamoris_update_core.owner_cli import serve
 
 SCHEMAS = {
     "configuration": "studio-config-1",
-    "database": "20261005_12",
+    "database": "20261012_13",
     "thumbnails": "studio-thumbnails-1",
 }
 
@@ -19,9 +19,8 @@ def inspect_domain(config, resources):
         raise UpdateError("invalid_profile")
     with database.connect() as conn, conn.transaction():
         conn.execute("SET TRANSACTION READ ONLY")
-        if conn.execute(
-            "SELECT version_num FROM public.alembic_version"
-        ).fetchall() != [("20261005_12",)]:
+        history = conn.execute("SELECT version_num FROM public.alembic_version").fetchall()
+        if history not in ([("20261005_12",)], [("20261012_13",)]):
             raise UpdateError("unsupported_migration")
         uncertain = bool(
             conn.execute(
@@ -33,7 +32,7 @@ def inspect_domain(config, resources):
             ).fetchone()
         )
     return DomainState(
-        schemas=SCHEMAS,
+        schemas={**SCHEMAS, "database": history[0][0]},
         active_work=uncertain,
         unknown_work=uncertain,
         configuration_digest=configuration_revision(resources),
@@ -41,9 +40,8 @@ def inspect_domain(config, resources):
 
 
 def factory(config):
-    return ApplicationOwner(config, "flamoris-studio", "1.0.6", inspect_domain)
+    return ApplicationOwner(config, "flamoris-studio", "1.0.7", inspect_domain)
 
 
 def main():
     serve(factory)
-

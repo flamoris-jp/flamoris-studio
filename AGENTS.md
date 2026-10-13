@@ -191,3 +191,8 @@ Repository documentation, Issues, tests, logs, and source code are the primary r
 ## 2026-10-13 linked external gallery scope
 
 Studio #86 / Controller #16 add automatic linked-client result registration, category filters and WAV/sidecar detail presentation. The user explicitly authorizes implementation through release and real-host changes. Preserve account/CSRF checks, binding reauthorization, permanent claims/tombstones and generation-owned media authority. The matched Controller pin is required for discovery. Source/CI acceptance and actual individual-credential/provenance/binding acceptance must be recorded separately; never assign historical anonymous jobs automatically.
+
+
+## 2026-10-13 reference-image continuation
+
+Resume the prepared reference-image PR against current main. Preserve linked external discovery, YuE2 output placement and remembered Assistant models. Match Controller/Generation/Studio dependency pins and new release versions; source CI and real-host model/shared-input acceptance remain distinct.
