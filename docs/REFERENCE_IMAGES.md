@@ -16,7 +16,7 @@
 1. [Controllerのモデル準備・具体的なComfyWorkFlow・作成CLI](https://github.com/flamoris-jp/flamoris-generation-controller/blob/main/docs/REFERENCE_IMAGES.md)を読みます。checkpoint、IPAdapterと対応CLIP Vision、ControlNetの必要な組み合わせをComfyUIへ用意します。
 2. ComfyUIとGenerationが共有する入力ディレクトリを明示的にmountし、GenerationのFLAMORIS_COMFYUI_INPUT_ROOTを設定します。モデル名も両方で一致させます。
 3. 外部MCPのcomfy.registerで対応するComfyWorkFlowを登録します。登録は静的検証で、GPUでの生成成功やモデル互換性の確認ではありません。
-4. Studioを対応ソースへ更新し、通常のアプリ自身のmigrationでAlembic 20261012_13へ進めます。追加するexecution_inputsは生成と参照画像の対応表です。既存ユーザー・会話・画像を移し替えません。Updaterの通常のStudio導入/更新経路が既存のmigration処理を呼びます。
+4. Studioを対応ソースへ更新し、通常のアプリ自身のmigrationでAlembic 20261012_13へ進めます。追加するexecution_inputsは生成と参照画像の対応表です。既存ユーザー・会話・画像を移し替えません。初回導入は既存のmigration処理を呼びます。通常アップデートでの呼び出し漏れはUpdater 1.0.12（Updater #47）で修正されています。旧UpdaterでStudio 1.0.7へ更新済みの場合は、アプリ自身のAlembic移行を別途実行し、20261012_13を確認してください。
 5. 既存の[Controller HTTP接続](GENERATION_CONTROLLER.md)を使います。Studio内部通信へMCPやHubを追加しません。
 
 ComfyUIの追加ノードやモデルをStudio/Controllerが自動取得することはありません。原本の画像ファイルも手元に残してください。
