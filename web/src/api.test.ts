@@ -43,6 +43,31 @@ test('bulk delete uses CSRF and only opaque asset handles', async () => {
   }))
 })
 
+test('external sync supplies only a cursor with CSRF and the selected asset kind is explicit', async () => {
+  const fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify({ imported: 0, nextCursor: 4, hasMore: false }) })
+  vi.stubGlobal('fetch', fetch)
+  await api.syncExternal(3, 'csrf')
+  expect(fetch).toHaveBeenCalledWith('/api/generation/external-import/sync', expect.objectContaining({
+    method: 'POST', credentials: 'same-origin', body: JSON.stringify({ cursor: 3 }),
+    headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'csrf' }), signal: expect.any(AbortSignal),
+  }))
+  await api.assets(24, 'music')
+  expect(fetch).toHaveBeenLastCalledWith('/api/assets?offset=24&kind=music', expect.any(Object))
+})
+
+test('stalled external sync is bounded and does not replay or leave a timer', async () => {
+  vi.useFakeTimers()
+  const fetch = vi.fn().mockImplementation((_url: string, options: RequestInit) => new Promise((_resolve, reject) => {
+    options.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+  }))
+  vi.stubGlobal('fetch', fetch)
+  const result = api.syncExternal(0, 'csrf').catch(error => error)
+  await vi.advanceTimersByTimeAsync(110000)
+  expect(await result).toBeInstanceOf(Error)
+  expect(fetch).toHaveBeenCalledOnce()
+  expect(vi.getTimerCount()).toBe(0)
+})
+
 const inference: IntelligenceInput = { requestId: 'request', modelId: 'local', capabilityId: 'text.generate', input: 'draft', instruction: '', maxOutputTokens: 1024, temperature: 0.7 }
 
 test('stalled inference receipt is bounded and remains uncertain without replay', async () => {
@@ -114,3 +139,4 @@ test('upload deadline bounds a stalled response body and never replays the file'
   expect(fetch).toHaveBeenCalledTimes(1)
   expect(vi.getTimerCount()).toBe(0)
 })
+

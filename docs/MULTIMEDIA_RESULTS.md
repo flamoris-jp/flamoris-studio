@@ -102,3 +102,10 @@ Runtime/composition event integration and actual deployed media/two-user accepta
 Provider contracts/exported graphs and exact catalog readiness are owning-service
 gates, not permission to guess them from these result renderers. No deployment or
 GPU/runtime activation is performed by this change.
+
+
+## Asset gallery categories and related files (1.0.6)
+
+`GET /api/assets` accepts `kind=all|image|video|music|speech|other` and applies owner scoping, presentation filtering and pagination in the database. Speech audio retains its capability category. Music executions with a surviving WAV show WAV cards only, including historical external WAV/ABC bundles. ABC/MIDI/JSON sidecars remain cataloged and downloadable from the WAV detail's `attachments`, limited to 64 surviving siblings owned by the same account/execution. Every download rechecks ownership through the existing opaque routes.
+
+Categories are presentation metadata, not authorization or provider readiness. Unsupported standalone files and score-only transcription results stay under Other files rather than being lost. Deletion retains existing explicit per-file behavior; deleting a WAV does not silently delete its sidecars. Surviving files become visible under Other files on gallery refresh, so they can still be found and removed. User/provider filenames never select a native renderer or determine ownership.

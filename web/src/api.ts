@@ -5,11 +5,12 @@ export type Workflow = { id: string; kind: string; name: string; selectable: boo
 export type ManagedInput = { id: string; available: boolean; expiresAt?: string; thumbnailUrl: string | null; sourceAssetId?: string | null }
 export type Discovery = { available: boolean; templates: string[]; checkpoints: Model[]; loras: Model[]; workflows?: Workflow[]; managedInputReady?: boolean }
 export type OutputRole = { port: string; role: string; index: number }
-export type Asset = { id: string; executionId: string; displayName: string; mimeType: string; mediaKind: string; sizeBytes: number | null; width: number | null; height: number | null; createdAt: string; hasThumbnail: boolean; previewUrl: string; downloadUrl: string; thumbnailUrl: string; source?: 'generation'; origin?: 'studio' | 'external'; previewKind?: 'image' | 'audio' | 'video' | 'file'; outputRole?: OutputRole | null }
+export type AssetKind = 'all' | 'image' | 'video' | 'music' | 'speech' | 'other'
+export type Asset = { id: string; executionId: string; displayName: string; mimeType: string; mediaKind: string; sizeBytes: number | null; width: number | null; height: number | null; createdAt: string; hasThumbnail: boolean; previewUrl: string; downloadUrl: string; thumbnailUrl: string; source?: 'generation'; origin?: 'studio' | 'external'; previewKind?: 'image' | 'audio' | 'video' | 'file'; outputRole?: OutputRole | null; category?: Exclude<AssetKind, 'all'> }
 export type ImageSettings = { workflowId?: string; workflowKind?: string; definitionVersion?: number | null; definitionDigest?: string | null; referenceInputId?: string | null; additionalParameters?: Record<string, unknown>; positivePrompt: string; negativePrompt: string; checkpoint: string; width: number; height: number; steps: number; cfg: number; seed: number; sampler?: string; scheduler?: string; denoise?: number; loras?: { name: string; strengthModel: number; strengthClip: number }[] }
 export type ImagePreferences = Pick<ImageSettings, 'width' | 'height' | 'steps' | 'cfg'>
 export type ImageStyle = { id: string; name: string; positivePrompt: string; negativePrompt: string; createdAt: string; updatedAt: string }
-export type AssetDetail = Asset & { state: string; submittedAt: string; settings: Partial<ImageSettings>; referenceInput?: ManagedInput | null; workflowAvailable?: boolean }
+export type AssetDetail = Asset & { state: string; submittedAt: string; settings: Partial<ImageSettings>; referenceInput?: ManagedInput | null; workflowAvailable?: boolean; attachments?: Asset[] }
 export type AssetPage = { items: Asset[]; nextOffset: number | null }
 export type Deletion = { results: { id: string; deleted: boolean; error?: string }[] }
 export type Execution = { id: string; state: string; submittedAt: string; assets: Asset[]; category?: string; operation?: string; warnings?: string[] }
@@ -32,6 +33,22 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 const post = <T>(path: string, body: unknown, csrf: string) => request<T>(path, {
   method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify(body),
 })
+async function syncExternal(cursor: number, csrf: string, signal?: AbortSignal) {
+  const controller = new AbortController()
+  const cancel = () => controller.abort()
+  signal?.addEventListener('abort', cancel, { once: true })
+  if (signal?.aborted) controller.abort()
+  const deadline = globalThis.setTimeout(cancel, 110000)
+  try {
+    return await request<{ imported: number; nextCursor: number; hasMore: boolean }>('/api/generation/external-import/sync', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf },
+      body: JSON.stringify({ cursor }), signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(deadline)
+    signal?.removeEventListener('abort', cancel)
+  }
+}
 export const imageUploadLimit = 8 * 1024 * 1024
 export const imageUploadTypes = ['image/png', 'image/jpeg', 'image/webp']
 async function uploadInput(file: File, csrf: string): Promise<ManagedInput> {
@@ -142,9 +159,11 @@ export const api = {
   execution: (id: string) => request<Execution>(`/api/executions/${encodeURIComponent(id)}`),
   result: (id: string) => request<Execution>(`/api/executions/${encodeURIComponent(id)}/result`),
   cancel: (id: string, csrf: string) => post<Execution>(`/api/executions/${encodeURIComponent(id)}/cancel`, {}, csrf),
-  assets: (offset = 0) => request<AssetPage>(`/api/assets?offset=${offset}`),
+  assets: (offset = 0, kind: AssetKind = 'all') => request<AssetPage>(`/api/assets?offset=${offset}${kind === 'all' ? '' : `&kind=${kind}`}`),
+  syncExternal,
   externalImportAvailability: () => request<{ available: boolean }>('/api/generation/external-import'),
   importExternal: (jobId: string, csrf: string) => post<Execution>('/api/generation/external-import', { jobId }, csrf),
   asset: (id: string) => request<AssetDetail>(`/api/assets/${encodeURIComponent(id)}`),
   deleteAssets: (ids: string[], csrf: string) => post<Deletion>('/api/assets/delete', { ids }, csrf),
 }
+
