@@ -80,7 +80,7 @@ Pinned historical references and retained-data rules are in
 The [native Speech editor](docs/SPEECH_OPERATION.md) submits one Japanese speech
 recording with text, optional voice description, duration, steps and seed. It
 requires an independent Studio opt-in and the exact configured Irodori CLI or resident HTTP contract.
-Reference audio, voice cloning and model controls are unavailable. A durable
+Reference audio is available with the matched resident HTTP profile; model controls remain outside this editor. A durable
 owner-scoped request identifier prevents replay after an uncertain submission;
 the browser retains only that identifier until the outcome is terminal. WAV
 playback and download use the existing owned Asset routes. Configured resources

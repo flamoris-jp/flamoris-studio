@@ -148,7 +148,7 @@ def validate_metadata(raw, row, *, creating=False):
         or raw["input_id"] != row.upstream_input_id
         or raw["size_bytes"] != row.size_bytes
         or raw["sha256"] != row.checksum
-        or raw["media_kind"] != "image"
+        or raw["media_kind"] != row.mime_type.split("/")[0]
     ):
         raise GatewayError("validation")
     return raw

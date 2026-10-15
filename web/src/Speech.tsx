@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, HTTPFailure, type Execution, type SpeechInput } from './api'
+import { api, HTTPFailure, type Execution, type ManagedInput, type SpeechInput } from './api'
 import { ResultPreview } from './Gallery'
 
 export type SpeechDraft = { text: string; caption: string; seconds: string; steps: string; seed: string }
@@ -23,6 +23,15 @@ export default function Speech({ csrf, accountKey, form, setForm, execution, onE
   execution: Execution | null; onExecution: (value: Execution | null) => void; statusError?: string; authorized?: () => boolean
 }) {
   const [available, setAvailable] = useState(false)
+  const [referenceAvailable, setReferenceAvailable] = useState(false)
+  const [reference, setReference] = useState<ManagedInput | null>(null)
+  const [referenceFile, setReferenceFile] = useState<File | null>(null)
+  const [referenceUrl, setReferenceUrl] = useState('')
+  const previewUrl = useRef('')
+  const clearReference = () => {
+    if (previewUrl.current) URL.revokeObjectURL(previewUrl.current)
+    previewUrl.current = ''; setReferenceUrl(''); setReference(null); setReferenceFile(null)
+  }
   const [checking, setChecking] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -39,8 +48,13 @@ export default function Speech({ csrf, accountKey, form, setForm, execution, onE
   async function check() {
     const version = epoch.current
     setChecking(true)
-    try { const status = await api.speechDiscovery(); if (current(version)) setAvailable(status.available === true) }
-    catch { if (current(version)) setAvailable(false) }
+    try {
+      const status = await api.speechDiscovery()
+      if (current(version)) {
+        setAvailable(status.available === true)
+        setReferenceAvailable(status.referenceAvailable === true)
+      }
+    } catch { if (current(version)) { setAvailable(false); setReferenceAvailable(false) } }
     finally { if (current(version)) setChecking(false) }
   }
   async function recover(requestId: string) {
@@ -60,7 +74,7 @@ export default function Speech({ csrf, accountKey, form, setForm, execution, onE
     if (previous && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(previous)) {
       setUncertain(true); setPendingId(previous); recover(previous)
     }
-    return () => { mounted.current = false; epoch.current += 1 }
+    return () => { mounted.current = false; epoch.current += 1; if (previewUrl.current) URL.revokeObjectURL(previewUrl.current) }
   }, [])
   useEffect(() => {
     if (execution && ['completed', 'failed', 'cancelled', 'busy'].includes(execution.state)) {
@@ -88,11 +102,11 @@ export default function Speech({ csrf, accountKey, form, setForm, execution, onE
     return () => { active = false; clearInterval(timer) }
   }, [execution?.id, execution?.state])
   return <section className="panel"><span className="eyebrow">SPEECH</span><h2>Japanese speech</h2>
-    <p>Generate one speech recording from text and an optional voice description. Reference audio and voice cloning are unavailable.</p>
+    <p>Generate one speech recording from text and an optional voice description. Add a reference recording to guide the voice when reference speech is available.</p>
     {!available && <p role="status">{checking ? 'Checking speech availability…' : 'Speech is unavailable for the configured service.'} <button type="button" disabled={checking || busy} onClick={check}>Check again</button></p>}
     <form onSubmit={async event => {
       event.preventDefault()
-      if (!payload || !available || busy || active || uncertain) return
+      if (!payload || !available || busy || active || uncertain || referenceFile && (!reference || !referenceAvailable || !reference.available)) return
       const version = epoch.current
       setBusy(true); setError('')
       const requestId = crypto.randomUUID()
@@ -103,7 +117,7 @@ export default function Speech({ csrf, accountKey, form, setForm, execution, onE
         setPendingId(null); setBusy(false); return
       }
       try {
-        const created = await api.speechSubmit(payload, requestId, csrf)
+        const created = await api.speechSubmit({ ...payload, ...(reference ? { referenceInputId: reference.id } : {}) }, requestId, csrf)
         if (!current(version)) return
         onExecution(created); window.location.hash = `execution/${created.id}`
       } catch (failure) {
@@ -121,6 +135,36 @@ export default function Speech({ csrf, accountKey, form, setForm, execution, onE
     }}>
       <label>Speech text<textarea value={form.text} maxLength={1024} onChange={event => change('text', event.target.value)} /></label>
       <label>Voice description (optional)<textarea value={form.caption} maxLength={1024} onChange={event => change('caption', event.target.value)} /></label>
+      <fieldset disabled={!referenceAvailable || busy || !!active || uncertain}>
+        <legend>Reference audio (optional)</legend>
+        <label>Reference WAV<input type="file" accept=".wav,audio/wav,audio/x-wav" onChange={async event => {
+          const file = event.target.files?.[0]
+          event.target.value = ''
+          if (!file) return
+          const version = epoch.current
+          clearReference(); setReferenceFile(file); setBusy(true); setError('')
+          try {
+            const uploaded = await api.uploadReferenceAudio(file, csrf)
+            if (!current(version)) return
+            if (!uploaded.available || uploaded.mimeType !== 'audio/wav') throw new Error('Reference audio is unavailable.')
+            setReference(uploaded)
+            if (typeof URL.createObjectURL === 'function') {
+              previewUrl.current = URL.createObjectURL(file); setReferenceUrl(previewUrl.current)
+            }
+          } catch (failure) {
+            if (current(version)) setError(failure instanceof Error ? failure.message : 'Reference upload failed.')
+          } finally { if (current(version)) setBusy(false) }
+        }} /></label>
+        <small>One PCM16 mono/stereo WAV, up to 30 seconds and 8 MiB.</small>
+      </fieldset>
+      {!referenceAvailable && <p>Reference audio is unavailable for the configured service.
+        {available && <button type="button" disabled={checking || busy} onClick={check}>Check again</button>}
+      </p>}
+      {referenceFile && <div>
+        <span>{referenceFile.name}</span>
+        {referenceUrl && <audio aria-label="Reference audio preview" controls src={referenceUrl} />}
+        <button type="button" disabled={busy || !!active} onClick={clearReference}>Remove reference</button>
+      </div>}
       <div className="row"><label>Output length (seconds)<input type="number" min="0.5" max="30" step="0.5" value={form.seconds} onChange={event => change('seconds', event.target.value)} /></label>
         <label>Sampling steps<input type="number" min="1" max="80" step="1" value={form.steps} onChange={event => change('steps', event.target.value)} /></label>
         <label>Seed<input value={form.seed} inputMode="numeric" onChange={event => change('seed', event.target.value)} placeholder="Random" /></label>
@@ -128,7 +172,7 @@ export default function Speech({ csrf, accountKey, form, setForm, execution, onE
       <small>Text and description each allow up to 512 characters. Output length limits the recording.</small>
       {(error || statusError) && <p role="alert" className="error">{error || statusError}</p>}
       {uncertain && pendingId && <button type="button" disabled={busy} onClick={() => recover(pendingId)}>Check previous request</button>}
-      <button className="primary" disabled={!available || checking || busy || !payload || !!active || uncertain}>{busy ? 'Submitting…' : 'Generate speech'}</button>
+      <button className="primary" disabled={!available || checking || busy || !payload || !!active || uncertain || !!referenceFile && (!reference || !referenceAvailable || !reference.available)}>{busy ? 'Submitting…' : 'Generate speech'}</button>
     </form>
     {execution && <div className="results"><h3>Speech result</h3><span className="badge">{execution.state.replaceAll('_', ' ')}</span>
       {execution.state === 'busy' && <p>The generation service is busy; no new generation was accepted.</p>}

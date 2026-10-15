@@ -95,3 +95,55 @@ test('late submit response from an unmounted account cannot replace another acco
   expect(old).not.toHaveBeenCalled(); expect(next).not.toHaveBeenCalled()
   expect(window.location.hash).toBe('')
 })
+
+
+async function chooseReference() {
+  const input = host.querySelector('input[type="file"]')!
+  Object.defineProperty(input, 'files', {
+    configurable: true, value: [new File(['waveform'], 'reference.wav', { type: 'audio/wav' })],
+  })
+  await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })))
+}
+
+test('reference upload previews locally and submits the owned handle', async () => {
+  vi.mocked(api.speechDiscovery).mockResolvedValue({ available: true, referenceAvailable: true })
+  const NativeURL = URL
+  vi.stubGlobal('URL', class extends NativeURL {
+    static createObjectURL = vi.fn(() => 'blob:reference')
+    static revokeObjectURL = vi.fn()
+  })
+  const upload = vi.spyOn(api, 'uploadReferenceAudio').mockResolvedValue({
+    id: 'reference-handle', available: true, mimeType: 'audio/wav', thumbnailUrl: null,
+  })
+  const send = vi.spyOn(api, 'speechSubmit').mockResolvedValue(created)
+  await show(); await chooseReference()
+  expect(upload).toHaveBeenCalledOnce()
+  expect(host.querySelector('audio[aria-label="Reference audio preview"]')?.getAttribute('src')).toBe('blob:reference')
+  await submit()
+  expect(send).toHaveBeenCalledExactlyOnceWith({
+    text: 'こんにちは', caption: '', seconds: 10, steps: 40, seed: 0,
+    referenceInputId: 'reference-handle',
+  }, REQUEST, 'csrf')
+})
+
+test('failed reference upload cannot silently generate without its reference', async () => {
+  vi.mocked(api.speechDiscovery).mockResolvedValue({ available: true, referenceAvailable: true })
+  vi.spyOn(api, 'uploadReferenceAudio').mockRejectedValue(new Error('Invalid reference WAV'))
+  const send = vi.spyOn(api, 'speechSubmit')
+  await show(); await chooseReference()
+  expect(host.textContent).toContain('Invalid reference WAV')
+  expect((generate() as HTMLButtonElement).disabled).toBe(true)
+  await submit(); expect(send).not.toHaveBeenCalled()
+  await act(async () => [...host.querySelectorAll('button')].find(b => b.textContent === 'Remove reference')!.click())
+  expect((generate() as HTMLButtonElement).disabled).toBe(false)
+})
+
+test('late reference upload cannot cross account boundaries', async () => {
+  vi.mocked(api.speechDiscovery).mockResolvedValue({ available: true, referenceAvailable: true })
+  let finish!: (value: Awaited<ReturnType<typeof api.uploadReferenceAudio>>) => void
+  vi.spyOn(api, 'uploadReferenceAudio').mockImplementation(() => new Promise(resolve => { finish = resolve }))
+  await show('owner-a'); await chooseReference(); await show('owner-b')
+  await act(async () => finish({ id: 'private-reference', available: true, mimeType: 'audio/wav', thumbnailUrl: null }))
+  expect(host.textContent).not.toContain('reference.wav')
+  expect(host.querySelector('audio[aria-label="Reference audio preview"]')).toBeNull()
+})

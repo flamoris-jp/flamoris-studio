@@ -328,7 +328,7 @@ class GenerationGateway:
             or not re.fullmatch(r"[0-9a-f]{32}", upload_id)
             or not isinstance(data, bytes)
             or not 0 < len(data) <= 8 * 1024**2
-            or mime_type not in {"image/png", "image/jpeg", "image/webp"}
+            or mime_type not in {"image/png", "image/jpeg", "image/webp", "audio/wav"}
         ):
             raise GatewayError("validation")
         if os.getenv("STUDIO_GENERATION_NAMESPACE", ""):
@@ -392,7 +392,7 @@ class GenerationGateway:
     async def discover_speech(self):
         if os.getenv("STUDIO_SPEECH_ENABLED", "false").lower() != "true":
             return {"available": False}
-        from .speech_contract import HTTP_PROOF, exact, qualified_speech
+        from .speech_contract import HTTP_PROOF, REFERENCE_PROOF, exact, qualified_speech, qualified_reference
 
         health = await self._json("system.health")
         if health.get("healthy") is not True:
@@ -400,11 +400,21 @@ class GenerationGateway:
         caps = await self._json("capabilities.list")
         catalog = await self._json("workflows.list")
         available = qualified_speech(catalog, caps)
+        providers = health.get("providers", [])
         if available and any(
             exact(item.get("speech"), HTTP_PROOF) for item in catalog["descriptors"]
             if item.get("id") == "speech-no-reference"
         ):
-            return {"available": True, "speechContract": HTTP_PROOF}
+            return {
+                "available": True, "speechContract": HTTP_PROOF,
+                "referenceAvailable": qualified_reference(catalog, caps)
+                and type(providers) is list and len(providers) <= 128 and any(
+                    type(item) is dict and item.get("id") == "irodori"
+                    and item.get("available") is True and item.get("reference_audio") is True
+                    for item in providers
+                ),
+                "referenceContract": REFERENCE_PROOF,
+            }
         return {"available": available}
 
     async def build_speech(self, parameters, proof=None):
@@ -416,6 +426,15 @@ class GenerationGateway:
             ),
             parameters,
             PROOF if proof is None else proof,
+        )
+
+    async def build_reference_speech(self, parameters):
+        from .speech_contract import REFERENCE_TEMPLATE, checked_reference_build
+
+        return checked_reference_build(
+            await self._json(
+                "workflows.build", {"template": REFERENCE_TEMPLATE, "parameters": parameters}
+            ), parameters,
         )
 
     async def discover_music(self):

@@ -2,7 +2,7 @@ export type Session = { authenticated: boolean; userName: string | null; csrfTok
 export type Model = { id: string; name: string }
 export type ParameterSpec = { type: string; model_kind?: string; role?: string; required?: boolean; default?: unknown; minimum?: number; maximum?: number; multiple_of?: number; enum?: (string | number | boolean)[]; pattern?: string; min_length?: number; max_length?: number; max_items?: number; min_items?: number; max_bytes?: number }
 export type Workflow = { id: string; kind: string; name: string; selectable: boolean; referenceRoles?: string[]; recipeSchema?: number; liveProviderVerified?: boolean | null; reason: string | null; definitionVersion: number | null; definitionDigest: string | null; image: { mode: string; profile: string; dimensions: { mode: string; width?: number; height?: number } }; parameters: Record<string, ParameterSpec> }
-export type ManagedInput = { id: string; available: boolean; expiresAt?: string; thumbnailUrl: string | null; sourceAssetId?: string | null }
+export type ManagedInput = { id: string; mimeType?: string; sizeBytes?: number; available: boolean; expiresAt?: string; thumbnailUrl: string | null; sourceAssetId?: string | null }
 export type Discovery = { available: boolean; templates: string[]; checkpoints: Model[]; loras: Model[]; workflows?: Workflow[]; managedInputReady?: boolean }
 export type OutputRole = { port: string; role: string; index: number }
 export type AssetKind = 'all' | 'image' | 'video' | 'music' | 'speech' | 'other'
@@ -18,7 +18,7 @@ export type MusicOperation = 'generate' | 'transcribe'
 export type MusicInput = { style: string; lyrics: string; seconds: number; steps: number; seed: number | null; lm_seed: number | null }
 export type TranscriptionInput = { referenceInputId: string; max_seconds: number; melody_only: boolean }
 export type MusicDiscovery = { generate: boolean; transcribe: boolean }
-export type SpeechInput = { text: string; caption: string; seconds: number; steps: number; seed: number | null }
+export type SpeechInput = { text: string; caption: string; seconds: number; steps: number; seed: number | null; referenceInputId?: string }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { credentials: 'same-origin', ...options })
@@ -141,7 +141,7 @@ export const api = {
   musicDiscovery: () => request<MusicDiscovery>('/api/generation/music/discovery'),
   musicSubmit: (input: MusicInput | TranscriptionInput, operation: MusicOperation, requestId: string, csrf: string) => post<Execution>(`/api/generation/music/${operation}/jobs`, { ...input, requestId }, csrf),
   musicRequest: (requestId: string) => request<Execution>(`/api/generation/music/requests/${encodeURIComponent(requestId)}`),
-  speechDiscovery: () => request<{ available: boolean }>('/api/generation/speech/discovery'),
+  speechDiscovery: () => request<{ available: boolean; referenceAvailable?: boolean }>('/api/generation/speech/discovery'),
   speechSubmit: (input: SpeechInput, requestId: string, csrf: string) => post<Execution>('/api/generation/speech/jobs', { ...input, requestId }, csrf),
   speechRequest: (requestId: string) => request<Execution>(`/api/generation/speech/requests/${encodeURIComponent(requestId)}`),
   imagePreferences: () => request<ImagePreferences>('/api/generation/image/preferences'),
@@ -153,6 +153,18 @@ export const api = {
   deleteStyle: (id: string, csrf: string) => request<{ ok: boolean }>(`/api/generation/image/styles/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { 'X-CSRF-TOKEN': csrf } }),
   createInput: (assetId: string, csrf: string) => post<ManagedInput>('/api/generation/inputs', { assetId }, csrf),
   uploadInput,
+  uploadReferenceAudio: async (file: File, csrf: string) => {
+    if (file.size < 1 || file.size > 8 * 1024 * 1024 || !/\.wav$/i.test(file.name))
+      throw new Error('Choose one PCM16 WAV up to 8 MiB and 30 seconds.')
+    const controller = new AbortController()
+    const deadline = globalThis.setTimeout(() => controller.abort(), 100000)
+    try {
+      return await request<ManagedInput>('/api/generation/inputs/upload', {
+        method: 'POST', headers: { 'Content-Type': 'audio/wav', 'X-CSRF-TOKEN': csrf },
+        body: file, signal: controller.signal,
+      })
+    } finally { globalThis.clearTimeout(deadline) }
+  },
   input: (id: string) => request<ManagedInput>(`/api/generation/inputs/${encodeURIComponent(id)}`),
   deleteInput: (id: string, csrf: string) => request<ManagedInput>(`/api/generation/inputs/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { 'X-CSRF-TOKEN': csrf } }),
   submit: (image: unknown, csrf: string) => post<Execution>('/api/generation/image/jobs', image, csrf),
