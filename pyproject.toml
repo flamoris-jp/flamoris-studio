@@ -15,7 +15,7 @@ dependencies = ["flamoris-update-core[owner] @ https://github.com/flamoris-jp/fl
 
 [project.optional-dependencies]
 test = [
-  "flamoris-generation-controller[http] @ https://github.com/flamoris-jp/flamoris-generation-controller/archive/34d7956b89517d818a2d90bfd5bc1fe7f39ed357.zip",
+  "flamoris-generation-controller[http] @ https://github.com/flamoris-jp/flamoris-generation-controller/archive/e73bf92c2796d3a9aaf8e5bba6315c9f36f72949.zip",
   "pytest>=8,<10", "pytest-asyncio>=1,<2", "httpx>=0.28,<1",
   "flamoris-ai-agent @ https://github.com/flamoris-jp/flamoris-ai-agent/archive/8ac1e9555355a5cbb255e8939f43ad041a0d221c.zip",
 ]

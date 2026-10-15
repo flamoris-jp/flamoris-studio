@@ -1,17 +1,18 @@
 # Native Speech operation
 
-Studio's optional Speech editor supports one no-reference Japanese recording
-through Generation's native `speech-no-reference` template. It accepts text and
+Studio's optional Speech editor supports Japanese speech with an optional reference
+WAV through the matched resident HTTP profile. The original `speech-no-reference`
+template remains supported for both HTTP and CLI. It accepts text and
 an optional voice description (each at most 512 Unicode characters and 2048
 UTF-8 bytes), output length 0.5–30 seconds, integer steps 1–80 and a browser-safe
 integer seed. Blank seed resolves once to a persisted random seed. Reference
-audio, voice cloning, Music, Video and model/runtime controls are not part of
-this slice.
+audio has its own bounded profile described below. Music, Video and model/runtime
+controls remain outside this editor.
 
 ## Enable the matched contract
 
 Apply migration `20261003_09` after the existing migrations. Configure the
-backend-only Generation endpoint/token and optional Hub namespace as for Image.
+backend-only Controller HTTP endpoint/token with an empty generation namespace, as for Image.
 Set `STUDIO_SPEECH_ENABLED=true` only with the matching Generation native Speech
 source and its explicitly configured local Irodori resources. The flag defaults
 to false, and disabled discovery performs no upstream call.

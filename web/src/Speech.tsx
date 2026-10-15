@@ -157,7 +157,9 @@ export default function Speech({ csrf, accountKey, form, setForm, execution, onE
         }} /></label>
         <small>One PCM16 mono/stereo WAV, up to 30 seconds and 8 MiB.</small>
       </fieldset>
-      {!referenceAvailable && <p>Reference audio is unavailable for the configured service.</p>}
+      {!referenceAvailable && <p>Reference audio is unavailable for the configured service.
+        {available && <button type="button" disabled={checking || busy} onClick={check}>Check again</button>}
+      </p>}
       {referenceFile && <div>
         <span>{referenceFile.name}</span>
         {referenceUrl && <audio aria-label="Reference audio preview" controls src={referenceUrl} />}
