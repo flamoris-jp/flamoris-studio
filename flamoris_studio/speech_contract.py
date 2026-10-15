@@ -16,6 +16,15 @@ HTTP_PROOF = {
     "server_contract_revision": "61012c760f22f7b4a6c21c5c5f8f9e148120b6f9",
     "reference_audio": False, "candidates": 1,
 }
+REFERENCE_TEMPLATE = "speech-reference"
+REFERENCE_PROOF = {**HTTP_PROOF, "profile": "irodori-server-reference-v1", "reference_audio": True}
+REFERENCE_PARAMETER = {
+    "type": "managed_input", "role": "reference_audio", "required": True,
+    "media_types": ["audio/wav"], "max_bytes": 8 * 1024**2, "max_seconds": 30,
+}
+REFERENCE_ROLES = [
+    {"parameter": "reference_audio", "role": "reference_audio", "media_kind": "audio"}
+]
 PARAMETERS = {
     "text": {"type": "string", "role": "text", "required": True,
              "min_length": 1, "max_length": 512, "max_bytes": 2048},
@@ -77,7 +86,8 @@ def qualified_speech(catalog, capabilities):
               "readiness": {"status": "not-attested"}}
     return (all(exact(raw.get(key), value) for key, value in fields.items()) and
             route.get("available") is True and route.get("provider_id") == "irodori" and
-            exact(route.get("workflow_templates"), [TEMPLATE]))
+            any(exact(route.get("workflow_templates"), templates) for templates in (
+                [TEMPLATE], [REFERENCE_TEMPLATE, TEMPLATE])))
 
 
 def checked_build(result, parameters, proof=PROOF):
@@ -99,3 +109,50 @@ def checked_build(result, parameters, proof=PROOF):
         raise GatewayError("validation") from None
     return result["workflow_id"]
 
+
+
+def qualified_reference(catalog, capabilities):
+    if not qualified_speech(catalog, capabilities):
+        return False
+    entries = [
+        item for item in catalog["descriptors"]
+        if type(item) is dict and item.get("id") == REFERENCE_TEMPLATE
+    ]
+    if len(entries) != 1:
+        return False
+    fields = {
+        "id": REFERENCE_TEMPLATE, "kind": "native", "metadata_schema_version": 2,
+        "schema_version": 9, "version": 1, "provider_id": "irodori",
+        "capability_id": "speech.generate",
+        "parameters": {**PARAMETERS, "reference_audio": REFERENCE_PARAMETER},
+        "input_roles": REFERENCE_ROLES,
+        "output_roles": [{"port": "audio", "role": "audio", "media_kind": "audio"}],
+        "speech": REFERENCE_PROOF, "qualification": "configured-http-contract",
+        "readiness": {"status": "not-attested"},
+    }
+    return all(exact(entries[0].get(key), value) for key, value in fields.items()) and any(
+        type(route) is dict and exact(route.get("workflow_templates"), [REFERENCE_TEMPLATE, TEMPLATE])
+        for route in capabilities["capabilities"]
+        if type(route) is dict and route.get("id") == "speech.generate"
+    )
+
+
+def checked_reference_build(result, parameters):
+    reference = parameters.get("reference_audio")
+    if type(reference) is not str or re.fullmatch(r"[a-f0-9]{32}", reference) is None:
+        raise GatewayError("validation")
+    if (
+        type(result) is not dict or not exact(result.get("schema_version"), 9)
+        or result.get("template") != REFERENCE_TEMPLATE
+        or not exact(result.get("speech"), REFERENCE_PROOF)
+        or not exact(result.get("parameters"), parameters)
+    ):
+        raise GatewayError("validation")
+    # Reuse strict scalar, identity and no-graph validation after removing only
+    # the separately checked managed input binding.
+    scalars = {key: value for key, value in parameters.items() if key != "reference_audio"}
+    normalized = {
+        **result, "template": TEMPLATE, "schema_version": 4,
+        "speech": HTTP_PROOF, "parameters": scalars,
+    }
+    return checked_build(normalized, scalars, HTTP_PROOF)

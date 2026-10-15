@@ -66,7 +66,11 @@ async def test_http_discovery_and_build_keep_the_selected_profile(monkeypatch):
 
     gateway = GenerationGateway()
     monkeypatch.setattr(gateway, "_json", call)
-    assert await gateway.discover_speech() == {"available": True, "speechContract": HTTP_PROOF}
+    assert await gateway.discover_speech() == {
+        "available": True, "speechContract": HTTP_PROOF,
+        "referenceAvailable": False,
+        "referenceContract": {**HTTP_PROOF, "profile": "irodori-server-reference-v1", "reference_audio": True},
+    }
     assert await gateway.build_speech(parameters, HTTP_PROOF) == "a" * 32
     assert calls[-1] == ("workflows.build", {"template": "speech-no-reference", "parameters": parameters})
 

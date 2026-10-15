@@ -14,6 +14,7 @@ from .managed_inputs import input_view, owned_input, reserve, validate_metadata
 
 MAX_UPLOAD_BYTES = 8 * 1024**2
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
+UPLOAD_TYPES = IMAGE_TYPES | {"audio/wav"}
 
 
 async def publish_upload(app, db, row, data):
@@ -25,7 +26,7 @@ async def publish_upload(app, db, row, data):
         row.expires_at = datetime.fromtimestamp(raw["expires_at"], timezone.utc)
         locator = None
         try:
-            locator = app.state.input_thumbnails.save(row.id, data)
+            locator = app.state.input_thumbnails.save(row.id, data) if row.mime_type in IMAGE_TYPES else None
         except (ValueError, OSError):
             pass
         if locator:
@@ -70,23 +71,23 @@ def mount_input_uploads(app):
     @app.post("/api/generation/inputs/upload", status_code=201)
     async def upload_image(request: Request, db=Depends(database), user_id=Depends(authenticated_user)):
         mime = request.headers.get("content-type", "").lower()
-        if mime not in IMAGE_TYPES:
-            raise HTTPException(415, "Choose a PNG, JPEG or WebP image")
+        if mime not in UPLOAD_TYPES:
+            raise HTTPException(415, "Choose a PNG, JPEG, WebP image or PCM16 WAV audio")
         length = request.headers.get("content-length")
         if length is not None and (len(length) > 10 or not length.isascii()
                                    or not length.isdigit() or not 0 < int(length) <= MAX_UPLOAD_BYTES):
-            raise HTTPException(413, "Reference images must be at most 8 MiB")
+            raise HTTPException(413, "Reference files must be at most 8 MiB")
         if app.state.input_upload_lock.locked():
-            raise HTTPException(429, "Another reference image is uploading; try again later")
+            raise HTTPException(429, "Another reference file is uploading; try again later")
         try:
             async with app.state.input_upload_lock, asyncio.timeout(90):
                 content = bytearray()
                 async for part in request.stream():
                     if len(content) + len(part) > MAX_UPLOAD_BYTES:
-                        raise HTTPException(413, "Reference images must be at most 8 MiB")
+                        raise HTTPException(413, "Reference files must be at most 8 MiB")
                     content.extend(part)
                 if not content or length is not None and len(content) != int(length):
-                    raise HTTPException(422, "Reference image upload was incomplete")
+                    raise HTTPException(422, "Reference upload was incomplete")
                 db.rollback()
                 if current_user(request, db) != user_id:
                     raise HTTPException(401)

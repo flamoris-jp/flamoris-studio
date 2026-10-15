@@ -77,3 +77,34 @@ The matched Controller 1.0.4 / Generation 1.0.7 can use an already running Irodo
 Studio accepts the exact `irodori-server-no-reference-v1` proof, server contract revision `61012c760f22f7b4a6c21c5c5f8f9e148120b6f9`, no references and one candidate. Qualification is `configured-http-contract`; readiness remains `not-attested`. The profile describes a reviewed API contract, not verified running source/model identities. Existing CLI profiles remain supported. A configured but stopped server makes Speech unavailable. Activate it through the existing runtime manager, then use Check Again.
 
 The submitted execution records the selected profile; the build must return that same proof. UUID digest identity remains stable across transport configuration changes so a previously admitted request is recovered without replay. Owner preview/download/range controls remain unchanged. The HTTP API has no targeted cancel: Cancel requests keep observing the original recording, which may complete. Lost or interrupted outcomes stay unknown/reserved. See [Controller HTTP transport](https://github.com/flamoris-jp/flamoris-generation-controller/blob/main/docs/IRODORI_HTTP.md) for configuration, uncertainty and live acceptance.
+
+
+## Reference audio (Controller #21)
+
+The matched Controller/Generation packages also expose the separate
+`speech-reference` schema-9 profile, `irodori-server-reference-v1`.
+When discovery confirms the exact descriptor and a reference-capable loaded model,
+Speech offers one optional WAV upload and a local audio preview. Remove reference
+returns to ordinary no-reference generation. A failed upload blocks generation
+until it is retried or explicitly removed.
+
+Use one PCM16 mono/stereo WAV at 16/22.05/24/44.1/48/96 kHz, at most 30 seconds
+and 8 MiB. The authenticated raw-upload endpoint forwards bytes through the
+existing Controller input-upload contract. Studio stores only the owner-scoped
+opaque mapping and metadata; WAV originals remain generation-owned and have no
+image thumbnail. The browser previews its selected local file via a temporary
+object URL and revokes that URL when replaced or unmounted.
+
+Reference submission verifies owner, state, expiry and upstream digest before
+resolving the input. The execution protects the selected input and records its
+opaque handle, checksum and exact profile. Replays keep the original request
+fence; another account cannot select or inspect this input. The underlying
+reference input ID is never accepted directly from a browser. Reference failure
+never silently invokes no-reference synthesis.
+
+The resident HTTP adapter uploads a private temporary voice rather than sending
+a browser/server-local path. Existing CLI no-reference generation stays supported.
+Current reference support is limited to the reviewed v4-Small/v4.1-Small model
+identities. Unknown server work and temporary-voice cleanup follow the
+[Controller reference contract](https://github.com/flamoris-jp/flamoris-generation-controller/blob/main/docs/REFERENCE_SPEECH.md).
+Source/CI checks do not attest perceptual similarity or a deployed runtime.

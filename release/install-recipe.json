@@ -3,10 +3,11 @@
   "sql_files": [],
   "recipe": {
     "application_id": "flamoris-studio",
-    "release": "1.0.8",
+    "release": "1.0.9",
     "platform": "linux/amd64",
     "compatible_from": [
-      "1.0.7"
+      "1.0.7",
+      "1.0.8"
     ],
     "dependencies": {},
     "settings": [
