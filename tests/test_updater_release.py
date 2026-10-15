@@ -52,7 +52,7 @@ def test_both_platforms_use_own_repository_payloads_and_exact_checksums(candidat
         "linux/arm64",
     }
     for recipe in catalog["recipes"]:
-        assert recipe["compatible_from"] == ["1.0.7"]
+        assert recipe["compatible_from"] == ["1.0.7", "1.0.8"]
         prefix = (
             "https://github.com/flamoris-jp/"
             + recipe["application_id"]

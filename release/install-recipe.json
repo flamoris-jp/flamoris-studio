@@ -148,7 +148,7 @@
     },
     "application": {
       "application_id": "flamoris-studio",
-      "release": "1.0.8",
+      "release": "1.0.9",
       "directories": [
         {
           "path": "${root}/config"
