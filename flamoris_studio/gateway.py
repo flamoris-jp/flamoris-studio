@@ -400,16 +400,18 @@ class GenerationGateway:
         caps = await self._json("capabilities.list")
         catalog = await self._json("workflows.list")
         available = qualified_speech(catalog, caps)
+        providers = health.get("providers", [])
         if available and any(
             exact(item.get("speech"), HTTP_PROOF) for item in catalog["descriptors"]
             if item.get("id") == "speech-no-reference"
         ):
             return {
                 "available": True, "speechContract": HTTP_PROOF,
-                "referenceAvailable": qualified_reference(catalog, caps) and any(
+                "referenceAvailable": qualified_reference(catalog, caps)
+                and type(providers) is list and len(providers) <= 128 and any(
                     type(item) is dict and item.get("id") == "irodori"
                     and item.get("available") is True and item.get("reference_audio") is True
-                    for item in health.get("providers", [])
+                    for item in providers
                 ),
                 "referenceContract": REFERENCE_PROOF,
             }

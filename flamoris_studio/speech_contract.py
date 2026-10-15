@@ -153,6 +153,7 @@ def checked_reference_build(result, parameters):
     scalars = {key: value for key, value in parameters.items() if key != "reference_audio"}
     normalized = {
         **result, "template": TEMPLATE, "schema_version": 4,
-        "speech": HTTP_PROOF, "parameters": scalars,
+        "speech": HTTP_PROOF,
+        "parameters": {key: value for key, value in result["parameters"].items() if key != "reference_audio"},
     }
     return checked_build(normalized, scalars, HTTP_PROOF)

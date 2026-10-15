@@ -141,6 +141,7 @@ def test_matched_controller_reference_descriptor_and_strict_build():
               "speech": REFERENCE_PROOF, "parameters": parameters, "prompt": None}
     assert checked_reference_build(result, parameters) == "a" * 32
     for changes in ({"speech": HTTP_PROOF}, {"schema_version": True},
+                    {"parameters": {**parameters, "seed": False}},
                     {"parameters": {**parameters, "reference_audio": "d" * 32}}):
         with pytest.raises(GatewayError):
             checked_reference_build({**result, **changes}, parameters)
