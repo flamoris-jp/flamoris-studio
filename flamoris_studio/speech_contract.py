@@ -145,7 +145,7 @@ def checked_reference_build(result, parameters):
         type(result) is not dict or not exact(result.get("schema_version"), 9)
         or result.get("template") != REFERENCE_TEMPLATE
         or not exact(result.get("speech"), REFERENCE_PROOF)
-        or not exact(result.get("parameters"), parameters)
+        or result.get("parameters") != parameters
     ):
         raise GatewayError("validation")
     # Reuse strict scalar, identity and no-graph validation after removing only
