@@ -1,3 +1,5 @@
-# FLAMORIS Studio 1.0.9
+# FLAMORIS Studio 1.0.10
 
-Add optional reference WAV upload, local preview and reference-conditioned Speech through the matched Controller profile. Verify owner, input digest/expiry and exact build contract before submission; preserve request fences and protect referenced inputs while work remains active. Existing no-reference/CLI generation stays compatible. No DB migration, runtime activation or live voice-quality claim is included.
+Speech output length now starts blank (Automatic). A blank duration requests Irodori's estimated length; explicit numbers keep fixed duration. Matches Controller 1.0.7 / Generation MCP 1.0.10's exact nullable-duration contract, including reference speech. Existing accounts, jobs, numeric request snapshots, reference inputs and unknown/no-replay fences stay intact; no DB schema or runtime configuration changes.
+
+Updater compatibility includes 1.0.9. Source/CI checks and production output quality are separate.

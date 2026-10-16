@@ -1,3 +1,14 @@
+# Automatic speech duration — 2026-10-17
+
+Prepares Studio 1.0.10 for #93 with the matched Controller 1.0.7 descriptor.
+Speech starts with blank output length and serializes it as null (automatic);
+explicit numeric durations remain fixed. Strict reference/no-reference build
+proofs, request identity, account/CSRF checks, leases and no-replay fences remain.
+No DB schema or runtime/GPU configuration changes. Local checks: 270 Python
+tests pass (179 PostgreSQL-dependent cases skipped here), 128 web tests pass,
+TypeScript/Vite and wheel-from-sdist build pass. PostgreSQL/container CI,
+publication and actual output quality remain pending.
+
 # Reference-image continuation — 2026-10-13
 
 Integrated current main into PR #80 and prepared Studio 1.0.7 for updates from 1.0.6. Preserves linked external gallery, YuE2 media and Assistant model preferences. Code CI passed, including PostgreSQL migration/server tests, frontend build/tests and both architecture disposable Updater installations. Actual shared-input/model setup and live generation remain pending. Earlier source targets below are historical.

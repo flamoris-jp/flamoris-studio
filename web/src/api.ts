@@ -18,7 +18,7 @@ export type MusicOperation = 'generate' | 'transcribe'
 export type MusicInput = { style: string; lyrics: string; seconds: number; steps: number; seed: number | null; lm_seed: number | null }
 export type TranscriptionInput = { referenceInputId: string; max_seconds: number; melody_only: boolean }
 export type MusicDiscovery = { generate: boolean; transcribe: boolean }
-export type SpeechInput = { text: string; caption: string; seconds: number; steps: number; seed: number | null; referenceInputId?: string }
+export type SpeechInput = { text: string; caption: string; seconds: number | null; steps: number; seed: number | null; referenceInputId?: string }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { credentials: 'same-origin', ...options })

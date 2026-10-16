@@ -26,12 +26,14 @@
       "required": false
     },
     "seconds": {
-      "default": 10,
+      "default": null,
       "maximum": 30,
       "minimum": 0.5,
       "type": "number",
       "role": "seconds",
-      "required": false
+      "required": false,
+      "nullable": true,
+      "description": "Omit or use null for auto duration; set a number for fixed length."
     },
     "steps": {
       "default": 40,

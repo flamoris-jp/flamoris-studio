@@ -3,16 +3,16 @@ import { api, HTTPFailure, type Execution, type ManagedInput, type SpeechInput }
 import { ResultPreview } from './Gallery'
 
 export type SpeechDraft = { text: string; caption: string; seconds: string; steps: string; seed: string }
-export const initialSpeechDraft = (): SpeechDraft => ({ text: '', caption: '', seconds: '10', steps: '40', seed: '0' })
+export const initialSpeechDraft = (): SpeechDraft => ({ text: '', caption: '', seconds: '', steps: '40', seed: '0' })
 
 const textValid = (value: string, required: boolean) => (!required || !!value.trim()) &&
   [...value].length <= 512 && new TextEncoder().encode(value).length <= 2048 &&
   !/[\u0000-\u0008\u000b-\u001f]/.test(value)
 
 export function speechPayload(form: SpeechDraft): SpeechInput | null {
-  const seconds = Number(form.seconds), steps = Number(form.steps), seed = Number(form.seed)
-  if (!textValid(form.text, true) || !textValid(form.caption, false) || !form.seconds.trim() ||
-    !Number.isFinite(seconds) || seconds < 0.5 || seconds > 30 || !form.steps.trim() ||
+  const seconds = form.seconds.trim() ? Number(form.seconds) : null, steps = Number(form.steps), seed = Number(form.seed)
+  if (!textValid(form.text, true) || !textValid(form.caption, false) ||
+    seconds !== null && (!Number.isFinite(seconds) || seconds < 0.5 || seconds > 30) || !form.steps.trim() ||
     !Number.isSafeInteger(steps) || steps < 1 || steps > 80 || form.seed.trim() &&
     (!Number.isSafeInteger(seed) || seed < 0 || seed > Number.MAX_SAFE_INTEGER)) return null
   return { text: form.text, caption: form.caption, seconds, steps, seed: form.seed.trim() ? seed : null }
@@ -165,11 +165,11 @@ export default function Speech({ csrf, accountKey, form, setForm, execution, onE
         {referenceUrl && <audio aria-label="Reference audio preview" controls src={referenceUrl} />}
         <button type="button" disabled={busy || !!active} onClick={clearReference}>Remove reference</button>
       </div>}
-      <div className="row"><label>Output length (seconds)<input type="number" min="0.5" max="30" step="0.5" value={form.seconds} onChange={event => change('seconds', event.target.value)} /></label>
+      <div className="row"><label>Output length (seconds, optional)<input type="number" min="0.5" max="30" step="0.5" placeholder="Automatic" value={form.seconds} onChange={event => change('seconds', event.target.value)} /></label>
         <label>Sampling steps<input type="number" min="1" max="80" step="1" value={form.steps} onChange={event => change('steps', event.target.value)} /></label>
         <label>Seed<input value={form.seed} inputMode="numeric" onChange={event => change('seed', event.target.value)} placeholder="Random" /></label>
         <button type="button" onClick={() => change('seed', '')}>Random seed</button></div>
-      <small>Text and description each allow up to 512 characters. Output length limits the recording.</small>
+      <small>Text and description each allow up to 512 characters. Leave output length blank to let the voice determine its duration.</small>
       {(error || statusError) && <p role="alert" className="error">{error || statusError}</p>}
       {uncertain && pendingId && <button type="button" disabled={busy} onClick={() => recover(pendingId)}>Check previous request</button>}
       <button className="primary" disabled={!available || checking || busy || !payload || !!active || uncertain || !!referenceFile && (!reference || !referenceAvailable || !reference.available)}>{busy ? 'Submitting…' : 'Generate speech'}</button>

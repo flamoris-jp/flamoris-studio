@@ -40,6 +40,8 @@ test('Speech parameters bound text, numbers and the exact browser-safe seed', ()
     { seconds: 'Infinity' }, { seconds: '31' }, { seed: String(2 ** 53) }]) expect(speechPayload({ ...form, ...changes })).toBeNull()
   expect(speechPayload({ ...form, text: '😀'.repeat(512) })).not.toBeNull()
   expect(speechPayload({ ...form, seed: '' })?.seed).toBeNull()
+  expect(speechPayload(form)?.seconds).toBeNull()
+  expect(speechPayload({ ...form, seconds: '3.5' })?.seconds).toBe(3.5)
 })
 
 test('unavailable Speech keeps the draft and does not submit', async () => {
@@ -55,7 +57,7 @@ test('known active receipt sends one UUID and keeps its pending fence until term
   const send = vi.spyOn(api, 'speechSubmit').mockResolvedValue(created)
   const observed = await show()
   await submit()
-  expect(send).toHaveBeenCalledExactlyOnceWith({ text: 'こんにちは', caption: '', seconds: 10, steps: 40, seed: 0 }, REQUEST, 'csrf')
+  expect(send).toHaveBeenCalledExactlyOnceWith({ text: 'こんにちは', caption: '', seconds: null, steps: 40, seed: 0 }, REQUEST, 'csrf')
   expect(observed).toHaveBeenCalledWith(created)
   expect(sessionStorage.getItem('flamoris.speech.pending:owner-a')).toBe(REQUEST)
   expect(window.location.hash).toBe(`#execution/${created.id}`)
@@ -121,7 +123,7 @@ test('reference upload previews locally and submits the owned handle', async () 
   expect(host.querySelector('audio[aria-label="Reference audio preview"]')?.getAttribute('src')).toBe('blob:reference')
   await submit()
   expect(send).toHaveBeenCalledExactlyOnceWith({
-    text: 'こんにちは', caption: '', seconds: 10, steps: 40, seed: 0,
+    text: 'こんにちは', caption: '', seconds: null, steps: 40, seed: 0,
     referenceInputId: 'reference-handle',
   }, REQUEST, 'csrf')
 })
