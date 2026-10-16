@@ -109,3 +109,14 @@ Current reference support is limited to the reviewed v4-Small/v4.1-Small model
 identities. Unknown server work and temporary-voice cleanup follow the
 [Controller reference contract](https://github.com/flamoris-jp/flamoris-generation-controller/blob/main/docs/REFERENCE_SPEECH.md).
 Source/CI checks do not attest perceptual similarity or a deployed runtime.
+
+## Automatic duration (1.0.10)
+
+Output length starts blank (Automatic). Leave it blank to send null seconds and
+let Irodori estimate the recording length; a numeric 0.5–30 second value requests
+a fixed duration. Existing numeric request snapshots remain numeric. Controller
+1.0.7 / Generation MCP 1.0.10 and Studio 1.0.10 share the exact nullable descriptor;
+roll out this matched pair together. No DB migration or provider configuration
+change is required. Automatic timing does not guarantee exact pronunciation or
+remove all unwanted words; listen to a short sample before producing narration.
+Existing owner/CSRF checks and unknown-submission no-replay fences remain.

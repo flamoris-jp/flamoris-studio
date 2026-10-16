@@ -304,3 +304,21 @@ def test_revoked_session_after_build_cannot_submit(clients, monkeypatch):
     with factory() as db:
         assert db.scalar(select(Execution)).last_known_status == "failed"
 
+
+
+@pytest.mark.parametrize("seconds", [None, 3.5])
+def test_automatic_and_fixed_speech_keep_distinct_strict_build_identity(seconds):
+    parameters = SpeechRequest(text="こんにちは", seconds=seconds).model_dump()
+    assert parameters["seconds"] == seconds
+    built = {"schema_version": 4, "workflow_id": "a" * 32,
+             "template": "speech-no-reference", "parameters": parameters,
+             "prompt": None, "speech": HTTP_PROOF}
+    assert checked_build(built, parameters, HTTP_PROOF) == "a" * 32
+    with pytest.raises(GatewayError):
+        checked_build({**built, "parameters": {**parameters, "seconds": 10.0}}, parameters, HTTP_PROOF)
+
+
+def test_auto_duration_descriptor_does_not_accept_another_numeric_default():
+    changed = copy.deepcopy(DESCRIPTOR)
+    changed["parameters"]["seconds"]["default"] = 10
+    assert not qualified_speech({"descriptors": [changed]}, CAPABILITIES)

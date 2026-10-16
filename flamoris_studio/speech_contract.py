@@ -31,7 +31,9 @@ PARAMETERS = {
     "caption": {"type": "string", "role": "caption", "required": False,
                 "default": "", "max_length": 512, "max_bytes": 2048},
     "seconds": {"type": "number", "role": "seconds", "required": False,
-                "default": 10, "minimum": 0.5, "maximum": 30},
+                "default": None, "minimum": 0.5, "maximum": 30,
+                "nullable": True,
+                "description": "Omit or use null for auto duration; set a number for fixed length."},
     "steps": {"type": "integer", "role": "steps", "required": False,
               "default": 40, "minimum": 1, "maximum": 80},
     "seed": {"type": "integer", "role": "seed", "required": False,
@@ -43,7 +45,7 @@ class SpeechRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     text: str = Field(min_length=1, max_length=512)
     caption: str = Field(default="", max_length=512)
-    seconds: float = Field(default=10, ge=0.5, le=30, allow_inf_nan=False)
+    seconds: float | None = Field(default=None, ge=0.5, le=30, allow_inf_nan=False)
     steps: int = Field(default=40, ge=1, le=80)
     seed: int | None = Field(default=0, ge=0, le=2**53 - 1)
 
