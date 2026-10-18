@@ -135,6 +135,16 @@ class WorkflowImageRequest(ImageRequest):
         return self
 
 
+class DeclaredImageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    workflowId: str = Field(pattern=r"^comfy-[a-f0-9]{64}$")
+    workflowKind: Literal["registered-comfy"]
+    definitionVersion: int = Field(ge=1, le=1, strict=True)
+    definitionDigest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    additionalParameters: dict = Field(default_factory=dict, max_length=64)
+    imageInputs: dict[str, uuid.UUID] = Field(default_factory=dict, max_length=4)
+
+
 class InputCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     assetId: uuid.UUID
@@ -572,16 +582,22 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     async def selected_submit(input, request, db, user_id, route):
         # Verify ALL references before even discovery calls the shared upstream.
         for field in REFERENCE_FIELDS.values():
-            handle = getattr(input, field)
+            handle = getattr(input, field, None)
             if handle:
                 row = owned_input(db, handle, user_id)
                 if (not usable(row) or row.mime_type not in {"image/png", "image/jpeg", "image/webp"}
                     or not row.size_bytes or row.size_bytes > 8 * 1024**2):
                     raise HTTPException(409, "Reference unavailable; replace or remove it")
+        if isinstance(input, DeclaredImageRequest):
+            for handle in input.imageInputs.values():
+                row = owned_input(db, handle, user_id)
+                if not usable(row) or row.mime_type not in {"image/png", "image/jpeg", "image/webp"} or not row.size_bytes or row.size_bytes > 8 * 1024**2:
+                    raise HTTPException(409, "Reference unavailable; replace or remove it")
         discovery = await app.state.gateway.discover()
         image_access(request, db, user_id, route)
         selected = next((item for item in discovery.get("workflows", []) if item["id"] == input.workflowId), None)
         if (not discovery["available"] or not selected or not selected["selectable"]
+            or (selected.get("recipeSchema") == 10) != isinstance(input, DeclaredImageRequest)
             or selected["kind"] != input.workflowKind
             or selected["definitionVersion"] != input.definitionVersion
             or selected["definitionDigest"] != input.definitionDigest
@@ -600,7 +616,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                 values[ROLES[role]] = parameters[key]
         reference_rows = {}
         for role in selected.get("referenceRoles", []):
-            handle = getattr(input, REFERENCE_FIELDS[role])
+            handle = input.imageInputs[role] if isinstance(input, DeclaredImageRequest) else getattr(input, REFERENCE_FIELDS[role])
             row = owned_input(db, handle, user_id)
             reference_rows[role] = row
         # Lock in a stable order, then persist every deletion fence before upstream IO.
@@ -621,7 +637,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             parameters = dict(parameters)
             for role, row in reference_rows.items():
                 upstream_id = await check_input(app.state.gateway, row)
-                key = next(key for key, spec in selected["parameters"].items() if spec.get("role") == role)
+                key = role if selected.get("recipeSchema") == 10 else next(key for key, spec in selected["parameters"].items() if spec.get("role") == role)
                 parameters[key] = upstream_id
             workflow = await app.state.gateway.build_selected(selected, parameters)
             image_access(request, db, user_id, route)
@@ -644,10 +660,10 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         return view(execution, db)
 
     @app.post("/api/generation/image/jobs", status_code=201)
-    async def submit(input: WorkflowImageRequest | ImageRequest, request: Request,
+    async def submit(input: DeclaredImageRequest | WorkflowImageRequest | ImageRequest, request: Request,
                      db: Session = Depends(database), user_id: uuid.UUID = Depends(authenticated_user)):
         route = image_route()
-        if isinstance(input, WorkflowImageRequest):
+        if isinstance(input, (WorkflowImageRequest, DeclaredImageRequest)):
             return await selected_submit(input, request, db, user_id, route)
         capability = await app.state.gateway.discover()
         image_access(request, db, user_id, route)
@@ -704,7 +720,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         snapshot = execution.request_snapshot if isinstance(execution.request_snapshot, dict) else {}
         settings = {key: snapshot[key] for key in ("positivePrompt", "negativePrompt", "checkpoint",
                     "seed", "steps", "cfg", "width", "height", "loras", "sampler", "scheduler", "denoise", "workflowId", "workflowKind", "definitionVersion", "definitionDigest",
-                    "referenceInputId", "characterInputId", "styleInputId", "controlInputId", "additionalParameters") if key in snapshot}
+                    "referenceInputId", "characterInputId", "styleInputId", "controlInputId", "additionalParameters", "imageInputs") if key in snapshot}
         reference = None
         if settings.get("referenceInputId"):
             try:
@@ -728,6 +744,14 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
                         await check_input(app.state.gateway, mapping)
                 except (ValueError, HTTPException, GatewayError):
                     references[role] = {"id": settings[field], "available": False, "thumbnailUrl": None}
+        for key, handle in settings.get("imageInputs", {}).items():
+            try:
+                mapping = owned_input(db, uuid.UUID(handle), user_id)
+                references[key] = input_view(mapping)
+                if usable(mapping):
+                    await check_input(app.state.gateway, mapping)
+            except (ValueError, HTTPException, GatewayError):
+                references[key] = {"id": handle, "available": False, "thumbnailUrl": None}
         workflow_available = True
         if settings.get("workflowId"):
             try:

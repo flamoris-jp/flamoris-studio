@@ -242,3 +242,44 @@ async def test_gateway_external_discovery_uses_exact_actor_and_no_media_download
     assert result["jobs"] == [{"job_id": job["job_id"], "sequence": 1}]
     assert (await gateway.external_jobs(actor, result["next_cursor"]))["jobs"] == []
     assert state["submissions"] == 1
+
+
+@pytest.mark.asyncio
+async def test_declared_image_descriptor_build_uses_same_authenticated_controller(matched, monkeypatch):
+    from flamoris_studio.workflow_contract import normalize_catalog
+
+    gateway, controller, state, image = matched
+    # A different model family/topology, with arbitrary public parameter names.
+    graph = {
+        "51": {"class_type": "LoadImage", "inputs": {"image": "$source"}},
+        "81": {"class_type": "EditWithAnyModel", "inputs": {"image": ["51", 0], "instruction": "Smile", "strength": 0.6}},
+        "7": {"class_type": "SaveImage", "inputs": {"images": ["81", 0], "filename_prefix": "flamoris"}},
+    }
+    info = {
+        "LoadImage": {"input": {"required": {"image": [["fixture.png"], {"image_upload": True}]}}, "output": ["IMAGE", "MASK"], "output_node": False},
+        "EditWithAnyModel": {"input": {"required": {"image": ["IMAGE"], "instruction": ["STRING"], "strength": ["FLOAT", {"min": 0, "max": 1}]}}, "output": ["IMAGE"], "output_node": False},
+        "SaveImage": {"input": {"required": {"images": ["IMAGE"], "filename_prefix": ["STRING"]}}, "output": [], "output_node": True},
+    }
+    declaration = {"parameters": {
+        "source": {"type": "string", "role": "managed_input", "label": "Image to edit", "required": True, "targets": [{"node": "51", "input": "image"}]},
+        "edit": {"type": "string", "role": "prompt", "label": "Instructions", "default": "Smile", "targets": [{"node": "81", "input": "instruction"}]},
+        "strength": {"type": "number", "role": "parameter", "label": "Influence", "default": 0.6, "targets": [{"node": "81", "input": "strength"}]}}, "output": {"node": "7"}}
+    controller.workflows.definitions.allowed_nodes = frozenset(info)
+    async def node_info(_graph):
+        return info
+    monkeypatch.setattr(controller.client, "object_info", node_info)
+    from flamoris_generation_controller.contracts import CallerContext
+    raw = await controller.invoke("comfy.register", {"name": "Another image model", "graph": graph, "declaration": declaration}, context=CallerContext.external())
+    selected = normalize_catalog({"descriptors": [raw]})[0]
+    assert selected["recipeSchema"] == 10 and selected["selectable"]
+    uploaded = await gateway.upload_input(uuid.uuid4().hex, image, "image/png")
+    workflow = await gateway.build_selected(selected, {"source": uploaded["input_id"], "edit": "Wave", "strength": 0.4})
+    job = await gateway.submit(workflow)
+    assert job["status"] == "queued" and state["submissions"] == 1
+    assert job["managed_inputs"]["source"]["sha256"] == hashlib.sha256(image).hexdigest()
+    state["completed"] = True
+    assert (await gateway.status(job["job_id"]))["status"] == "completed"
+    assets = await gateway.assets(job["job_id"])
+    assert assets
+    content, mime = await gateway.content(assets[0]["asset_id"], 512 * 1024)
+    assert content == image and mime == "image/png"

@@ -241,13 +241,13 @@ class GenerationGateway:
                         descriptor.update(selectable=False, reason="reference_storage_unavailable")
         except (ValueError, TypeError):
             raise GatewayError("upstream_failure") from None
-        conditioned = [d for d in descriptors if d.get("recipeSchema") == 8]
+        conditioned = [d for d in descriptors if d.get("recipeSchema") in {8, 10}]
         if conditioned:
             discovered_models = await self._json("models.list", {"kind": None})
             installed = {(m.get("kind"), m.get("name")) for m in discovered_models.get("models", []) if isinstance(m, dict)}
             for descriptor in conditioned:
                 required = {(spec.get("model_kind"), spec.get("default")) for spec in descriptor["parameters"].values()
-                            if spec.get("model_kind") in {"checkpoint", "ipadapter", "clip_vision", "controlnet"}}
+                            if spec.get("model_kind") and type(spec.get("default")) is str}
                 if not required <= installed:
                     descriptor.update(selectable=False, reason="reference_models_unavailable")
         return {
@@ -276,7 +276,7 @@ class GenerationGateway:
             if (re.fullmatch(r"comfy-[a-f0-9]{64}", descriptor.get("id", "")) is None
                 or descriptor.get("definitionVersion") != 1
                 or descriptor.get("definitionDigest") != descriptor["id"][6:]
-                or descriptor.get("recipeSchema") not in {7, 8}):
+                or descriptor.get("recipeSchema") not in {7, 8, 10}):
                 raise GatewayError("validation")
         elif (descriptor.get("kind") != "builtin"
               or descriptor.get("id") not in {"text-to-image", "text-to-image-lora"}
@@ -290,7 +290,7 @@ class GenerationGateway:
         if registered:
             schema = descriptor["recipeSchema"]
             expected_images = {key: parameters[key] for key, spec in descriptor["parameters"].items()
-                               if spec.get("role") in {"initial_image", "character_image", "style_image", "control_image"}}
+                               if spec.get("role") in {"initial_image", "character_image", "style_image", "control_image", "managed_input"}}
             if (result.get("template") != "registered-comfy"
                 or result.get("definition_id") != descriptor["id"]
                 or type(result.get("schema_version")) is not int
@@ -513,4 +513,3 @@ class GenerationGateway:
         if not isinstance(result, dict):
             raise GatewayError("upstream_failure")
         return result
-

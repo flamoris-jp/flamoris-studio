@@ -52,7 +52,7 @@ def test_both_platforms_use_own_repository_payloads_and_exact_checksums(candidat
         "linux/arm64",
     }
     for recipe in catalog["recipes"]:
-        assert recipe["compatible_from"] == ["1.0.7", "1.0.8", "1.0.9"]
+        assert recipe["compatible_from"] == ["1.0.7", "1.0.8", "1.0.9", "1.0.10"]
         prefix = (
             "https://github.com/flamoris-jp/"
             + recipe["application_id"]
@@ -101,3 +101,11 @@ def test_mismatched_or_unexpected_publication_inputs_fail_before_output(
         PACKAGER.combine(source, output)
     assert not output.exists()
 
+
+def test_release_workflow_checks_and_publishes_the_current_package_version():
+    import tomllib
+
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    workflow = (ROOT / ".github/workflows/publish-updater-release.yml").read_text()
+    assert 'm.version("flamoris-studio") == "' + version + '"' in workflow
+    assert "gh release create v" + version + " " in workflow

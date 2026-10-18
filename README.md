@@ -1,5 +1,7 @@
 # FLAMORIS Studio
 
+Controller #26 adds [declarative image ComfyWorkFlow registration](https://github.com/flamoris-jp/flamoris-generation-controller/blob/main/docs/DECLARED_COMFY.md) with installed-node validation and descriptor-driven Studio Image controls. Prepared source target: Controller / Generation MCP / Studio 1.1.0 plus the matched Hub catalog; live acceptance remains pending.
+
 The dedicated [Raw Intelligence editor](docs/RAW_INTELLIGENCE.md) executes the
 shared non-MCP intelligence execution adapter. The standalone **Assistant**
 workspace and contextual Image panel keep Agent conversations separate.
@@ -315,4 +317,3 @@ See [repository-owned distribution](docs/UPDATER.md) for release 1.0.6 (includin
 
 
 Linked external generations can appear automatically in Assets while the gallery is open. Configure an individual Hub credential, signed Generation provenance and the operator-provisioned Studio account binding; shared anonymous connections cannot establish ownership. Assets offers All/Image/Video/Music/Speech/Other filters. Music bundles show WAV cards; owned ABC/MIDI/metadata downloads are in the detail dialog. See [external import](docs/EXTERNAL_GENERATION_IMPORT.md) and [multimedia results](docs/MULTIMEDIA_RESULTS.md).
-
