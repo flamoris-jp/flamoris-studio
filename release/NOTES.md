@@ -1,5 +1,3 @@
-# FLAMORIS Studio 1.0.10
+# flamoris-studio 1.1.0
 
-Speech output length now starts blank (Automatic). A blank duration requests Irodori's estimated length; explicit numbers keep fixed duration. Matches Controller 1.0.7 / Generation MCP 1.0.10's exact nullable-duration contract, including reference speech. Existing accounts, jobs, numeric request snapshots, reference inputs and unknown/no-replay fences stay intact; no DB schema or runtime configuration changes.
-
-Updater compatibility includes 1.0.9. Source/CI checks and production output quality are separate.
+Adds declarative image ComfyWorkFlows under Controller #26: installed-node validation, managed image/prompt/model/parameter bindings, dynamic Image fields, and unchanged shared Job/Asset authority. Use the matched 1.1.0 Controller/Generation MCP/Studio and updated 25-tool Hub catalog. Existing profiles and data remain compatible; new schema-10 recipes/definitions require reconciliation before downgrade. Node policy defaults to disabled (`[]`). Source changes do not deploy, infer or attest output quality. See Controller docs/DECLARED_COMFY.md for the registration and trust contract.

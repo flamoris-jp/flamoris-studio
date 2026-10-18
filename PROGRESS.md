@@ -1,5 +1,9 @@
 # Automatic speech duration — 2026-10-17
 
+## 2026-10-18 — Controller #26
+
+Prepared 1.1.0 Image declaration controls, owner-checked input handle mapping, HTTP build/response checks and settings reuse. Local backend: 272 passed, 181 PostgreSQL-dependent cases skipped because this environment lacks a runnable non-root PostgreSQL; matched PR CI must run them. Browser: 131 tests and production build passed. Controller pin: 4c956412d2eb61e9f8893293d50df5d8b9df9417 (#27). Live UI/GPU acceptance remains pending.
+
 Prepares Studio 1.0.10 for #93 with the matched Controller 1.0.7 descriptor.
 Speech starts with blank output length and serializes it as null (automatic);
 explicit numeric durations remain fixed. Strict reference/no-reference build

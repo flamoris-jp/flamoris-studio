@@ -1,5 +1,7 @@
 # 参照画像から制作する
 
+Controller #26 adds a separate [declarative image contract](https://github.com/flamoris-jp/flamoris-generation-controller/blob/main/docs/DECLARED_COMFY.md). The fixed profiles below remain supported; their restrictions do not apply to declaration-based registrations. New behavior requires matched 1.1.0 sources and separate live acceptance.
+
 この変更はStudio 1.0.7向けのソース・配布準備です。リリース公開と実機での生成確認は別工程です。Generation MCP 1.0.6と、そこに同梱されるController 1.0.3の対応profileを使います。
 
 | やりたいこと | 選ぶ画像 | 操作 |

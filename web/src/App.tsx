@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type Session, type Discovery, type Execution, type ImageSettings, type ImageStyle, type ImagePreferences, type Workflow } from './api'
 import Gallery, { ResultPreview } from './Gallery'
-import { WorkflowPicker, ReferencePicker, referenceFields, workflowPayload, roleSpec, legalSeed } from './WorkflowImage'
+import { WorkflowPicker, ReferencePicker, referenceFields, workflowPayload, roleSpec, legalSeed, DeclaredFields } from './WorkflowImage'
 import Assistant from './Assistant'
 import Intelligence from './Intelligence'
 import Music from './Music'
@@ -10,7 +10,8 @@ import Speech, { initialSpeechDraft, type SpeechDraft } from './Speech'
 const sections = ['Image', 'Assistant', 'Intelligence', 'Video', 'Music', 'Speech', 'Assets'] as const
 type ImageForm = ImageSettings & { sampler: string; scheduler: string; denoise: number; loras: NonNullable<ImageSettings['loras']> }
 type OptionalWorkflowFields = 'steps' | 'cfg' | 'sampler' | 'scheduler' | 'denoise'
-export type ImageSubmission = Omit<ImageForm, 'seed' | OptionalWorkflowFields> & Partial<Pick<ImageForm, OptionalWorkflowFields>> & { seed?: number }
+export type DeclaredImageSubmission = { workflowId: string; workflowKind: string; definitionVersion: number; definitionDigest: string; additionalParameters: Record<string, unknown>; imageInputs: Record<string, string> }
+export type ImageSubmission = DeclaredImageSubmission | Omit<ImageForm, 'seed' | OptionalWorkflowFields> & Partial<Pick<ImageForm, OptionalWorkflowFields>> & { seed?: number }
 type NumericKey = 'width' | 'height' | 'steps' | 'cfg' | 'seed' | 'denoise'
 export type ImageDraft = Omit<ImageForm, NumericKey | 'loras'> & Record<NumericKey, string> & {
   loras: { name: string; strengthModel: string; strengthClip: string }[]
@@ -27,6 +28,7 @@ export function restoreImageDraft(old: ImageDraft, settings: Partial<ImageSettin
   return { ...old,
     workflowId: settings.workflowId, workflowKind: settings.workflowKind,
     definitionVersion: settings.definitionVersion, definitionDigest: settings.definitionDigest,
+    imageInputs: settings.imageInputs,
     referenceInputId: settings.referenceInputId, characterInputId: settings.characterInputId, styleInputId: settings.styleInputId, controlInputId: settings.controlInputId, additionalParameters: settings.additionalParameters,
     positivePrompt: typeof settings.positivePrompt === 'string' ? settings.positivePrompt : old.positivePrompt,
     negativePrompt: typeof settings.negativePrompt === 'string' ? settings.negativePrompt : old.negativePrompt,
@@ -42,7 +44,7 @@ export function withRandomSeed(old: ImageDraft, entropy: Uint32Array): ImageDraf
   return { ...old, seed: String(String(candidate) === old.seed ? (candidate + 1) % Number.MAX_SAFE_INTEGER : candidate) }
 }
 
-export function imagePayload(form: ImageDraft): ImageSubmission | null {
+export function imagePayload(form: ImageDraft): Exclude<ImageSubmission, DeclaredImageSubmission> | null {
   if (Object.values(referenceFields).some(field => form[field])) return null
   if (!form.positivePrompt.trim() || !form.checkpoint ||
       !integer(form.width, 64, 4096) || numberValue(form.width) % 8 !== 0 ||
@@ -181,7 +183,7 @@ export default function App() {
           <div><ResultPreview item={asset} /></div>
           <div><strong>{asset.displayName}</strong><small>{asset.mimeType} · {asset.sizeBytes === null ? 'Size pending' : `${(asset.sizeBytes / 1024 / 1024).toFixed(1)} MB`}</small>
             <a href={asset.downloadUrl}>Download ↓</a>{asset.origin !== 'external' && asset.mediaKind === 'image' && ['image/png','image/jpeg','image/webp'].includes(asset.mimeType) && <><button onClick={async () => { const version = accountEpoch.current; try { const detail = await api.asset(asset.id); if (!currentAccount(version)) return; if (!Object.keys(detail.settings).length) { setError('Saved Image settings are unavailable.'); return } setResultSettings(detail.settings) } catch { if (currentAccount(version)) setError('Could not load settings.') } }}>View settings</button><button onClick={async () => { const version = accountEpoch.current, draftVersion = imageDraftEpoch.current; try { const detail = await api.asset(asset.id); if (currentAccount(version) && draftVersion === imageDraftEpoch.current) useSettings(detail.settings) } catch { if (currentAccount(version)) setError('Could not restore settings.') } }}>Use settings ↗</button></>}</div></article>) : <p>No files were returned.</p>}</div>}
-        {resultSettings && <dl className="settings-list">{Object.entries(resultSettings).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{Array.isArray(value) ? value.map((lora, index) => `${index + 1}. ${lora.name} (model ${lora.strengthModel}, CLIP ${lora.strengthClip})`).join('\n') || 'None' : String(value)}</dd></div>)}</dl>}
+        {resultSettings && <dl className="settings-list">{Object.entries(resultSettings).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{Array.isArray(value) ? value.map((lora, index) => `${index + 1}. ${lora.name} (model ${lora.strengthModel}, CLIP ${lora.strengthClip})`).join('\n') || 'None' : value && typeof value === "object" ? JSON.stringify(value, null, 2) : String(value)}</dd></div>)}</dl>}
       </section>}
     </div><Assistant key={session.accountKey ?? session.userName} accountKey={session.accountKey ?? session.userName ?? ''} csrf={session.csrfToken} draft={form} /></div> : <section className="panel"><span className="eyebrow">COMING LATER</span><h2>{section} is unavailable</h2><p>This editor will connect when its generation capability is ready.</p></section>}</main></div>
 }
@@ -267,13 +269,14 @@ export function ImageEditor({ discovery, onSubmit, onReset, busy, form, setForm,
   }
   const selected = discovery.workflows?.find(item => item.id === form.workflowId)
   const exactSelection = !form.workflowId ? (!form.workflowKind && form.definitionVersion == null && form.definitionDigest == null) : Boolean(selected?.selectable && (selected.kind === 'builtin' || selected.kind === 'registered-comfy') && form.workflowKind === selected.kind && selected.definitionVersion === form.definitionVersion && selected.definitionDigest === form.definitionDigest)
+  const declared = selected?.recipeSchema === 10
   const payload = selected ? workflowPayload(form, selected) : form.workflowId ? null : imagePayload(form)
   const spec = (role: string) => roleSpec(selected, role)
   const supports = (role: string) => !selected || Boolean(spec(role))
   const checkpoints = discovery.checkpoints.filter(item => !spec('checkpoint')?.enum || spec('checkpoint')!.enum!.includes(item.name))
   useEffect(() => { api.styles().then(page => setStyles(page.items)).catch(() => setStyleError('Could not load Styles.')) }, [])
   const set = <K extends keyof ImageDraft>(key: K, value: ImageDraft[K]) => setForm(old => ({ ...old, [key]: value }))
-  const valid = discovery.available && !referenceBusy && (selected?.referenceRoles ?? []).every(role => Boolean(form[referenceFields[role]]) && referenceAvailability[role] === true) && exactSelection && payload !== null && discovery.checkpoints.some(item => item.name === form.checkpoint) &&
+  const valid = declared ? Boolean(discovery.available && exactSelection && payload && !referenceBusy && (selected?.referenceRoles ?? []).every(key => Boolean(form.imageInputs?.[key]) && referenceAvailability[key] === true)) : discovery.available && !referenceBusy && (selected?.referenceRoles ?? []).every(role => Boolean(form[referenceFields[role]]) && referenceAvailability[role] === true) && exactSelection && payload !== null && discovery.checkpoints.some(item => item.name === form.checkpoint) &&
     form.loras.every(lora => discovery.loras.some(item => item.name === lora.name))
   const referenceRoles = Object.keys(referenceFields).filter(role => selected?.referenceRoles?.includes(role) || form[referenceFields[role]] || role === "initial_image" && (!selected || selected.kind === "builtin"))
   const referencesValid = (selected?.referenceRoles ?? []).every(role => Boolean(form[referenceFields[role]]) && referenceAvailability[role] === true)
@@ -301,6 +304,10 @@ export function ImageEditor({ discovery, onSubmit, onReset, busy, form, setForm,
   return <form className="panel editor" onSubmit={event => { event.preventDefault(); if (valid && payload) onSubmit(payload) }}><div className="row"><div><span className="eyebrow">IMAGE GENERATOR</span><h2>Compose your image</h2></div><span className="badge">{discovery.available ? 'Ready' : 'Unavailable'}</span></div>
     <WorkflowPicker discovery={discovery} form={form} setForm={setForm} disabled={busy || referenceBusy} />
     {form.workflowId && !exactSelection && <p role="alert">This image template is unavailable. Your draft is preserved; select a ready template.</p>}
+    {declared && selected && <DeclaredFields item={selected} form={form} setForm={setForm} csrf={csrf} busy={busy} referenceBusy={referenceBusy} busyReferences={busyReferences}
+      onAvailability={(key, available) => setReferenceAvailability(old => old[key] === available ? old : ({ ...old, [key]: available }))}
+      onBusy={(key, working) => setBusyReferences(old => ({ ...old, [key]: working }))} />}
+    {!declared && <>
     <label>Model<select required value={form.checkpoint} onChange={e => set('checkpoint', e.target.value)}><option value="">Choose a model</option>{form.checkpoint && !checkpoints.some(x => x.name === form.checkpoint) && <option value={form.checkpoint} disabled>{form.checkpoint} (unavailable for this template)</option>}{checkpoints.map(x => <option key={x.id} value={x.name}>{x.name}</option>)}</select></label>
     <div className="style-box"><div className="fields"><label>Style<select value={selectedStyle} onChange={e => { const found = styles.find(item => item.id === e.target.value); setSelectedStyle(e.target.value); setStyleName(found?.name ?? ''); if (found) setForm(old => ({ ...old, positivePrompt: found.positivePrompt, negativePrompt: found.negativePrompt })) }}><option value="">Choose a saved Style</option>{styles.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <label>Style name<input maxLength={100} value={styleName} onChange={e => setStyleName(e.target.value)} placeholder="Name this prompt recipe" /></label></div>
@@ -326,6 +333,7 @@ export function ImageEditor({ discovery, onSubmit, onReset, busy, form, setForm,
       {(['strengthModel', 'strengthClip'] as const).map(key => <label key={key}>{key}<input type="number" min="-20" max="20" step="any" value={lora[key]} onChange={e => set('loras', form.loras.map((x, i) => i === index ? { ...x, [key]: e.target.value } : x))} /></label>)}
       <button type="button" onClick={() => set('loras', form.loras.filter((_, i) => i !== index))}>Remove</button>{index > 0 && <button type="button" onClick={() => set('loras', form.loras.map((x, i) => i === index ? form.loras[index - 1] : i === index - 1 ? lora : x))}>Move up</button>}</div>)}
     {selected && form.loras.length > 0 && (spec('loras')?.max_items ?? 0) === 0 && <p role="alert">This template does not support the LoRA draft. Remove the layers or select a compatible template.</p>}
+    </>}
     <small id="image-clear-help">Clear inputs resets prompts, reference, template, LoRAs and generation settings.</small>
     <div className="row actions"><button type="button" aria-describedby="image-clear-help" disabled={busy || referenceBusy || styleBusy} onClick={clearInputs}>Clear inputs</button><button className="primary" disabled={!valid || busy}>{busy ? 'Submitting…' : 'Generate image ↗'}</button></div>
   </form>

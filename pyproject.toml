@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flamoris-studio"
-version = "1.0.10"
+version = "1.1.0"
 requires-python = ">=3.12"
 dependencies = ["flamoris-update-core[owner] @ https://github.com/flamoris-jp/flamoris-updater/archive/797d6f4e7bd4089e7c162fa50c10a0afae68370a.zip#subdirectory=packages/update-core",
   "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "SQLAlchemy>=2.0,<3",
@@ -15,7 +15,7 @@ dependencies = ["flamoris-update-core[owner] @ https://github.com/flamoris-jp/fl
 
 [project.optional-dependencies]
 test = [
-  "flamoris-generation-controller[http] @ https://github.com/flamoris-jp/flamoris-generation-controller/archive/b14d1252fd8c822d821717aa78796154b042538f.zip",
+  "flamoris-generation-controller[http] @ https://github.com/flamoris-jp/flamoris-generation-controller/archive/4c956412d2eb61e9f8893293d50df5d8b9df9417.zip",
   "pytest>=8,<10", "pytest-asyncio>=1,<2", "httpx>=0.28,<1",
   "flamoris-ai-agent @ https://github.com/flamoris-jp/flamoris-ai-agent/archive/8ac1e9555355a5cbb255e8939f43ad041a0d221c.zip",
 ]
@@ -25,4 +25,3 @@ include = ["flamoris_studio*"]
 
 [project.scripts]
 flamoris-studio-update-owner = "flamoris_studio.updater:main"
-

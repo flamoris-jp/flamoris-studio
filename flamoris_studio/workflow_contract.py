@@ -25,6 +25,7 @@ ROLES = {
 }
 SPEC_FIELDS = {
     "max_bytes",
+    "label",
     "type",
     "role",
     "required",
@@ -159,6 +160,8 @@ def normalize_descriptor(raw):
     registered = kind == "registered-comfy" and re.fullmatch(r"comfy-[a-f0-9]{64}", raw["id"]) is not None
     if not registered and (kind != "builtin" or raw["id"] not in {"text-to-image", "text-to-image-lora"}):
         raise ValueError("retired_recipe")
+    if isinstance(raw.get("image"), dict) and raw["image"].get("profile") == "declared-comfy-v1":
+        return normalize_declared_descriptor(raw)
     image = raw.get("image", {})
     readiness = raw.get("readiness", {})
     if not isinstance(image, dict) or not isinstance(readiness, dict):
@@ -310,6 +313,22 @@ def normalize_catalog(raw):
 
 
 def map_parameters(descriptor, request):
+    if descriptor.get("recipeSchema") == 10:
+        if not descriptor.get("selectable"):
+            raise ValueError("unsupported_parameter")
+        extras, images = request.get("additionalParameters", {}), request.get("imageInputs", {})
+        specs = descriptor["parameters"]
+        image_keys = {k for k, v in specs.items() if v.get("role") == "managed_input"}
+        if (not isinstance(extras, dict) or not isinstance(images, dict)
+            or set(extras) - (set(specs) - image_keys) or set(images) != image_keys):
+            raise ValueError("unsupported_parameter")
+        result = {}
+        for key, spec in specs.items():
+            value = images.get(key) if key in image_keys else extras.get(key, spec.get("default"))
+            if value is None and not spec.get("required"):
+                continue
+            result[key] = validate_value(spec, value)
+        return result
     fields = {ROLES[spec["role"]] for spec in descriptor["parameters"].values() if spec.get("role") in REFERENCE_FIELDS}
     if (not descriptor.get("selectable") or any(request.get(field) is not None and field not in fields
                                                for field in REFERENCE_FIELDS.values())):
@@ -356,3 +375,53 @@ def map_parameters(descriptor, request):
             continue
         params[key] = validate_value(spec, value)
     return params
+
+
+
+def normalize_declared_descriptor(raw):
+    # A separate versioned image contract, using the same scalar validator.
+    if (raw.get("kind") != "registered-comfy" or re.fullmatch(r"comfy-[a-f0-9]{64}", raw.get("id", "")) is None
+        or raw.get("metadata_schema_version") != 3 or raw.get("definition_version") != 1
+        or raw.get("definition_digest") != raw["id"][6:]
+        or raw.get("image") != {"profile": "declared-comfy-v1", "mode": "declared", "dimensions": {"mode": "graph"}}
+        or raw.get("readiness", {}).get("state") != "validated"
+        or raw.get("readiness", {}).get("live_provider_verified") is not False
+        or raw.get("readiness", {}).get("basis") != "installed_object_info"):
+        raise ValueError("unsupported_parameter")
+    source = raw.get("parameters")
+    if not isinstance(source, dict) or not 1 <= len(source) <= 64:
+        raise ValueError("unsupported_parameter")
+    specs, images = {}, []
+    for key, value in source.items():
+        if type(key) is not str or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", key) or not isinstance(value, dict):
+            raise ValueError("unsupported_parameter")
+        spec = {k: v for k, v in value.items() if k in SPEC_FIELDS}
+        if spec.get("type") not in {"string", "integer", "number", "boolean"} or spec.get("role") not in {"prompt", "parameter", "model", "managed_input"}:
+            raise ValueError("unsupported_parameter")
+        if spec.get("role") != "parameter" and spec.get("type") != "string":
+            raise ValueError("unsupported_parameter")
+        if type(spec.get("required")) is not bool or type(spec.get("label")) is not str or not 1 <= len(spec["label"]) <= 120:
+            raise ValueError("unsupported_parameter")
+        for field in ("minimum", "maximum"):
+            if field in spec and (type(spec[field]) not in (int, float) or not math.isfinite(spec[field])):
+                raise ValueError("unsupported_parameter")
+        for field in ("min_length", "max_length"):
+            if field in spec and (type(spec[field]) is not int or not 0 <= spec[field] <= 20000):
+                raise ValueError("unsupported_parameter")
+        if "enum" in spec and (type(spec["enum"]) is not list or not 1 <= len(spec["enum"]) <= 512 or any(type(v) not in (str, int, float, bool) for v in spec["enum"])):
+            raise ValueError("unsupported_parameter")
+        spec.pop("pattern", None)
+        if spec["role"] == "managed_input":
+            if len(key) > 32:
+                raise ValueError("unsupported_parameter")
+            if spec["required"] is not True or "default" in spec:
+                raise ValueError("unsupported_parameter")
+            spec["pattern"] = r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}"
+            images.append(key)
+        if "default" in spec:
+            validate_value(spec, spec["default"])
+        specs[key] = spec
+    return {"id": raw["id"], "kind": "registered-comfy", "name": str(raw.get("name", raw["id"]))[:120],
+            "definitionVersion": 1, "definitionDigest": raw["id"][6:], "selectable": True,
+            "reason": None, "image": raw["image"], "parameters": specs,
+            "referenceRoles": images, "liveProviderVerified": False, "recipeSchema": 10}

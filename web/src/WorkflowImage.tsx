@@ -65,6 +65,20 @@ export function legalSeed(spec?: ParameterSpec): number | null {
 }
 
 export function workflowPayload(form: ImageDraft, item: Workflow): ImageSubmission | null {
+  if (item.recipeSchema === 10) {
+    if (!item.selectable || item.kind !== 'registered-comfy' || item.definitionVersion !== 1 || item.definitionDigest !== item.id.slice(6) || form.definitionDigest !== item.definitionDigest || form.definitionVersion !== 1) return null
+    const additionalParameters: Record<string, unknown> = {}, imageInputs: Record<string, string> = {}
+    const images = Object.entries(item.parameters).filter(([,spec]) => spec.role === 'managed_input').map(([key]) => key)
+    if (Object.keys(form.imageInputs ?? {}).some(key => !images.includes(key))) return null
+    for (const [key, spec] of Object.entries(item.parameters)) {
+      const value = spec.role === 'managed_input' ? form.imageInputs?.[key] : form.additionalParameters?.[key] ?? spec.default
+      if (value === undefined && !spec.required) continue
+      if (!validValue(spec, value)) return null
+      if (spec.role === 'managed_input') imageInputs[key] = value as string
+      else additionalParameters[key] = value
+    }
+    return { workflowId: item.id, workflowKind: item.kind, definitionVersion: 1, definitionDigest: item.definitionDigest!, additionalParameters, imageInputs }
+  }
   const registered = item.kind === 'registered-comfy' && /^comfy-[a-f0-9]{64}$/.test(item.id)
   if ((!registered && (item.kind !== 'builtin' || !['text-to-image', 'text-to-image-lora'].includes(item.id))) ||
       item.image.dimensions.mode !== 'parameters' ||
@@ -115,8 +129,9 @@ export function WorkflowPicker({ discovery, form, setForm, disabled = false }: {
       if (typeof value === 'number' || typeof value === 'string') defaults[fields[role]] = String(value)
     }
     setForm(old => ({ ...old, ...defaults, workflowId: item?.id, workflowKind: item?.kind, definitionVersion: item?.definitionVersion, definitionDigest: item?.definitionDigest,
-      additionalParameters: item ? Object.fromEntries(Object.entries(item.parameters).filter(([,v]) => !v.role && v.default !== undefined).map(([k,v]) => [k,v.default])) : undefined,
+      additionalParameters: item ? Object.fromEntries(Object.entries(item.parameters).filter(([,v]) => (item.recipeSchema === 10 ? v.role !== "managed_input" : !v.role) && v.default !== undefined).map(([k,v]) => [k,v.default])) : undefined,
       checkpoint: item?.kind === "registered-comfy" && typeof roleSpec(item, "checkpoint")?.default === "string" ? roleSpec(item, "checkpoint")!.default as string : old.checkpoint,
+      imageInputs: {},
       referenceInputId: old.referenceInputId }))
   }}><option value="">Automatic builtin (LoRA aware)</option>{stale && <option value="__stale" disabled>Previous selection (reselect below)</option>}
     {form.workflowId && !selected && <option value={form.workflowId} disabled>{form.workflowId} (unavailable)</option>}
@@ -126,7 +141,7 @@ export function WorkflowPicker({ discovery, form, setForm, disabled = false }: {
     {selected?.reason === "reference_storage_unavailable" && <p role="alert">Shared reference image storage is unavailable on the generation service.</p>}
     {selected?.kind === "registered-comfy" && <details><summary>Reference model setup</summary><ul>{Object.entries(selected.parameters).filter(([,spec]) => ['ipadapter', 'clip_vision', 'controlnet'].includes(spec.model_kind ?? '')).map(([key,spec]) => <li key={key}>{parameterLabel(key)}: {String(spec.default ?? '')}</li>)}</ul><a href="https://github.com/flamoris-jp/flamoris-generation-controller/blob/main/docs/REFERENCE_IMAGES.md" target="_blank" rel="noreferrer">Model and workflow setup</a></details>}
     {selected?.kind === "registered-comfy" && <small>Choose reference images below. This workflow has not yet been verified on the generation service.</small>}
-    {selected && Object.entries(selected.parameters).filter(([,spec]) => !spec.role && !(spec.enum?.length === 1 && typeof spec.default === "string")).map(([key,spec]) => <label key={key}>{parameterLabel(key)}
+    {selected && selected.recipeSchema !== 10 && Object.entries(selected.parameters).filter(([,spec]) => !spec.role && !(spec.enum?.length === 1 && typeof spec.default === "string")).map(([key,spec]) => <label key={key}>{parameterLabel(key)}
       {spec.enum ? <select value={String(form.additionalParameters?.[key] ?? '')} onChange={e => setForm(old => ({ ...old, additionalParameters: { ...old.additionalParameters, [key]: spec.enum?.find(x => String(x) === e.target.value) } }))}>{spec.enum.map(v => <option key={String(v)} value={String(v)}>{String(v)}</option>)}</select> :
       <input min={spec.minimum} max={spec.maximum} step={spec.type === "number" ? "any" : spec.multiple_of ?? 1} type={spec.type === 'boolean' ? 'checkbox' : ['integer','number'].includes(spec.type) ? 'number' : 'text'} value={spec.type === 'boolean' ? undefined : String(form.additionalParameters?.[key] ?? '')} checked={spec.type === 'boolean' ? Boolean(form.additionalParameters?.[key]) : undefined}
         onChange={e => setForm(old => ({ ...old, additionalParameters: { ...old.additionalParameters, [key]: spec.type === 'boolean' ? e.target.checked : ['integer','number'].includes(spec.type) ? Number(e.target.value) : e.target.value } }))} />}
@@ -195,4 +210,23 @@ export function ReferencePicker({ enabled, inputId, csrf, onChange, onBusy, labe
     {open && <div role="dialog" aria-label="Choose reference Asset">{assets.length ? assets.map(asset => <button type="button" key={asset.id} disabled={busy || disabled} onClick={() => attach(asset)}>{asset.displayName}</button>) : <p>No eligible images. Generate an image first.</p>}{nextOffset !== null && <button type="button" disabled={busy || disabled} onClick={() => load(nextOffset)}>More Assets</button>}<button type="button" onClick={() => setOpen(false)}>Close picker</button></div>}
     {error && <p role="alert">{error}</p>}
   </div>
+}
+
+
+
+export function DeclaredFields({ item, form, setForm, csrf, busy, referenceBusy, busyReferences, onAvailability, onBusy }: { item: Workflow; form: ImageDraft; setForm: React.Dispatch<React.SetStateAction<ImageDraft>>; csrf: string; busy: boolean; referenceBusy: boolean; busyReferences: Record<string, boolean>; onAvailability: (key: string, available: boolean) => void; onBusy: (key: string, busy: boolean) => void }) {
+  const update = (key: string, value: unknown) => setForm(old => ({ ...old, additionalParameters: { ...old.additionalParameters, [key]: value } }))
+  return <div className="declared-image-fields">{Object.entries(item.parameters).map(([key, spec]) => spec.role === 'managed_input' ?
+    <ReferencePicker key={`${item.id}-${key}`} label={spec.label ?? key} enabled inputId={form.imageInputs?.[key]} csrf={csrf}
+      help="Choose the image to use for this edit." disabled={busy || referenceBusy && !busyReferences[key]}
+      onChange={id => { setForm(old => { const images = { ...old.imageInputs }; if (id) images[key] = id; else delete images[key]; return { ...old, imageInputs: images } }); onAvailability(key, !id) }}
+      onAvailability={available => onAvailability(key, available)} onBusy={working => onBusy(key, working)} /> :
+    <label key={key}>{spec.label ?? key}{spec.role === 'prompt' ?
+      <textarea rows={5} required={spec.required} minLength={spec.min_length} maxLength={spec.max_length} value={String(form.additionalParameters?.[key] ?? spec.default ?? '')} onChange={e => update(key, e.target.value)} /> : spec.enum ?
+      <select disabled={busy} value={String(form.additionalParameters?.[key] ?? spec.default ?? '')} onChange={e => update(key, spec.enum!.find(value => String(value) === e.target.value))}><option value="" disabled>Choose a value</option>{spec.enum.map((value, i) => <option key={i} value={String(value)}>{String(value)}</option>)}</select> :
+      <input disabled={busy} required={spec.required} min={spec.minimum} max={spec.maximum} minLength={spec.min_length} maxLength={spec.max_length} step={spec.type === 'number' ? 'any' : 1}
+        type={spec.type === 'boolean' ? 'checkbox' : ['integer', 'number'].includes(spec.type) ? 'number' : 'text'}
+        checked={spec.type === 'boolean' ? Boolean(form.additionalParameters?.[key] ?? spec.default) : undefined}
+        value={spec.type === 'boolean' ? undefined : String(form.additionalParameters?.[key] ?? spec.default ?? '')}
+        onChange={e => update(key, spec.type === 'boolean' ? e.target.checked : ['integer', 'number'].includes(spec.type) ? e.target.value === '' ? '' : Number(e.target.value) : e.target.value)} />}</label>)}</div>
 }
