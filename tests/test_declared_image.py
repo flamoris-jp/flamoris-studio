@@ -167,3 +167,22 @@ def test_declared_submit_result_download_and_settings_reuse(clients):
         == body["additionalParameters"]
     )
     assert a.get(assets[0]["downloadUrl"]).status_code == 200
+
+
+def test_malformed_declared_metadata_and_noninteger_version_reject():
+    from flamoris_studio.app import DeclaredImageRequest
+
+    for value in (None, [], "invalid"):
+        raw = descriptor()
+        raw["readiness"] = value
+        assert normalize_catalog({"descriptors": [raw]}) == []
+    raw = descriptor()
+    raw["parameters"]["quality"]["model_kind"] = []
+    assert normalize_catalog({"descriptors": [raw]}) == []
+    with pytest.raises(ValueError):
+        DeclaredImageRequest(
+            workflowId="comfy-" + "a" * 64,
+            workflowKind="registered-comfy",
+            definitionVersion=True,
+            definitionDigest="a" * 64,
+        )

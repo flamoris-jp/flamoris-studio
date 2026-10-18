@@ -139,7 +139,7 @@ class DeclaredImageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     workflowId: str = Field(pattern=r"^comfy-[a-f0-9]{64}$")
     workflowKind: Literal["registered-comfy"]
-    definitionVersion: Literal[1]
+    definitionVersion: int = Field(ge=1, le=1, strict=True)
     definitionDigest: str = Field(pattern=r"^[a-f0-9]{64}$")
     additionalParameters: dict = Field(default_factory=dict, max_length=64)
     imageInputs: dict[str, uuid.UUID] = Field(default_factory=dict, max_length=4)

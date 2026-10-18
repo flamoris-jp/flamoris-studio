@@ -380,7 +380,7 @@ def map_parameters(descriptor, request):
 
 def normalize_declared_descriptor(raw):
     # A separate versioned image contract, using the same scalar validator.
-    if (raw.get("kind") != "registered-comfy" or re.fullmatch(r"comfy-[a-f0-9]{64}", raw.get("id", "")) is None
+    if (not isinstance(raw.get("readiness"), dict) or raw.get("kind") != "registered-comfy" or re.fullmatch(r"comfy-[a-f0-9]{64}", raw.get("id", "")) is None
         or raw.get("metadata_schema_version") != 3 or raw.get("definition_version") != 1
         or raw.get("definition_digest") != raw["id"][6:]
         or raw.get("image") != {"profile": "declared-comfy-v1", "mode": "declared", "dimensions": {"mode": "graph"}}
@@ -399,6 +399,9 @@ def normalize_declared_descriptor(raw):
         if spec.get("type") not in {"string", "integer", "number", "boolean"} or spec.get("role") not in {"prompt", "parameter", "model", "managed_input"}:
             raise ValueError("unsupported_parameter")
         if spec.get("role") != "parameter" and spec.get("type") != "string":
+            raise ValueError("unsupported_parameter")
+        model_kind = spec.get("model_kind")
+        if (spec["role"] == "model" and (type(model_kind) is not str or not 1 <= len(model_kind) <= 64)) or (spec["role"] != "model" and model_kind is not None):
             raise ValueError("unsupported_parameter")
         if type(spec.get("required")) is not bool or type(spec.get("label")) is not str or not 1 <= len(spec["label"]) <= 120:
             raise ValueError("unsupported_parameter")

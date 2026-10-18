@@ -100,3 +100,12 @@ def test_mismatched_or_unexpected_publication_inputs_fail_before_output(
     with pytest.raises(ValueError):
         PACKAGER.combine(source, output)
     assert not output.exists()
+
+
+def test_release_workflow_checks_and_publishes_the_current_package_version():
+    import tomllib
+
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
+    workflow = (ROOT / ".github/workflows/publish-updater-release.yml").read_text()
+    assert 'm.version("flamoris-studio") == "' + version + '"' in workflow
+    assert "gh release create v" + version + " " in workflow
