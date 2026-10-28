@@ -16,7 +16,7 @@ Studio is **multi-user by design**. Authenticated users must be isolated from on
 
 Phase 1 uses a Python FastAPI backend with PostgreSQL-backed local accounts and secure, server-side cookie sessions. React, TypeScript, and Vite provide the browser UI. Studio-owned user/execution/asset catalog metadata is stored in PostgreSQL; generated media binaries remain outside the database.
 
-**Current main contains the authenticated multi-user shell, Image generation, opt-in native Speech and Music slices, and the per-user Generated results catalog with metadata/details, download, and confirmed deletion.** Runtime/model qualification and additional provider contracts remain separate acceptance gates.
+**This source contains the authenticated multi-user shell, Image and bounded Video generation, opt-in native Speech and Music slices, and the per-user Generated results catalog with metadata/details, download, and confirmed deletion.** Runtime/model qualification and additional provider contracts remain separate acceptance gates.
 
 Assistant model selection in Studio 1.0.4 uses the Agent-authorized catalog without an additional remote-transmission consent checkbox. Existing conversations, model switching and request fences are retained; no Agent upgrade or DB migration is needed.
 
@@ -46,8 +46,11 @@ Phase 1 covers:
 - generated-result preview and user download
 - multi-user authentication/session boundary and per-user execution/asset isolation
 
-Native no-reference Japanese Speech and Music have dedicated opt-in editors;
-Video awaits its own qualified provider contracts.
+Native no-reference Japanese Speech and Music have dedicated opt-in editors.
+The [Video editor](docs/VIDEO_OPERATION.md) discovers the bounded Controller Wan
+I2V/FLF2V profile, uses owned start/end images and exposes the existing MP4
+preview/download flow. The current real-machine receipt covers an external I2V
+trial; Studio browser and model-quality acceptance remain separate.
 
 The UI uses dedicated editors for each generation type rather than one universal prompt form.
 
@@ -231,7 +234,7 @@ Implemented foundations in this source include:
 - PostgreSQL-backed Studio ownership/catalog metadata;
 - raw Intelligence through the shared non-MCP adapter and Agent support through Agent HTTP;
 - direct authenticated Controller HTTP gateway and shared external-MCP admission;
-- Image generation submit / status / result flow;
+- Image and bounded Video generation submit / status / result flow;
 - opt-in native no-reference Speech and Music generation, plus Music transcription;
 - media-aware image preview and generated-result catalog;
 - per-user download and confirmed deletion;
@@ -247,7 +250,7 @@ Still tracked in Phase 1:
 ### Phase 2
 
 - additional Speech profiles and reference audio, after qualified contracts
-- Video
+- additional Video contracts and model-quality qualification
 - prompt presets
 - history
 
