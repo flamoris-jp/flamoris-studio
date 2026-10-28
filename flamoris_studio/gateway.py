@@ -13,7 +13,8 @@ from urllib.parse import urlsplit
 
 import httpx2
 
-from .workflow_contract import normalize_catalog
+from .workflow_contract import normalize_catalog, validate_value
+from .video_contract import normalize_video_catalog
 
 
 def _json_object(pairs):
@@ -276,7 +277,7 @@ class GenerationGateway:
             if (re.fullmatch(r"comfy-[a-f0-9]{64}", descriptor.get("id", "")) is None
                 or descriptor.get("definitionVersion") != 1
                 or descriptor.get("definitionDigest") != descriptor["id"][6:]
-                or descriptor.get("recipeSchema") not in {7, 8, 10}):
+                or descriptor.get("recipeSchema") not in {7, 8, 10, 11}):
                 raise GatewayError("validation")
         elif (descriptor.get("kind") != "builtin"
               or descriptor.get("id") not in {"text-to-image", "text-to-image-lora"}
@@ -291,7 +292,7 @@ class GenerationGateway:
             schema = descriptor["recipeSchema"]
             expected_images = {key: parameters[key] for key, spec in descriptor["parameters"].items()
                                if spec.get("role") in {"initial_image", "character_image", "style_image", "control_image", "managed_input"}}
-            if (result.get("template") != "registered-comfy"
+            if (result.get("template") != ("registered-video" if schema == 11 else "registered-comfy")
                 or result.get("definition_id") != descriptor["id"]
                 or type(result.get("schema_version")) is not int
                 or result.get("schema_version") != schema):
@@ -308,6 +309,14 @@ class GenerationGateway:
             for key, value in parameters.items():
                 if key not in expected_images and ({**image_values, **controls}.get(key) != value):
                     raise GatewayError("validation")
+            if schema == 11 and image_values != {key: value for key, value in parameters.items() if key not in expected_images}:
+                raise GatewayError("validation")
+            if schema == 11:
+                try:
+                    for key, value in image_values.items():
+                        validate_value(descriptor["parameters"][key], value)
+                except (ValueError, TypeError, KeyError):
+                    raise GatewayError("validation") from None
         elif (result.get("template") != descriptor["id"]
               or result.get("parameters") != parameters or type(result.get("schema_version")) is not int
               or result.get("schema_version") != 1):
@@ -318,6 +327,40 @@ class GenerationGateway:
         ):
             raise GatewayError("validation")
         return workflow_id
+
+    async def discover_video(self):
+        unavailable = {"available": False, "workflows": [], "managedInputReady": False}
+        health = await self._json("system.health")
+        caps = await self._json("capabilities.list")
+        entries = caps.get("capabilities")
+        if type(entries) is not list or len(entries) > 128:
+            raise GatewayError("upstream_failure")
+        if health.get("healthy") is not True or not any(
+            isinstance(item, dict) and item.get("id") == "video.generate"
+            and item.get("provider_id") == "comfyui" and item.get("available") is True
+            for item in entries
+        ):
+            return unavailable
+        try:
+            descriptors = normalize_video_catalog(await self._json("workflows.list"))
+        except (ValueError, TypeError, KeyError):
+            raise GatewayError("upstream_failure") from None
+        models = await self._json("models.list", {"kind": None})
+        entries = models.get("models")
+        if (type(entries) is not list or len(entries) > 4096
+            or any(type(item) is not dict or type(item.get("kind")) is not str or type(item.get("name")) is not str for item in entries)):
+            raise GatewayError("upstream_failure")
+        installed = {(item["kind"], item["name"]) for item in entries}
+        support = health.get("managed_input_support")
+        managed = isinstance(support, dict) and support.get("ready") is True
+        for descriptor in descriptors:
+            required = {(spec.get("model_kind"), spec["default"]) for spec in descriptor["parameters"].values()
+                        if spec.get("role") == "model" and isinstance(spec.get("default"), str)}
+            if not managed:
+                descriptor.update(selectable=False, reason="reference_storage_unavailable")
+            elif not required <= installed:
+                descriptor.update(selectable=False, reason="reference_models_unavailable")
+        return {"available": any(item["selectable"] for item in descriptors), "workflows": descriptors, "managedInputReady": managed}
 
     async def create_input(self, asset_id):
         return await self._json("inputs.create", {"asset_id": asset_id})

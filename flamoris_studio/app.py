@@ -39,6 +39,7 @@ from .login_throttle import admit_login
 from .external_import import catalog_guard, mount_external_import
 from .speech import mount_speech
 from .music import mount_music
+from .video import mount_video
 from .asset_catalog import category_expression
 from .music_contract import checked_music_outputs
 
@@ -269,6 +270,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     mount_external_import(app, view)
     mount_speech(app, view, set_status)
     mount_music(app, view, set_status)
+    mount_video(app, view, set_status)
 
     @app.exception_handler(GatewayError)
     async def gateway_error(_, exc: GatewayError):
@@ -290,7 +292,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             except HTTPException:
                 return JSONResponse({"error": "Invalid request token."}, status_code=403)
         response = await call_next(request)
-        if request.url.path.startswith(("/api/assistant/", "/api/intelligence/", "/api/generation/inputs", "/api/generation/speech/", "/api/generation/music/", "/api/generation/external-import")):
+        if request.url.path.startswith(("/api/assistant/", "/api/intelligence/", "/api/generation/inputs", "/api/generation/speech/", "/api/generation/music/", "/api/generation/video/", "/api/generation/external-import")):
             response.headers["Cache-Control"] = "private, no-store"
             response.headers["X-Content-Type-Options"] = "nosniff"
         return response
@@ -755,7 +757,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         workflow_available = True
         if settings.get("workflowId"):
             try:
-                catalog = await app.state.gateway.discover()
+                catalog = await (app.state.gateway.discover_video() if execution.category == "video" else app.state.gateway.discover())
                 item = next((d for d in catalog.get("workflows", []) if d["id"] == settings["workflowId"]), None)
                 workflow_available = bool(item and item["selectable"] and item["definitionVersion"] == settings.get("definitionVersion") and item["definitionDigest"] == settings.get("definitionDigest"))
             except GatewayError:
@@ -826,18 +828,21 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         return {"results": results}
 
     @app.get("/api/executions/{execution_id}")
-    async def execution_status(execution_id: uuid.UUID, db: Session = Depends(database),
+    async def execution_status(execution_id: uuid.UUID, request: Request, db: Session = Depends(database),
                                user_id: uuid.UUID = Depends(authenticated_user)):
         execution = owned(db, execution_id, user_id)
         if execution.source != "generation":
             raise HTTPException(404)
         if execution.upstream_job_id and execution.last_known_status not in {"completed", "failed", "cancelled"}:
             job = await app.state.gateway.status(execution.upstream_job_id)
+            db.rollback()
+            if current_user(request, db) != user_id:
+                raise HTTPException(401)
             set_status(db, execution, job["status"])
         return view(execution, db)
 
     @app.get("/api/executions/{execution_id}/result")
-    async def result(execution_id: uuid.UUID, db: Session = Depends(database),
+    async def result(execution_id: uuid.UUID, request: Request, db: Session = Depends(database),
                      user_id: uuid.UUID = Depends(authenticated_user)):
         execution = owned(db, execution_id, user_id)
         if execution.source != "generation":
@@ -846,6 +851,9 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
             return view(execution, db)
         if execution.last_known_status != "completed":
             job = await app.state.gateway.status(execution.upstream_job_id)
+            db.rollback()
+            if current_user(request, db) != user_id:
+                raise HTTPException(401)
             set_status(db, execution, job["status"])
             if job["status"] != "completed":
                 return view(execution, db)
@@ -859,11 +867,22 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         try:
             listing = await app.state.gateway.assets(execution.upstream_job_id)
         except GatewayError:
+            db.rollback()
+            if current_user(request, db) != user_id:
+                raise HTTPException(401)
             cached = view(execution, db)
             if cached["assets"]:
                 return {**cached, "catalogSync": "unavailable"}
             raise
         outputs = normalize_outputs(listing)
+        db.rollback()
+        if current_user(request, db) != user_id:
+            raise HTTPException(401)
+        if execution.category == "video" and (
+            len(outputs) != 1 or outputs[0].media_kind != "video" or outputs[0].mime_type != "video/mp4"
+            or outputs[0].role != {"port": "video", "role": "video_clip", "index": 0}
+        ):
+            raise GatewayError("validation")
         if execution.category == "speech" and (
                 len(outputs) != 1 or outputs[0].media_kind != "audio" or outputs[0].mime_type != "audio/wav" or
                 outputs[0].role != {"port": "audio", "role": "audio", "index": 0}):
@@ -906,13 +925,16 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
         return view(execution, db)
 
     @app.post("/api/executions/{execution_id}/cancel")
-    async def cancel(execution_id: uuid.UUID, db: Session = Depends(database),
+    async def cancel(execution_id: uuid.UUID, request: Request, db: Session = Depends(database),
                      user_id: uuid.UUID = Depends(authenticated_user)):
         execution = owned(db, execution_id, user_id)
         if execution.source != "generation":
             raise HTTPException(404)
         if execution.upstream_job_id and execution.last_known_status not in {"completed", "failed", "cancelled"}:
             job = await app.state.gateway.cancel(execution.upstream_job_id)
+            db.rollback()
+            if current_user(request, db) != user_id:
+                raise HTTPException(401)
             set_status(db, execution, job["status"])
         return view(execution, db)
 

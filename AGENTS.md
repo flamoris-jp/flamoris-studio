@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## 2026-10-28 Studio #97
+
+The user requests Studio Video integration after the first real Controller AnimeGen I2V receipt. Follow docs/VIDEO_OPERATION.md. Reuse authenticated Controller HTTP, owned managed inputs, request/execution/input fences and existing MP4 Assets delivery. Do not introduce MCP routing, a second job/GPU authority, raw graph editing, model downloads or Kachinco changes. A successful external test clip is not Studio browser acceptance or general model-quality qualification.
+
 ## 2026-10-18 Controller #26
 
 The explicit user request authorizes source implementation, matched MCP/Studio/Hub integration, tests, documentation and reviewable PRs for declarative image graphs. It supersedes older fixed-topology/model-family restrictions for this slice. Follow the [declaration contract](https://github.com/flamoris-jp/flamoris-generation-controller/blob/main/docs/DECLARED_COMFY.md). Preserve existing profiles/data, single authority, immutable inputs, ownership and unknown/no-replay. Live deployment, inference and merges remain separate.
