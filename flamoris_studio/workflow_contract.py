@@ -303,6 +303,8 @@ def normalize_catalog(raw):
         raise ValueError("unsupported_parameter")
     result = []
     for item in entries:
+        if isinstance(item, dict) and item.get("capability_id") == "video.generate":
+            continue
         try:
             result.append(normalize_descriptor(item))
         except (ValueError, TypeError, KeyError, OverflowError):
@@ -313,7 +315,7 @@ def normalize_catalog(raw):
 
 
 def map_parameters(descriptor, request):
-    if descriptor.get("recipeSchema") == 10:
+    if descriptor.get("recipeSchema") in {10, 11}:
         if not descriptor.get("selectable"):
             raise ValueError("unsupported_parameter")
         extras, images = request.get("additionalParameters", {}), request.get("imageInputs", {})
@@ -388,7 +390,14 @@ def normalize_declared_descriptor(raw):
         or raw.get("readiness", {}).get("live_provider_verified") is not False
         or raw.get("readiness", {}).get("basis") != "installed_object_info"):
         raise ValueError("unsupported_parameter")
-    source = raw.get("parameters")
+    specs, images = normalize_declared_parameters(raw.get("parameters"))
+    return {"id": raw["id"], "kind": "registered-comfy", "name": str(raw.get("name", raw["id"]))[:120],
+            "definitionVersion": 1, "definitionDigest": raw["id"][6:], "selectable": True,
+            "reason": None, "image": raw["image"], "parameters": specs,
+            "referenceRoles": images, "liveProviderVerified": False, "recipeSchema": 10}
+
+
+def normalize_declared_parameters(source):
     if not isinstance(source, dict) or not 1 <= len(source) <= 64:
         raise ValueError("unsupported_parameter")
     specs, images = {}, []
@@ -424,7 +433,4 @@ def normalize_declared_descriptor(raw):
         if "default" in spec:
             validate_value(spec, spec["default"])
         specs[key] = spec
-    return {"id": raw["id"], "kind": "registered-comfy", "name": str(raw.get("name", raw["id"]))[:120],
-            "definitionVersion": 1, "definitionDigest": raw["id"][6:], "selectable": True,
-            "reason": None, "image": raw["image"], "parameters": specs,
-            "referenceRoles": images, "liveProviderVerified": False, "recipeSchema": 10}
+    return specs, images
