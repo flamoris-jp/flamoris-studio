@@ -28,6 +28,22 @@ afterEach(async () => {
   vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); sessionStorage.clear()
 })
 
+test('saved Video executions reopen the dedicated editor without resubmission', async () => {
+  vi.spyOn(api, 'videoDiscovery').mockResolvedValue({ available: false, workflows: [], managedInputReady: false })
+  vi.spyOn(api, 'result').mockResolvedValue({ id: asset.executionId, category: 'video', operation: 'video.generate', state: 'completed', submittedAt: '', assets: [{ ...asset, mediaKind: 'video', mimeType: 'video/mp4', displayName: 'video.mp4' }] })
+  const send = vi.spyOn(api, 'videoSubmit')
+  await act(async () => root.render(<App />))
+  expect(host.querySelector('header h1')!.textContent).toBe('Video')
+  const panel = host.querySelector('video')!.closest('section')!
+  expect(panel.textContent).toContain('Video result')
+  expect(panel.parentElement!.hidden).toBe(false)
+  await act(async () => [...host.querySelectorAll('nav button')].find(button => button.textContent === 'Image')!.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+  expect(panel.parentElement!.hidden).toBe(true)
+  await act(async () => [...host.querySelectorAll('nav button')].find(button => button.textContent === 'Video')!.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+  expect(panel.parentElement!.hidden).toBe(false)
+  expect(send).not.toHaveBeenCalled()
+})
+
 test('Clear inputs survives late preference loading and preserves an uncertain execution', async () => {
   vi.spyOn(api, 'styles').mockResolvedValue({ items: [] })
   vi.spyOn(api, 'result').mockResolvedValue({ id: asset.executionId, state: 'submission_unknown', submittedAt: '', assets: [] })
