@@ -2,6 +2,13 @@
 
 ## 2026-10-29 Studio #101
 
+The owner extended this behavior to Video, Music generation/transcription,
+Speech, Raw Intelligence, Assistant send/model selection and personality save.
+Use docs/ACTION_FEEDBACK.md. Keep active/unknown request fences, exact model
+switch retry identities and read-only permissions; clicking for an explanation
+must not create a request identity, send work or change a draft. In-flight
+operations and structural/read-only controls retain applicable disabled states.
+
 Image Generate stays clickable for validation feedback, including Service ready
 with incomplete/invalid settings. Only an in-flight Image submission disables
 it. Preserve the same payload/reference/model gates, no submission on validation

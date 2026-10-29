@@ -199,7 +199,10 @@ test('uncertain Speech keeps its own handle and UUID when Image generation repla
   await act(async () => image.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
   await nav('Speech')
   const generate = [...host.querySelectorAll('button')].find(button => button.textContent === 'Generate speech')!
-  expect((generate as HTMLButtonElement).disabled).toBe(true)
+  expect((generate as HTMLButtonElement).disabled).toBe(false)
+  await act(async () => (generate as HTMLButtonElement).click())
+  expect(host.querySelector('[aria-label="Action needs attention"]')?.textContent).toContain('Previous Speech request')
+  expect(speech).toHaveBeenCalledOnce()
   expect(sessionStorage.getItem('flamoris.speech.pending:stable-owner')).toBe(requestId)
   await act(async () => root.unmount())
   root = createRoot(host)

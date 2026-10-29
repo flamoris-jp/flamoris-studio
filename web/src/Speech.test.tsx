@@ -48,7 +48,7 @@ test('unavailable Speech keeps the draft and does not submit', async () => {
   vi.mocked(api.speechDiscovery).mockResolvedValue({ available: false })
   const send = vi.spyOn(api, 'speechSubmit')
   await show()
-  expect((generate() as HTMLButtonElement).disabled).toBe(true)
+  await explainBlockedAction()
   expect(host.querySelector('textarea')?.value).toBe('こんにちは')
   await submit(); expect(send).not.toHaveBeenCalled()
 })
@@ -61,7 +61,7 @@ test('known active receipt sends one UUID and keeps its pending fence until term
   expect(observed).toHaveBeenCalledWith(created)
   expect(sessionStorage.getItem('flamoris.speech.pending:owner-a')).toBe(REQUEST)
   expect(window.location.hash).toBe(`#execution/${created.id}`)
-  expect((generate() as HTMLButtonElement).disabled).toBe(true)
+  await explainBlockedAction()
 })
 
 test('ambiguous receipt preserves only its UUID and resumes through owner-checked read without replay', async () => {
@@ -70,13 +70,13 @@ test('ambiguous receipt preserves only its UUID and resumes through owner-checke
   await show(); await submit()
   expect(sessionStorage.getItem('flamoris.speech.pending:owner-a')).toBe(REQUEST)
   expect(sessionStorage.length).toBe(1)
-  expect((generate() as HTMLButtonElement).disabled).toBe(true)
+  await explainBlockedAction()
   await act(async () => root.render(<div />))
   const observed = await show()
   expect(lookup).toHaveBeenCalledExactlyOnceWith(REQUEST)
   expect(observed).toHaveBeenCalledWith({ ...created, state: 'submission_unknown' })
   expect(send).toHaveBeenCalledOnce()
-  expect((generate() as HTMLButtonElement).disabled).toBe(true)
+  await explainBlockedAction()
 })
 
 test('validation failure allows correction without treating it as an uncertain submit', async () => {
@@ -134,7 +134,7 @@ test('failed reference upload cannot silently generate without its reference', a
   const send = vi.spyOn(api, 'speechSubmit')
   await show(); await chooseReference()
   expect(host.textContent).toContain('Invalid reference WAV')
-  expect((generate() as HTMLButtonElement).disabled).toBe(true)
+  await explainBlockedAction()
   await submit(); expect(send).not.toHaveBeenCalled()
   await act(async () => [...host.querySelectorAll('button')].find(b => b.textContent === 'Remove reference')!.click())
   expect((generate() as HTMLButtonElement).disabled).toBe(false)
@@ -148,4 +148,34 @@ test('late reference upload cannot cross account boundaries', async () => {
   await act(async () => finish({ id: 'private-reference', available: true, mimeType: 'audio/wav', thumbnailUrl: null }))
   expect(host.textContent).not.toContain('reference.wav')
   expect(host.querySelector('audio[aria-label="Reference audio preview"]')).toBeNull()
+})
+
+async function explainBlockedAction() {
+  const action = generate() as HTMLButtonElement
+  expect(action.disabled).toBe(false)
+  const before = vi.isMockFunction(api.speechSubmit) ? vi.mocked(api.speechSubmit).mock.calls.length : null
+  await act(async () => action.click())
+  expect(host.querySelector('[aria-label="Action needs attention"]')).not.toBeNull()
+  expect(host.textContent).toContain('No request was sent.')
+  if (before !== null) expect(api.speechSubmit).toHaveBeenCalledTimes(before)
+}
+
+test('invalid Speech steps explain the allowed range; fixing the value never auto-generates', async () => {
+  const send = vi.spyOn(api, 'speechSubmit').mockResolvedValue(created)
+  await show()
+  const identity = vi.spyOn(crypto, 'randomUUID')
+  const steps = [...host.querySelectorAll('label')].find(label => label.textContent === 'Sampling steps')!.querySelector('input')!
+  async function changeSteps(text: string) {
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(steps, text); steps.dispatchEvent(new Event('input', { bubbles: true })) })
+  }
+  await changeSteps('81')
+  expect(steps.checkValidity()).toBe(false)
+  await act(async () => generate().click())
+  expect(host.querySelector('[aria-label="Action needs attention"]')?.textContent).toContain('Sampling steps: enter a whole number from 1 to 80')
+  expect(send).not.toHaveBeenCalled(); expect(identity).not.toHaveBeenCalled()
+  await changeSteps('40')
+  expect(host.querySelector('[aria-label="Action needs attention"]')).toBeNull()
+  expect(send).not.toHaveBeenCalled()
+  await act(async () => generate().click())
+  expect(send).toHaveBeenCalledOnce(); expect(identity).toHaveBeenCalledOnce()
 })

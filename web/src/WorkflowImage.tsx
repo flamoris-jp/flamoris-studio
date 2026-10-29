@@ -64,7 +64,7 @@ export function legalSeed(spec?: ParameterSpec): number | null {
   return Number(domain.first! + domain.step! * index)
 }
 
-function parameterProblem(label: string, spec: ParameterSpec): string {
+export function parameterProblem(label: string, spec: ParameterSpec): string {
   if (spec.role === 'managed_input' || Boolean(spec.role && referenceFields[spec.role])) return `${label}: choose an available reference image.`
   if (spec.enum) return `${label}: choose one of the available options.`
   if (spec.type === 'integer' || spec.type === 'number') {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, HTTPFailure, type Personality } from './api'
+import { useActionFeedback } from './ActionFeedback'
 
 type SavePayload = { sessionKey: string; requestId: string; expectedRevision: number; displayName: string; sections: { title: string; content: string }[] }
 
@@ -19,6 +20,15 @@ export default function PersonalityEditor({ csrf, sessionKey }: { csrf: string; 
   const valid = !!value && !!value.display_name.trim() && value.sections.length >= 1 && value.sections.length <= 16 &&
     value.sections.every(s => s.title.trim() && s.content.trim()) && new Set(value.sections.map(s => s.title)).size === value.sections.length &&
     value.sections.reduce((n, s) => n + new TextEncoder().encode(s.content).length, 0) <= 32768
+  const problems: string[] = []
+  if (!dirty) problems.push('Personality: there are no unsaved changes.')
+  if (value && !value.display_name.trim()) problems.push('Display name: enter a name before saving.')
+  if (value && (value.sections.length < 1 || value.sections.length > 16)) problems.push('Sections: use between 1 and 16 sections.')
+  value?.sections.forEach((section, index) => { if (!section.title.trim() || !section.content.trim()) problems.push(`Section ${index + 1}: enter both a title and body.`) })
+  if (value && new Set(value.sections.map(s => s.title)).size !== value.sections.length) problems.push('Section titles: give every section a unique title.')
+  if (value && value.sections.reduce((n, s) => n + new TextEncoder().encode(s.content).length, 0) > 32768) problems.push('Section bodies: keep the combined content within 32768 UTF-8 bytes.')
+  if (!shared) problems.push('Shared personality: confirm that you understand this changes the shared Agent personality before saving.')
+  const validation = useActionFeedback(problems)
   async function load() {
     const version = epoch.current; setBusy(true)
     try {
@@ -48,7 +58,7 @@ export default function PersonalityEditor({ csrf, sessionKey }: { csrf: string; 
   }
   return <section className="personality-editor" aria-label="Agent personality settings">
     <h3>Agent personality</h3>
-    <button disabled={!sessionKey || busy} onClick={() => { if (!dirty || window.confirm('Discard unsaved personality changes and load the current revision?')) void load() }}>Load current personality</button>
+    <button disabled={busy} onClick={() => { if (!sessionKey) { setNotice('Conversation: start a model before loading its personality.'); return } if (!dirty || window.confirm('Discard unsaved personality changes and load the current revision?')) { validation.clear(); void load() } }}>Load current personality</button>
     {notice && <p role="alert">{notice}</p>}
     {value && <>
       <p>Revision {value.revision} · {dirty ? 'Unsaved changes' : 'Saved'} · {value.can_edit ? 'Editing permitted' : 'Read only'}</p>
@@ -62,7 +72,8 @@ export default function PersonalityEditor({ csrf, sessionKey }: { csrf: string; 
         </div>)}
         <button disabled={value.sections.length >= 16} onClick={() => setValue({ ...value, sections: [...value.sections, { title: '', content: '' }] })}>Add section</button>
         <label><input type="checkbox" checked={shared} onChange={e => setShared(e.target.checked)} />I understand this changes the shared Agent personality</label>
-        <button className="primary" disabled={!dirty || !valid || !shared} onClick={() => void save({ sessionKey: value.sessionKey, requestId: crypto.randomUUID(), expectedRevision: value.revision, displayName: value.display_name, sections: JSON.parse(JSON.stringify(value.sections)) })}>Save personality</button>
+        {validation.feedback}
+        <button className="primary" onClick={() => { if (!validation.check() || !dirty || !valid || !shared || !value.can_edit || busy || pending) return; void save({ sessionKey: value.sessionKey, requestId: crypto.randomUUID(), expectedRevision: value.revision, displayName: value.display_name, sections: JSON.parse(JSON.stringify(value.sections)) }) }}>Save personality</button>
       </fieldset>
       {pending && <button disabled={busy} onClick={() => void save(pending)}>Retry same saved update identity</button>}
       <button disabled={busy || !!pending} onClick={async () => { const version = epoch.current; setBusy(true); try { const result = await api.personalityHistory(csrf); if (version === epoch.current) { setHistory(result.versions); setBefore(result.beforeRevision) } } catch { if (version === epoch.current) setNotice('History unavailable.') } finally { if (version === epoch.current) setBusy(false) } }}>View revision history</button>

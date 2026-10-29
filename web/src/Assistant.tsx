@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useActionFeedback } from './ActionFeedback'
 import { api, AssistantFailure, HTTPFailure, type AssistantAvailability, type AssistantAnswer } from './api'
 import type { ImageDraft } from './App'
 import type { AgentModel } from './api'
@@ -91,6 +92,19 @@ export default function Assistant({ csrf, accountKey, draft, initiallyOpen = fal
   const ready = state.available && state.state === 'ready' && !!state.sessionKey &&
     !!state.expiresAt && Date.parse(state.expiresAt) > clock
   const validQuestion = question.trim() && new TextEncoder().encode(question).length <= 16384
+  const problems: string[] = []
+  if (!ready) problems.push('Assistant availability: not ready or the check has expired. Press Check availability; start the selected model if no conversation is active.')
+  if (!selectionMatches) problems.push('Conversation model: start or switch to the selected model before sending the question.')
+  if (!question.trim()) problems.push('Question: enter a question before sending.')
+  else if (!validQuestion) problems.push('Question: use at most 16384 UTF-8 bytes.')
+  if (selecting || switchUncertain) problems.push('Model selection: confirm the pending start or switch before sending. Use Check model switch for an unconfirmed switch.')
+  if (uncertain) problems.push('Previous question: its outcome is unconfirmed. Start a new conversation explicitly before sending a new question; this click will not retry it.')
+  if (attach && !capturedDraft) problems.push('Attached Image draft: complete valid Image settings or turn off Attach current Image draft.')
+  const validation = useActionFeedback(problems)
+  const modelProblems: string[] = []
+  if (!modelId && !pendingSwitch.current) modelProblems.push('Conversation model: choose an available model first.')
+  if (uncertain) modelProblems.push('Previous question: its outcome is unconfirmed. Use Start new conversation explicitly before starting another model.')
+  const modelValidation = useActionFeedback(modelProblems)
   return <section className="panel assistant-panel" aria-label="Agent assistant">
     <div className="row"><h2>Agent assistant</h2><button aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? 'Collapse' : 'Ask Agent'}</button></div>
     {open && <><p role="status">{ready ? 'Ready' : state.state === 'ready' ? 'Checking availability' : state.state}</p>
@@ -103,7 +117,9 @@ export default function Assistant({ csrf, accountKey, draft, initiallyOpen = fal
         }}><option value="">Select a model</option>{models.map(m => <option key={m.id} value={m.id}>{m.display_name} · {m.data_flow === 'local_only' ? 'Internal LLM' : 'OpenAI API'}</option>)}</select></label>
         {preferredModel && !allowed(preferredModel) && <p role="alert">Your saved model is unavailable. Select an available model to continue.</p>}
         <p>You can switch models while keeping this conversation and its personality.</p>
-        <button disabled={!modelId || sending || selecting || uncertain} onClick={async () => {
+        {modelValidation.feedback}
+        <button disabled={sending || selecting} onClick={async () => {
+          if (sending || selecting || !modelValidation.check()) return
           setSelecting(true); setNotice('')
           try {
             const continuing = !!pendingSwitch.current || !!state.sessionKey && !!state.modelId
@@ -129,9 +145,11 @@ export default function Assistant({ csrf, accountKey, draft, initiallyOpen = fal
       <label>Question<textarea value={question} maxLength={16384} disabled={sending || uncertain} onChange={event => setQuestion(event.target.value)} /></label>
       {notice && <p role="alert">{notice}</p>}
       {uncertain && <p role="alert">The outcome is unconfirmed. No automatic retry was made. Start a new conversation explicitly to send a new question.</p>}
-      <button className="primary" disabled={!ready || !selectionMatches || !validQuestion || sending || selecting || switchUncertain || uncertain || attach && !capturedDraft}
+      {validation.feedback}
+      <button className="primary" disabled={sending || selecting}
         onClick={async () => {
-          if (!state.sessionKey || !ready || sending || uncertain) return
+          if (sending || selecting || !validation.check()) return
+          if (!state.sessionKey || !ready || !selectionMatches || !validQuestion || switchUncertain || uncertain || attach && !capturedDraft) return
           const payload = JSON.parse(JSON.stringify({ requestId: crypto.randomUUID(), sessionKey: state.sessionKey,
             text: question, previousHandle: previous.current,
             ...(attach && capturedDraft ? { draft: capturedDraft, draftRevision: revision } : {}) }))
@@ -147,7 +165,10 @@ export default function Assistant({ csrf, accountKey, draft, initiallyOpen = fal
             setUncertain(!(error instanceof AssistantFailure) || error.uncertain)
           } finally { if (alive.current) setSending(false) }
         }}>{sending ? 'Waiting for advice…' : 'Send question'}</button>
-      <button disabled={sending || selecting || models.length > 0 && !modelId} onClick={async () => {
+      <button disabled={sending || selecting} onClick={async () => {
+        if (sending || selecting) return
+        if (models.length > 0 && !modelId) { setNotice('Conversation model: choose an available model before starting a new conversation.'); return }
+        validation.clear(); modelValidation.clear()
         setSelecting(true)
         try {
           let saved = true

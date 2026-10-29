@@ -7,6 +7,10 @@ It does not automatically repeat an upload or generation request.
 
 ## Image generation feedback (Studio #101)
 
+The same policy now covers the other creative operations listed in
+[action feedback](ACTION_FEEDBACK.md), including Video, Music, Speech,
+Intelligence, Assistant and personality save.
+
 The Image badge says **Service ready** when discovery finds the service available;
 this is not a statement that the draft is complete or an attestation of GPU/model
 quality. Generate remains clickable when the draft is incomplete, invalid or
