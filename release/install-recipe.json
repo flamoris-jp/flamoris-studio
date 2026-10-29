@@ -3,7 +3,7 @@
   "sql_files": [],
   "recipe": {
     "application_id": "flamoris-studio",
-    "release": "1.2.2",
+    "release": "1.3.0",
     "platform": "linux/amd64",
     "compatible_from": [
       "1.0.7",
@@ -12,13 +12,14 @@
       "1.0.10",
       "1.1.0",
       "1.2.0",
-      "1.2.1"
+      "1.2.1",
+      "1.2.2"
     ],
     "dependencies": {},
     "settings": [
       {
         "key": "PORT",
-        "label": "\u5f85\u53d7\u30dd\u30fc\u30c8",
+        "label": "待受ポート",
         "default": "5087",
         "secret": false,
         "required": false,
@@ -27,7 +28,7 @@
       },
       {
         "key": "ADMIN_DSN",
-        "label": "PostgreSQL\u7ba1\u7406\u8005\u306e\u63a5\u7d9a\u6587\u5b57\u5217",
+        "label": "PostgreSQL管理者の接続文字列",
         "default": "",
         "secret": true,
         "required": true,
@@ -36,7 +37,7 @@
       },
       {
         "key": "PGHOST",
-        "label": "PostgreSQL\u30db\u30b9\u30c8\uff08\u30db\u30b9\u30c8\u30fb\u30b3\u30f3\u30c6\u30ca\u53cc\u65b9\u304b\u3089\u5230\u9054\u53ef\u80fd\uff09",
+        "label": "PostgreSQLホスト（ホスト・コンテナ双方から到達可能）",
         "default": "",
         "secret": false,
         "required": true,
@@ -45,7 +46,7 @@
       },
       {
         "key": "PGPORT",
-        "label": "PostgreSQL\u30dd\u30fc\u30c8",
+        "label": "PostgreSQLポート",
         "default": "5432",
         "secret": false,
         "required": false,
@@ -54,7 +55,7 @@
       },
       {
         "key": "DATABASE",
-        "label": "\u65b0\u3057\u304f\u4f5c\u6210\u3059\u308bDB\u540d",
+        "label": "新しく作成するDB名",
         "default": "flamoris_studio",
         "secret": false,
         "required": false,
@@ -63,7 +64,7 @@
       },
       {
         "key": "OWNER_PASSWORD",
-        "label": "\u65b0\u898fDB\u6240\u6709\u8005\u30d1\u30b9\u30ef\u30fc\u30c9\uff08\u7a7a\u6b04\u3067\u751f\u6210\uff09",
+        "label": "新規DB所有者パスワード（空欄で生成）",
         "default": "",
         "secret": true,
         "required": false,
@@ -72,7 +73,7 @@
       },
       {
         "key": "RUNTIME_PASSWORD",
-        "label": "\u30a2\u30d7\u30ea\u7528DB\u30d1\u30b9\u30ef\u30fc\u30c9\uff08\u7a7a\u6b04\u3067\u751f\u6210\uff09",
+        "label": "アプリ用DBパスワード（空欄で生成）",
         "default": "",
         "secret": true,
         "required": false,
@@ -81,7 +82,7 @@
       },
       {
         "key": "GENERATION_ENDPOINT",
-        "label": "Controller\u5185\u90e8HTTP API\u306eURL\uff08\u4efb\u610f\uff09",
+        "label": "Controller内部HTTP APIのURL（任意）",
         "default": "",
         "secret": false,
         "required": false,
@@ -90,7 +91,7 @@
       },
       {
         "key": "GENERATION_TOKEN",
-        "label": "Controller\u3068\u540c\u3058\u63a5\u7d9a\u30c8\u30fc\u30af\u30f3\uff08\u4efb\u610f\uff09",
+        "label": "Controllerと同じ接続トークン（任意）",
         "default": "",
         "secret": true,
         "required": false,
@@ -99,7 +100,7 @@
       },
       {
         "key": "AGENT_ENDPOINT",
-        "label": "Agent\u5185\u90e8HTTP API\u306eURL\uff08\u4efb\u610f\uff09",
+        "label": "Agent内部HTTP APIのURL（任意）",
         "default": "",
         "secret": false,
         "required": false,
@@ -108,7 +109,7 @@
       },
       {
         "key": "AGENT_TOKEN",
-        "label": "Agent\u3068\u540c\u3058\u63a5\u7d9a\u30c8\u30fc\u30af\u30f3\uff08\u4efb\u610f\uff09",
+        "label": "Agentと同じ接続トークン（任意）",
         "default": "",
         "secret": true,
         "required": false,
@@ -117,7 +118,7 @@
       },
       {
         "key": "INTELLIGENCE_ENDPOINT",
-        "label": "\u76f4\u63a5llama.cpp\u306eURL\uff08\u4efb\u610f\uff09",
+        "label": "直接llama.cppのURL（任意）",
         "default": "",
         "secret": false,
         "required": false,
@@ -126,7 +127,7 @@
       },
       {
         "key": "INTELLIGENCE_MODELS",
-        "label": "Studio\u306e\u30e2\u30c7\u30eb\u4e00\u89a7JSON",
+        "label": "Studioのモデル一覧JSON",
         "default": "[]",
         "secret": false,
         "required": false,
@@ -135,7 +136,7 @@
       },
       {
         "key": "ALLOW_REGISTRATION",
-        "label": "\u521d\u56de\u30e6\u30fc\u30b6\u30fc\u767b\u9332\u3092\u8a31\u53ef\uff081\u307e\u305f\u306f0\uff09",
+        "label": "初回ユーザー登録を許可（1または0）",
         "default": "0",
         "secret": false,
         "required": false,
@@ -153,7 +154,7 @@
     },
     "application": {
       "application_id": "flamoris-studio",
-      "release": "1.2.2",
+      "release": "1.3.0",
       "directories": [
         {
           "path": "${root}/config"

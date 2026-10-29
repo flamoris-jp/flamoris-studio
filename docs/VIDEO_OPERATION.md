@@ -1,5 +1,21 @@
 # Video generation through Controller
 
+## MiniMax H3 comparison profile (1.3.0)
+
+With Controller / Generation 1.3.0, the Video editor also accepts the explicit
+`minimax-h3-video-v1` descriptor. H3 dimensions use multiples of 32, frames follow
+`17k+5` (5, 22, 39…158 within the bounded contract), and FPS is fixed to 24.
+124 frames encode 5.1667 seconds. The form explains that output is silent.
+Wan retains its existing geometry, `4k+1` frames and variable frame rate.
+
+The profile is selected by the immutable registered recipe. Studio never guesses
+the model from a display name or silently converts an invalid frame count.
+Existing per-user managed references, request identities, response-time checks,
+unknown/no-replay fences and MP4 output delivery remain shared. No database
+migration or new Studio configuration is required. Model installation and actual
+GPU/browser/visual acceptance are separate from these source tests. See
+[Controller H3](https://github.com/flamoris-jp/flamoris-generation-controller/blob/main/docs/MINIMAX_H3.md).
+
 Owner: [Studio #97](https://github.com/flamoris-jp/flamoris-studio/issues/97),
 following [Controller #31](https://github.com/flamoris-jp/flamoris-generation-controller/issues/31)
 and [Generation #25](https://github.com/flamoris-jp/flamoris-generation-mcp/issues/25).

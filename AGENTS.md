@@ -1,5 +1,13 @@
 # AGENTS.md
 
+## 2026-10-29 Studio #104
+
+The user requests a MiniMax H3 comparison through the existing Video editor.
+Accept the explicit Controller minimax-h3-video-v1 silent profile, its 17k+5
+frame grid, 32-pixel dimensions and fixed 24 FPS. Retain Wan behavior, per-user
+inputs, single Controller HTTP authority and request/unknown fences. Follow
+docs/VIDEO_OPERATION.md. Source/PR work does not certify model/GPU acceptance.
+
 ## 2026-10-29 Studio #102
 
 The 24-hour receipt comparison defect is reproduced with real Controller

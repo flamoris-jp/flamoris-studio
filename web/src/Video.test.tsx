@@ -18,6 +18,31 @@ const item: VideoWorkflow = { id: 'comfy-' + 'd'.repeat(64), name: 'Test video',
     seed: { type: 'integer', role: 'parameter', default: 0, minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
   } }
 const queued: Execution = { id: '00000000-0000-4000-8000-000000000003', category: 'video', operation: 'video.generate', state: 'queued', submittedAt: '', assets: [] }
+function h3Item(): VideoWorkflow {
+  const value = structuredClone(item)
+  value.video.profile = 'minimax-h3-video-v1'
+  value.parameters.width = { ...value.parameters.width, default: 608, multiple_of: 32 }
+  value.parameters.height = { ...value.parameters.height, default: 352, multiple_of: 32 }
+  value.parameters.frames = { ...value.parameters.frames, default: 124 }
+  value.parameters.fps = { ...value.parameters.fps, default: 24, minimum: 24, maximum: 24 }
+  return value
+}
+
+test('H3 accepts 124 frames at 24fps and rejects Wan frame counts and geometry', () => {
+  const value = h3Item(), form = { ...videoDraft(value), imageInputs: { start_image: HANDLE } }
+  expect(videoPayload(form, value)?.additionalParameters.frames).toBe(124)
+  for (const changes of [{ frames: 81 }, { width: 624 }, { fps: 16 }]) {
+    expect(videoPayload({ ...form, additionalParameters: { ...form.additionalParameters, ...changes } }, value)).toBeNull()
+  }
+})
+
+test('H3 form shows the 17-frame step and silent output guidance', async () => {
+  vi.mocked(api.videoDiscovery).mockResolvedValue({ available: true, workflows: [h3Item()], managedInputReady: true })
+  await show()
+  expect(host.textContent).toContain('5.1667 seconds')
+  expect(host.textContent).toContain('silent video')
+  expect(host.querySelector('input[step="17"]')).not.toBeNull()
+})
 let host: HTMLDivElement, root: Root
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
