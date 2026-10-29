@@ -23,19 +23,33 @@ export type TranscriptionInput = { referenceInputId: string; max_seconds: number
 export type MusicDiscovery = { generate: boolean; transcribe: boolean }
 export type SpeechInput = { text: string; caption: string; seconds: number | null; steps: number; seed: number | null; referenceInputId?: string }
 
+const receiptMessages = new Map(Object.entries({
+  receipt_metadata: 'The generation service returned an invalid upload receipt.',
+  receipt_identity: 'The returned image identity did not match this upload.',
+  receipt_provenance: 'The returned image source did not match this upload.',
+  receipt_media: 'The returned image format did not match the uploaded file.',
+  receipt_size: 'The returned image size did not match the uploaded file.',
+  receipt_digest: 'The uploaded image checksum could not be verified.',
+  receipt_timestamps: 'The generation service returned invalid creation or expiry times.',
+  receipt_lifetime: 'The generation service returned an image lifetime outside the 24-hour limit.',
+  receipt_clock: 'The generation service clock is ahead of Studio beyond the allowed tolerance. Ask the operator to check server time synchronization.',
+  receipt_expired: 'The uploaded image receipt has already expired. Ask the operator to check server time synchronization.',
+}))
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { credentials: 'same-origin', ...options })
   if (!response.ok) {
     const rawBody = await response.json().catch(() => ({}))
     const body = rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody) ? rawBody : {}
     if (response.status === 401) throw new HTTPFailure('Session expired. Refresh and sign in again.', 401)
-    const reason = typeof body.detail === 'string' ? new Map(Object.entries({
+    let reason = typeof body.detail === 'string' ? new Map(Object.entries({
       'Reference storage quota reached': 'reference_quota',
       'Reference storage is busy': 'reference_busy',
       'Reference upload was incomplete': 'incomplete_upload',
       'Image upload metadata could not be verified': 'upload_receipt_invalid',
       'Image upload was rejected by the generation service': 'upload_rejected',
     })).get(body.detail) : undefined
+    if (response.status === 422 && reason === 'upload_receipt_invalid' && typeof body.reason === 'string' && receiptMessages.has(body.reason)) reason = body.reason
     throw new HTTPFailure(body.message || body.error || `Request failed (${response.status}).`, response.status, reason)
   }
   const text = await response.text()
@@ -88,7 +102,7 @@ export function imageUploadError(failure: unknown): string {
     else if (status === 409) message = 'The image upload was refused (HTTP 409).'
     else if (status === 413) message = 'The server rejected the upload size (HTTP 413). Studio accepts images up to 8 MiB.'
     else if (status === 415) message = 'This image format is not supported (HTTP 415). Choose a PNG, JPEG or WebP image.'
-    else if (status === 422) message = new Map(Object.entries({
+    else if (status === 422) message = receiptMessages.has(failure.reason ?? '') ? `${receiptMessages.get(failure.reason!)} (HTTP 422).` : new Map(Object.entries({
       incomplete_upload: 'The image upload was incomplete (HTTP 422).',
       upload_receipt_invalid: 'Studio could not verify the uploaded image (HTTP 422).',
       upload_rejected: 'The generation service rejected the image upload (HTTP 422).',

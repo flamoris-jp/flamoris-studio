@@ -20,6 +20,20 @@ from .gateway import GatewayError
 THUMB_BYTES = 256 * 1024
 TERMINAL_STATES = {"completed", "failed", "cancelled", "busy"}
 LOCK_ID = 761042917
+INPUT_LIFETIME_SECONDS = 86400
+INPUT_CLOCK_SKEW_SECONDS = 1
+RECEIPT_REASONS = frozenset("receipt_" + value for value in (
+    "metadata", "identity", "provenance", "media", "size", "digest",
+    "timestamps", "lifetime", "clock", "expired",
+))
+
+
+class ReceiptValidationError(GatewayError):
+    """An allowlisted field category, never raw receipt content."""
+
+    def __init__(self, reason, *, code="validation"):
+        super().__init__(code)
+        self.reason = reason if isinstance(reason, str) and reason in RECEIPT_REASONS else "receipt_metadata"
 
 
 @dataclass(frozen=True)
@@ -119,39 +133,53 @@ def reserve(db, user_id, source, limits, *, mime_type=None, upload_bytes=0):
 
 
 def validate_metadata(raw, row, *, creating=False):
-    if (
-        not isinstance(raw, dict)
-        or not isinstance(raw.get("input_id"), str)
-        or not re.fullmatch(r"[a-f0-9]{32}", raw["input_id"])
-        or raw.get("source_asset_id") != row.source_upstream_id
-        or row.mime_type is not None and raw.get("mime_type") != row.mime_type
-        or (raw.get("mime_type"), raw.get("media_kind")) not in {
-            ("image/png", "image"), ("image/jpeg", "image"), ("image/webp", "image"),
-            ("audio/wav", "audio")}
-        or type(raw.get("size_bytes")) is not int
-        or not 0 < raw["size_bytes"] <= 64 * 1024**2
-        or not isinstance(raw.get("sha256"), str)
-        or not re.fullmatch(r"[a-f0-9]{64}", raw["sha256"])
-        or type(raw.get("expires_at")) not in (int, float)
-        or not now().timestamp() < raw["expires_at"] <= now().timestamp() + 86400
-    ):
-        raise GatewayError("validation")
-    if not creating and (
-        raw["input_id"] != row.upstream_input_id
-        or raw["sha256"] != row.checksum
-        or raw["mime_type"] != row.mime_type
-        or raw["size_bytes"] != row.size_bytes
-    ):
-        raise GatewayError("validation")
-    if row.source_upstream_id is None and (
-        raw.get("source_kind") != "upload"
-        or raw["input_id"] != row.upstream_input_id
-        or raw["size_bytes"] != row.size_bytes
-        or raw["sha256"] != row.checksum
-        or raw["media_kind"] != row.mime_type.split("/")[0]
-    ):
-        raise GatewayError("validation")
-    return raw
+    def reject(reason):
+        raise ReceiptValidationError("receipt_" + reason)
+
+    if not isinstance(raw, dict):
+        reject("metadata")
+    if not isinstance(raw.get("input_id"), str) or not re.fullmatch(r"[a-f0-9]{32}", raw["input_id"]):
+        reject("identity")
+    if raw.get("source_asset_id") != row.source_upstream_id:
+        reject("provenance")
+    if (type(raw.get("mime_type")) is not str or type(raw.get("media_kind")) is not str
+        or (raw["mime_type"], raw["media_kind"]) not in {
+            ("image/png", "image"), ("image/jpeg", "image"), ("image/webp", "image"), ("audio/wav", "audio")}
+        or row.mime_type is not None and raw["mime_type"] != row.mime_type):
+        reject("media")
+    if type(raw.get("size_bytes")) is not int or not 0 < raw["size_bytes"] <= 64 * 1024**2:
+        reject("size")
+    if not isinstance(raw.get("sha256"), str) or not re.fullmatch(r"[a-f0-9]{64}", raw["sha256"]):
+        reject("digest")
+    created, expires = raw.get("created_at"), raw.get("expires_at")
+    # This ordered, bounded comparison rejects NaN, infinity, booleans and huge
+    # integers before subtraction or datetime conversion. Controller publishes
+    # created_at on both generated snapshots and uploaded inputs.
+    if (type(created) not in (int, float) or type(expires) not in (int, float)
+        or not 0 <= created < expires <= 253402300799):
+        reject("timestamps")
+    lifetime = expires - created
+    if not 0 < lifetime <= INPUT_LIFETIME_SECONDS:
+        reject("lifetime")
+    observed = now().timestamp()
+    if created > observed + INPUT_CLOCK_SKEW_SECONDS:
+        reject("clock")
+    if expires <= observed:
+        reject("expired")
+    if not creating or row.source_upstream_id is None:
+        if raw["input_id"] != row.upstream_input_id:
+            reject("identity")
+        if raw["sha256"] != row.checksum:
+            reject("digest")
+        if raw["mime_type"] != row.mime_type:
+            reject("media")
+        if raw["size_bytes"] != row.size_bytes:
+            reject("size")
+    if row.source_upstream_id is None and raw.get("source_kind") != "upload":
+        reject("provenance")
+    # Tolerating a bounded remote clock offset never extends the local lifetime
+    # beyond the declared duration or 24 local hours. Never mutate the receipt.
+    return {**raw, "expires_at": min(expires, observed + lifetime)}
 
 
 async def check_input(gateway, row):
@@ -382,7 +410,7 @@ async def create_snapshot(app, db, row, content_reader):
     raw = None
     try:
         raw = await app.state.gateway.create_input(row.source_upstream_id)
-        validate_metadata(raw, row, creating=True)
+        raw = validate_metadata(raw, row, creating=True)
         row.upstream_input_id = raw["input_id"]
         row.checksum = raw["sha256"]
         row.mime_type = raw["mime_type"]

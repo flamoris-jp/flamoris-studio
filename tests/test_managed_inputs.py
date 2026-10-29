@@ -82,7 +82,7 @@ def prepare_gateway(gateway):
         gateway.input_calls.append(("create", asset_id))
         key = uuid.uuid4().hex
         record = {"input_id": key, "source_asset_id": asset_id, "mime_type": "image/png", "media_kind": "image",
-                  "size_bytes": len(gateway.image), "sha256": hashlib.sha256(gateway.image).hexdigest(), "expires_at": time.time() + 80000}
+                  "size_bytes": len(gateway.image), "sha256": hashlib.sha256(gateway.image).hexdigest(), "created_at": time.time(), "expires_at": time.time() + 80000}
         gateway.input_records[key] = record
         return record
 

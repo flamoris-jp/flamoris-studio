@@ -84,7 +84,7 @@ def test_managed_audio_metadata_cannot_change_its_source_mime():
     from types import SimpleNamespace
     from flamoris_studio.managed_inputs import validate_metadata
     row = SimpleNamespace(source_upstream_id="source", mime_type="audio/wav")
-    raw = {"input_id": "d" * 32, "source_asset_id": "source", "mime_type": "audio/wav", "media_kind": "audio", "size_bytes": 10, "sha256": "e" * 64, "expires_at": time.time() + 80000}
+    raw = {"input_id": "d" * 32, "source_asset_id": "source", "mime_type": "audio/wav", "media_kind": "audio", "size_bytes": 10, "sha256": "e" * 64, "created_at": time.time(), "expires_at": time.time() + 80000}
     assert validate_metadata(raw, row, creating=True) == raw
     with pytest.raises(GatewayError):
         validate_metadata({**raw, "mime_type": "image/png", "media_kind": "image"}, row, creating=True)
@@ -115,7 +115,7 @@ def test_owned_generate_and_transcription_use_shared_results_and_input_lifecycle
     assert b.get(f"/api/executions/{made.json()['id']}/result").status_code == 404
     assert b.get(score["downloadUrl"]).status_code == 404
     calls = []
-    record = {"input_id": "d" * 32, "source_asset_id": "audio-upstream", "mime_type": "audio/wav", "media_kind": "audio", "size_bytes": 10, "sha256": "e" * 64, "expires_at": time.time() + 80000}
+    record = {"input_id": "d" * 32, "source_asset_id": "audio-upstream", "mime_type": "audio/wav", "media_kind": "audio", "size_bytes": 10, "sha256": "e" * 64, "created_at": time.time(), "expires_at": time.time() + 80000}
     async def create(asset): calls.append(asset); return record
     async def get(key): return record
     async def delete_input(key): return {"deleted": True}
