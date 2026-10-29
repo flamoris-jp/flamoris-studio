@@ -45,15 +45,26 @@ export function withRandomSeed(old: ImageDraft, entropy: Uint32Array): ImageDraf
   return { ...old, seed: String(String(candidate) === old.seed ? (candidate + 1) % Number.MAX_SAFE_INTEGER : candidate) }
 }
 
-export function imagePayload(form: ImageDraft): Exclude<ImageSubmission, DeclaredImageSubmission> | null {
-  if (Object.values(referenceFields).some(field => form[field])) return null
-  if (!form.positivePrompt.trim() || !form.checkpoint ||
-      !integer(form.width, 64, 4096) || numberValue(form.width) % 8 !== 0 ||
-      !integer(form.height, 64, 4096) || numberValue(form.height) % 8 !== 0 ||
-      !integer(form.steps, 1, 150) || (form.seed.trim() !== '' && !integer(form.seed, 0, Number.MAX_SAFE_INTEGER)) ||
-      !decimal(form.cfg, 0, 100) || !decimal(form.denoise, 0, 1) || !token(form.sampler) || !token(form.scheduler) ||
-      form.loras.length > 16 || form.loras.some(lora => !lora.name ||
-        !decimal(lora.strengthModel, -20, 20) || !decimal(lora.strengthClip, -20, 20))) return null
+export function imagePayload(form: ImageDraft, report?: (message: string) => void): Exclude<ImageSubmission, DeclaredImageSubmission> | null {
+  const checks: [boolean, string][] = [
+    [Object.values(referenceFields).some(field => Boolean(form[field])), 'Reference images: remove the attached images or choose a template that supports them.'],
+    [!form.positivePrompt.trim(), 'Positive prompt: describe the image you want to generate.'],
+    [form.positivePrompt.length > 20000, 'Positive prompt: use at most 20000 characters.'],
+    [form.negativePrompt.length > 20000, 'Negative prompt: use at most 20000 characters.'],
+    [!form.checkpoint, 'Model: choose an available image model.'],
+    [!integer(form.width, 64, 4096) || numberValue(form.width) % 8 !== 0, 'Width: enter a whole number from 64 to 4096 in multiples of 8.'],
+    [!integer(form.height, 64, 4096) || numberValue(form.height) % 8 !== 0, 'Height: enter a whole number from 64 to 4096 in multiples of 8.'],
+    [!integer(form.steps, 1, 150), 'Steps: enter a whole number from 1 to 150.'],
+    [form.seed.trim() !== '' && !integer(form.seed, 0, Number.MAX_SAFE_INTEGER), 'Seed: leave blank for Auto or enter a whole number from 0 to 9007199254740991.'],
+    [!decimal(form.cfg, 0, 100), 'CFG: enter a number from 0 to 100.'],
+    [!decimal(form.denoise, 0, 1), 'Denoise: enter a number from 0 to 1.'],
+    [!token(form.sampler), 'Sampler: use 1 to 80 letters, numbers or underscores.'],
+    [!token(form.scheduler), 'Scheduler: use 1 to 80 letters, numbers or underscores.'],
+    [form.loras.length > 16, 'LoRA layers: use at most 16 layers.'],
+    [form.loras.some(lora => !lora.name || !decimal(lora.strengthModel, -20, 20) || !decimal(lora.strengthClip, -20, 20)), 'LoRA layers: choose a model for each layer and enter strengths from -20 to 20.'],
+  ]
+  const problems = checks.filter(([invalid]) => invalid)
+  if (problems.length) { problems.forEach(([, message]) => report?.(message)); return null }
   return { ...form, width: numberValue(form.width), height: numberValue(form.height),
     steps: numberValue(form.steps), cfg: numberValue(form.cfg), seed: form.seed.trim() === '' ? undefined : numberValue(form.seed), denoise: numberValue(form.denoise),
     loras: form.loras.map(lora => ({ ...lora, strengthModel: numberValue(lora.strengthModel), strengthClip: numberValue(lora.strengthClip) })) }
@@ -164,7 +175,7 @@ export default function App() {
   return <div className="layout"><aside><div className="brand">✦ <strong>FLAMORIS</strong><small>STUDIO</small></div><p className="eyebrow">WORKSPACE</p>
     <nav aria-label="Creative domains">{sections.map(name => <button key={name} aria-current={section === name ? 'page' : undefined} onClick={() => setSection(name)}>{name}</button>)}</nav>
     <div className="account-footer"><span>{session.userName}</span><button onClick={() => setSection('Account')}>Account settings</button><button onClick={async () => { signingOut.current = true; try { await api.logout(session.csrfToken); accountEpoch.current += 1; try { sessionStorage.removeItem(`flamoris.speech.pending:${session.accountKey ?? session.userName ?? ''}`); sessionStorage.removeItem(`flamoris.music.pending:${session.accountKey ?? session.userName ?? ''}`); sessionStorage.removeItem(`flamoris.video.pending:${session.accountKey ?? session.userName ?? ''}`) } catch {} setForm(initialImageDraft()); setSpeechForm(initialSpeechDraft()); setSpeechExecution(null); setMusicExecution(null); setVideoExecution(null); setExecution(null); setResultSettings(null); setDiscovery(null); setBusy(false); setError(''); window.location.hash = ''; setSession(await api.session()) } catch { signingOut.current = false; setError('Could not sign out.') } }}>Sign out</button></div></aside>
-    <main><header><div><span className="eyebrow">CREATIVE CONTROL PLANE</span><h1>{section}</h1></div><span className="badge">PHASE 1A</span></header>
+    <main><header><div><span className="eyebrow">CREATIVE CONTROL PLANE</span><h1>{section}</h1></div></header>
     <div hidden={section !== 'Intelligence'}><Intelligence key={session.userName} csrf={session.csrfToken} active={section === 'Intelligence'} /></div>
     <div hidden={section !== 'Speech'}><Speech key={session.accountKey ?? session.userName} csrf={session.csrfToken} accountKey={session.accountKey ?? session.userName ?? ''} form={speechForm} setForm={setSpeechForm} execution={speechExecution} onExecution={setSpeechExecution} authorized={() => !signingOut.current} /></div>
     <div hidden={section !== 'Music'}><Music key={session.accountKey ?? session.userName} csrf={session.csrfToken} accountKey={session.accountKey ?? session.userName ?? ''} execution={musicExecution} onExecution={setMusicExecution} authorized={() => !signingOut.current} /></div>
@@ -263,18 +274,24 @@ export function ImageEditor({ discovery, onSubmit, onReset, busy, form, setForm,
   const referenceBusy = Object.values(busyReferences).some(Boolean)
   const [resetVersion, setResetVersion] = useState(0)
   const positivePrompt = useRef<HTMLTextAreaElement>(null)
+  const [validationAttempt, setValidationAttempt] = useState(0)
+  const validationFeedback = useRef<HTMLDivElement>(null)
+  useEffect(() => { if (validationAttempt) validationFeedback.current?.focus() }, [validationAttempt])
   function clearInputs() {
     if (busy || referenceBusy || styleBusy) return
     onReset?.()
     setForm(initialImageDraft(discovery.checkpoints[0]?.name ?? ''))
     setSelectedStyle(''); setStyleName(''); setStyleError('')
+    setValidationAttempt(0)
     setResetVersion(old => old + 1)
     positivePrompt.current?.focus()
   }
   const selected = discovery.workflows?.find(item => item.id === form.workflowId)
   const exactSelection = !form.workflowId ? (!form.workflowKind && form.definitionVersion == null && form.definitionDigest == null) : Boolean(selected?.selectable && (selected.kind === 'builtin' || selected.kind === 'registered-comfy') && form.workflowKind === selected.kind && selected.definitionVersion === form.definitionVersion && selected.definitionDigest === form.definitionDigest)
   const declared = selected?.recipeSchema === 10
-  const payload = selected ? workflowPayload(form, selected) : form.workflowId ? null : imagePayload(form)
+  const validationMessages: string[] = []
+  const report = (message: string) => { validationMessages.push(message) }
+  const payload = selected ? workflowPayload(form, selected, report) : form.workflowId ? null : imagePayload(form, report)
   const spec = (role: string) => roleSpec(selected, role)
   const supports = (role: string) => !selected || Boolean(spec(role))
   const checkpoints = discovery.checkpoints.filter(item => !spec('checkpoint')?.enum || spec('checkpoint')!.enum!.includes(item.name))
@@ -284,6 +301,19 @@ export function ImageEditor({ discovery, onSubmit, onReset, busy, form, setForm,
     form.loras.every(lora => discovery.loras.some(item => item.name === lora.name))
   const referenceRoles = Object.keys(referenceFields).filter(role => selected?.referenceRoles?.includes(role) || form[referenceFields[role]] || role === "initial_image" && (!selected || selected.kind === "builtin"))
   const referencesValid = (selected?.referenceRoles ?? []).every(role => Boolean(form[referenceFields[role]]) && referenceAvailability[role] === true)
+  if (!discovery.available) report('Image service: unavailable. Use Check again before generating.')
+  if (!exactSelection) report('Image template: reselect an available template; the saved selection is unavailable or has changed.')
+  if (referenceBusy) report('Reference images: preparation is still in progress. Wait for it to finish, then press Generate again.')
+  for (const role of selected?.referenceRoles ?? []) {
+    const id = declared ? form.imageInputs?.[role] : form[referenceFields[role]]
+    if (!id || referenceAvailability[role] !== true) {
+      const label = declared ? selected?.parameters[role]?.label ?? role : { initial_image: 'Initial image', character_image: 'Character reference', style_image: 'Visual style reference', control_image: 'Pose / structure reference' }[role] ?? 'Reference image'
+      report(`${label}: ${id ? 'the selected image is expired, unavailable or still being checked. Upload or choose an available image.' : 'upload or choose an image required by this template.'}`)
+    }
+  }
+  if (!declared && !discovery.checkpoints.some(item => item.name === form.checkpoint)) report('Model: choose an installed image model from the list.')
+  if (!declared && form.loras.some(lora => !discovery.loras.some(item => item.name === lora.name))) report('LoRA layers: a selected model is unavailable. Choose an installed LoRA or remove the layer.')
+  if (!valid && !validationMessages.length) report('Image settings: the selected template cannot accept this draft. Reselect the template and check its parameters.')
   const style = styles.find(item => item.id === selectedStyle)
   async function styleAction(action: 'save' | 'update' | 'duplicate' | 'delete') {
     setStyleError(''); setStyleBusy(true)
@@ -305,7 +335,13 @@ export function ImageEditor({ discovery, onSubmit, onReset, busy, form, setForm,
     } catch (e) { setStyleError(e instanceof Error ? e.message : 'Style operation failed.') }
     finally { setStyleBusy(false) }
   }
-  return <form className="panel editor" onSubmit={event => { event.preventDefault(); if (valid && payload) onSubmit(payload) }}><div className="row"><div><span className="eyebrow">IMAGE GENERATOR</span><h2>Compose your image</h2></div><span className="badge">{discovery.available ? 'Ready' : 'Unavailable'}</span></div>
+  return <form className="panel editor" noValidate onSubmit={event => {
+    event.preventDefault()
+    if (busy) return
+    if (!valid || !payload) { setValidationAttempt(old => old + 1); return }
+    setValidationAttempt(0)
+    onSubmit(payload)
+  }}><div className="row"><div><span className="eyebrow">IMAGE GENERATOR</span><h2>Compose your image</h2></div><span className="badge">{discovery.available ? 'Service ready' : 'Service unavailable'}</span></div>
     <WorkflowPicker discovery={discovery} form={form} setForm={setForm} disabled={busy || referenceBusy} />
     {form.workflowId && !exactSelection && <p role="alert">This image template is unavailable. Your draft is preserved; select a ready template.</p>}
     {declared && selected && <DeclaredFields item={selected} form={form} setForm={setForm} csrf={csrf} busy={busy} referenceBusy={referenceBusy} busyReferences={busyReferences}
@@ -339,6 +375,7 @@ export function ImageEditor({ discovery, onSubmit, onReset, busy, form, setForm,
     {selected && form.loras.length > 0 && (spec('loras')?.max_items ?? 0) === 0 && <p role="alert">This template does not support the LoRA draft. Remove the layers or select a compatible template.</p>}
     </>}
     <small id="image-clear-help">Clear inputs resets prompts, reference, template, LoRAs and generation settings.</small>
-    <div className="row actions"><button type="button" aria-describedby="image-clear-help" disabled={busy || referenceBusy || styleBusy} onClick={clearInputs}>Clear inputs</button><button className="primary" disabled={!valid || busy}>{busy ? 'Submitting…' : 'Generate image ↗'}</button></div>
+    {validationAttempt > 0 && !valid && <div ref={validationFeedback} role="alert" tabIndex={-1} className="error" aria-label="Image generation needs attention"><strong>Check these settings before generating</strong><ul>{[...new Set(validationMessages)].map(message => <li key={message}>{message}</li>)}</ul><p>Your draft is preserved. No generation was submitted.</p></div>}
+    <div className="row actions"><button type="button" aria-describedby="image-clear-help" disabled={busy || referenceBusy || styleBusy} onClick={clearInputs}>Clear inputs</button><button className="primary" disabled={busy}>{busy ? 'Submitting…' : 'Generate image ↗'}</button></div>
   </form>
 }

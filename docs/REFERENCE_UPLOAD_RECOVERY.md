@@ -5,6 +5,30 @@ one PNG/JPEG/WebP of at most 8 MiB, with finite user/global count and byte quota
 The editor keeps the draft and any previous attachment when a replacement fails.
 It does not automatically repeat an upload or generation request.
 
+## Image generation feedback (Studio #101)
+
+The Image badge says **Service ready** when discovery finds the service available;
+this is not a statement that the draft is complete or an attestation of GPU/model
+quality. Generate remains clickable when the draft is incomplete, invalid or
+waiting for a reference. An explicit click or keyboard submission displays and
+focuses a named explanation for the relevant prompt, model, template, reference,
+numeric setting or LoRA. Browser-native form validation is disabled so it cannot
+silently intercept this explanation; the existing payload validators and all
+backend account/input checks still gate actual submission. Prompt length bounds
+are checked explicitly for automatic Image drafts.
+
+No request is submitted for an invalid draft, and editing a value never submits
+or retries automatically. Correct the indicated settings and press Generate
+again. An in-flight Image submission alone disables this button. Reference
+preparation is explained on click, and Clear inputs dismisses the explanation.
+The header's PHASE 1A development marker is removed from the product UI.
+
+The reported historical Ready-but-disabled condition is not attributed to a
+specific saved setting. Current Controller metadata advertises both Image and
+Video available; a synthetic busy flag does not disable Studio Image discovery.
+This presentation change does not change GPU scheduling or qualify yesterday's
+browser session.
+
 ## User-visible failures
 
 The picker distinguishes a known quota response from admission busy (both HTTP

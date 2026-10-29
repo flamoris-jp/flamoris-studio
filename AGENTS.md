@@ -1,5 +1,15 @@
 # AGENTS.md
 
+## 2026-10-29 Studio #101
+
+Image Generate stays clickable for validation feedback, including Service ready
+with incomplete/invalid settings. Only an in-flight Image submission disables
+it. Preserve the same payload/reference/model gates, no submission on validation
+failure, drafts and explicit retry after correction. Use the existing payload
+validators for field diagnostics; bypass native form bubbles with noValidate so
+clicks and keyboard submission receive the same focused explanation. Remove the
+PHASE 1A development badge. Yesterday's historical cause remains unconfirmed.
+
 ## 2026-10-29 Studio #99
 
 Repair failed reference-upload byte reservations only after exact upstream deletion

@@ -1,5 +1,7 @@
 # flamoris-studio 1.2.1
 
+Image Generate now explains incomplete/invalid settings on click instead of silently disabling. Named validation feedback covers model/template selection, prompts, references, numeric settings and LoRAs while preserving the draft and preventing invalid submissions or automatic retries. Only an in-flight Image submission disables the button. The Image badge now says Service ready, and the internal PHASE 1A header marker is removed.
+
 Failed reference-image uploads release their byte reservation after upstream deletion and local cleanup are confirmed, provided no execution references the input. Bounded maintenance also rechecks eligible older revoked uploads; unknown results and retained historical previews stay protected. Image/Video upload errors now distinguish storage quota, busy admission, size/format, incomplete transfer, upstream validation and receipt verification, while preserving drafts and never replaying automatically. Reference reservation defaults increase to 2 GiB and 1,024 rows per user, with aggregate limits of 8 GiB and 4,096 rows. Explicit environment overrides remain unchanged; the 8 MiB per-file limit and existing retention remain. No database migration is required. The original intermittent HTTP 422 still requires live acceptance; this release does not claim that its cause is identified. See [reference-upload recovery](../docs/REFERENCE_UPLOAD_RECOVERY.md).
 
 # flamoris-studio 1.2.0
