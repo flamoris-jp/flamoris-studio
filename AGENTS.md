@@ -1,5 +1,16 @@
 # AGENTS.md
 
+## 2026-10-29 Studio #102
+
+The 24-hour receipt comparison defect is reproduced with real Controller
+metadata and a controlled 0.1-second clock offset. Follow
+docs/REFERENCE_UPLOAD_RECOVERY.md: validate finite created/expiry times and a
+declared lifetime at most 24 hours, tolerate at most one second of future
+creation and cap stored expiry to the local declared lifetime. Do not extend
+expired inputs or weaken ID/digest/MIME/size/provenance/ownership fences. Surface
+only allowlisted receipt reasons, with no raw metadata. Actual production
+clock offset and attribution of the reported PNG failure remain unconfirmed.
+
 ## 2026-10-29 Studio #101
 
 The owner extended this behavior to Video, Music generation/transcription,

@@ -5,12 +5,13 @@ import hashlib
 from datetime import datetime, timezone
 
 from fastapi import Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from .auth import authenticated_user, current_user, database
 from .db import ManagedInput, now
 from .gateway import GatewayError
-from .managed_inputs import input_view, owned_input, reserve, validate_metadata, release_deleted_upload
+from .managed_inputs import input_view, owned_input, reserve, validate_metadata, release_deleted_upload, ReceiptValidationError
 
 MAX_UPLOAD_BYTES = 8 * 1024**2
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
@@ -23,9 +24,9 @@ async def publish_upload(app, db, row, data):
         # before the first RPC. Unknown begin/finish cannot orphan authority.
         raw = await app.state.gateway.upload_input(row.upstream_input_id, data, row.mime_type)
         try:
-            validate_metadata(raw, row, creating=True)
-        except GatewayError:
-            raise GatewayError("upload_receipt_invalid") from None
+            raw = validate_metadata(raw, row, creating=True)
+        except GatewayError as exc:
+            raise ReceiptValidationError(getattr(exc, "reason", "receipt_metadata"), code="upload_receipt_invalid") from None
         row.expires_at = datetime.fromtimestamp(raw["expires_at"], timezone.utc)
         locator = None
         try:
@@ -110,6 +111,8 @@ def mount_input_uploads(app):
             if exc.code in {"validation", "upload_receipt_invalid"}:
                 detail = ("Image upload metadata could not be verified" if exc.code == "upload_receipt_invalid"
                           else "Image upload was rejected by the generation service")
+                if isinstance(exc, ReceiptValidationError):
+                    return JSONResponse(status_code=422, content={"detail": detail, "reason": exc.reason})
                 raise HTTPException(422, detail) from None
             raise
         except TimeoutError:

@@ -1,3 +1,7 @@
+# flamoris-studio 1.2.2
+
+Fix a reproduced reference-receipt clock comparison that rejected a valid 24-hour input when the generation host was even 0.1 seconds ahead of Studio. Validate the receipt's creation/expiry pair and maximum 24-hour lifetime, allow at most one second of future creation and cap stored expiry so the local lifetime never exceeds the declared duration or 24 hours. Expired inputs and identity, checksum, size, media and provenance mismatches still fail closed. Image/Video upload errors now identify an allowlisted rejection category in Studio itself, even when DevTools evicts the response body. No database migration, quota change, GPU/model update or automatic retry. The concrete clock defect is reproduced; attribution of the operator's intermittent PNG failure remains pending browser acceptance. See [reference-upload recovery](../docs/REFERENCE_UPLOAD_RECOVERY.md).
+
 # flamoris-studio 1.2.1
 
 Creative action buttons now explain incomplete/invalid settings on click instead of silently disabling. This covers Image, Video, Music generation/transcription, Speech, Raw Intelligence, Assistant send/model selection and personality save. Named feedback preserves drafts and existing input, active/unknown request and permission gates; invalid clicks create no new request identity and never submit or retry. In-flight operations still prevent duplicates, and read-only/frozen updates remain protected. The Image badge now says Service ready, and the internal PHASE 1A header marker is removed. See [action feedback](../docs/ACTION_FEEDBACK.md).

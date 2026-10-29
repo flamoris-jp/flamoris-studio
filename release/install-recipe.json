@@ -3,7 +3,7 @@
   "sql_files": [],
   "recipe": {
     "application_id": "flamoris-studio",
-    "release": "1.2.1",
+    "release": "1.2.2",
     "platform": "linux/amd64",
     "compatible_from": [
       "1.0.7",
@@ -11,7 +11,8 @@
       "1.0.9",
       "1.0.10",
       "1.1.0",
-      "1.2.0"
+      "1.2.0",
+      "1.2.1"
     ],
     "dependencies": {},
     "settings": [
@@ -152,7 +153,7 @@
     },
     "application": {
       "application_id": "flamoris-studio",
-      "release": "1.2.1",
+      "release": "1.2.2",
       "directories": [
         {
           "path": "${root}/config"

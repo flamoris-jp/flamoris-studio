@@ -42,10 +42,39 @@ authentication/authorization (401/403), and unconfirmed network/server outcomes.
 Only allowlisted reasons enter this presentation. Arbitrary provider messages,
 validation-input arrays, private identifiers and proxy HTML are not displayed.
 
-The reported intermittent 422 is not yet attributed to a specific check. The new
-messages identify the failing boundary; existing MIME, digest, identity, size and
-expiry verification remain unchanged. A later successful upload does not prove
-that intermittent failures are resolved.
+The reported intermittent 422 is not yet attributed to a specific check. Studio
+1.2.2 adds allowlisted receipt reasons for identity, provenance, media, size,
+checksum, malformed timestamps, excessive lifetime, clock offset and expiry.
+These appear in the Image/Video upload error itself; DevTools response retention
+is no longer required to identify the category. Raw receipts, hashes, IDs,
+filenames and private provider messages are never included. Unknown/malformed
+reason values retain the generic safe message. A later successful upload does
+not by itself prove that intermittent failures are resolved.
+
+## Cross-host receipt time validation (Studio #102)
+
+Controller publishes `created_at` and `expires_at` for both uploaded inputs and
+generated snapshots. An actual synthetic PNG upload returned a valid 86,400
+second lifetime and matching ID/MIME/size/digest/provenance. With that receipt,
+the previous Studio comparison rejected a simulated local observation only 0.1
+seconds behind creation, because remote expiry was greater than local now plus
+24 hours. The synthetic input was positively deleted; no inference was run.
+The actual offset between the production hosts has not been measured, so this
+reproduction is not a conclusive attribution of the reported original PNG error.
+
+Studio 1.2.2 validates finite, ordered creation/expiry timestamps and a positive
+declared lifetime of at most 86,400 seconds. Creation may be at most one second
+ahead of the local observation, matching the existing Agent clock policy.
+Already expired receipts still fail. The returned validated metadata contains
+`min(remote_expiry, local_observation + declared_lifetime)` and creation paths
+store that capped expiry. This never extends the remote expiry or permits more
+than 24 local hours. Reads do not refresh the stored local expiry. The upstream
+receipt is not mutated. Identity, SHA, exact byte count, MIME/provenance,
+ownership, confirmed compensation and unknown/no-replay checks remain in force.
+
+Receipts without Controller's declared creation time, nonfinite/bool/overflowing
+timestamps, overlong lifetimes and offsets above one second fail closed with a
+specific allowlisted category. No NTP configuration is changed by Studio.
 
 ## Reservation accounting
 

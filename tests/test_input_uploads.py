@@ -129,7 +129,7 @@ def uploading(gateway, factory):
         gateway.input_calls.append(("upload", key))
         raw = {"input_id": key, "source_asset_id": None, "source_kind": "upload", "mime_type": mime,
                "media_kind": "image", "size_bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
-               "expires_at": time.time() + 80000}
+               "created_at": time.time(), "expires_at": time.time() + 80000}
         gateway.input_records[key] = raw
         return raw
     gateway.upload_input = upload
@@ -228,7 +228,9 @@ def test_upload_receipt_identity_mismatch_is_not_published(clients):
         raw = await real(*args)
         return {**raw, "input_id": uuid.uuid4().hex}
     gateway.upload_input = upload
-    assert a.post(PATH, content=gateway.image, headers={"Content-Type": "image/png", "X-CSRF-TOKEN": csrf}).status_code == 422
+    response = a.post(PATH, content=gateway.image, headers={"Content-Type": "image/png", "X-CSRF-TOKEN": csrf})
+    assert response.status_code == 422
+    assert response.json() == {"detail": "Image upload metadata could not be verified", "reason": "receipt_identity"}
     with factory() as db:
         assert db.scalar(select(ManagedInput)).state == "revoked"
 
@@ -249,6 +251,33 @@ def test_confirmed_failed_uploads_release_bytes_before_the_next_attempt(clients)
         rows = db.scalars(select(ManagedInput)).all()
         assert len(rows) == 3  # Keep ownership tombstones and the count bound.
         assert all(row.state == "revoked" and row.accounted_bytes == 0 for row in rows)
+
+
+@pytest.mark.parametrize("offset,expected", [(0.1, 201), (1.5, 422)])
+def test_upload_clock_validation_publishes_capped_expiry_or_safe_reason(clients, offset, expected):
+    a, _, gateway, factory = clients
+    csrf = register(a, "receipt-clock@example.test")
+    real = uploading(gateway, factory)
+    receipts = []
+    async def upload(*args):
+        raw = await real(*args)
+        created = time.time() + offset
+        raw = {**raw, "created_at": created, "expires_at": created + 86400}
+        receipts.append(raw)
+        return raw
+    gateway.upload_input = upload
+    response = a.post(PATH, content=gateway.image, headers={"Content-Type": "image/png", "X-CSRF-TOKEN": csrf})
+    assert response.status_code == expected, response.text
+    with factory() as db:
+        row = db.scalar(select(ManagedInput))
+        if expected == 201:
+            assert row.state == "live"
+            assert row.expires_at <= now() + timedelta(hours=24)
+            assert row.expires_at.timestamp() < receipts[0]["expires_at"]
+        else:
+            assert response.json() == {"detail": "Image upload metadata could not be verified", "reason": "receipt_clock"}
+            assert row.state == "revoked" and row.accounted_bytes == 0
+            assert receipts[0]["input_id"] not in response.text
 
 
 @pytest.mark.asyncio
