@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, IntelligenceFailure, type IntelligenceAnswer, type IntelligenceDiscovery } from './api'
+import { useActionFeedback } from './ActionFeedback'
 
 export async function textAttachment(file: File): Promise<string> {
   if (file.size > 16384 || !/\.(txt|md|py|js|ts|tsx|jsx|json|csv|cs|cpp|c|h|html|css|xml|yaml|yml|sql|sh)$/i.test(file.name)) throw new Error('Choose a UTF-8 text/code file no larger than 16 KiB.')
@@ -53,6 +54,18 @@ export default function Intelligence({ csrf, active }: { csrf: string; active: b
     discovery.capabilities.includes(operation) && tokens.trim() !== '' && Number.isSafeInteger(maxTokens) &&
     maxTokens >= 1 && maxTokens <= selected.maxOutputTokens && bytes + 512 + maxTokens <= selected.contextTokens &&
     temperature.trim() !== '' && Number.isFinite(temp) && temp >= 0 && temp <= 2
+  const problems: string[] = []
+  if (!input.trim()) problems.push('Prompt: enter the text or instructions to run.')
+  if (bytes > 16384) problems.push('Input size: keep prompt, system instruction and attachments within 16384 UTF-8 bytes.')
+  if (!selected?.available) problems.push('Model: choose an available model from the list.')
+  if (clock >= freshUntil) problems.push('Model availability: the check has expired or failed. Press Check Intelligence before running.')
+  if (!discovery.capabilities.includes(operation)) problems.push('Operation: select an operation supported by the configured service.')
+  if (!tokens.trim() || !Number.isSafeInteger(maxTokens) || maxTokens < 1 || selected && maxTokens > selected.maxOutputTokens) problems.push(`Max output tokens: enter a whole number from 1 to ${selected?.maxOutputTokens ?? 'the selected model limit'}.`)
+  if (selected && bytes + 512 + maxTokens > selected.contextTokens) problems.push('Context budget: shorten the input or reduce max output tokens to fit the selected model.')
+  if (!temperature.trim() || !Number.isFinite(temp) || temp < 0 || temp > 2) problems.push('Temperature: enter a number from 0 to 2.')
+  if (reading) problems.push('Attachments: a file is still being read. Wait for it to finish.')
+  if (uncertain) problems.push('Previous inference: its outcome is unconfirmed. Use Start new request explicitly before sending more work; this click will not retry it.')
+  const validation = useActionFeedback(problems)
   return <section className="panel editor" aria-label="Raw Intelligence editor">
     <h2>Raw Intelligence</h2><p>One inference request with your explicit instructions. Choose an approved local model.</p>
     <p role="status">{discovery.available ? 'Provider reachable. Model availability is checked on execution.' : 'Intelligence is unavailable. Your draft is preserved.'}</p>
@@ -82,7 +95,9 @@ export default function Intelligence({ csrf, active }: { csrf: string; active: b
     <p>{bytes.toLocaleString()} / 16,384 input bytes. Selected text/code is sent only when you run inference. URLs and host file paths are not fetched.</p>
     {notice && <p role="alert">{notice}</p>}
     {uncertain && <p role="alert">This attempt remains unconfirmed. Start a new request explicitly before sending more work.</p>}
-    <div className="row actions"><button className="primary" disabled={!valid || busy || uncertain || reading} onClick={async () => {
+    {validation.feedback}
+    <div className="row actions"><button className="primary" disabled={busy} onClick={async () => {
+      if (busy || !validation.check()) return
       if (!valid || busy || uncertain || reading) return
       const payload = { requestId: crypto.randomUUID(), modelId: model, capabilityId: operation,
         input: assembled, instruction, maxOutputTokens: maxTokens, temperature: temp }
@@ -96,7 +111,7 @@ export default function Intelligence({ csrf, active }: { csrf: string; active: b
         setUncertain(!(error instanceof IntelligenceFailure) || error.uncertain)
       } finally { if (alive.current) setBusy(false) }
     }}>{busy ? 'Running inference…' : 'Run inference'}</button>
-      <button disabled={busy || reading} onClick={() => { setUncertain(false); setAnswer(null); setNotice(''); setInput(''); setInstruction(''); setAttachments([]) }}>Start new request</button></div>
+      <button disabled={busy || reading} onClick={() => { validation.clear(); setUncertain(false); setAnswer(null); setNotice(''); setInput(''); setInstruction(''); setAttachments([]) }}>Start new request</button></div>
     {answer && <div className="intelligence-result"><h3>Result</h3>
       {answer.finishReason === 'length' && <p role="status">Output reached the token limit and may be partial.</p>}
       {answer.text ? <pre>{answer.text}</pre> : <p>No final text was returned within the output budget.</p>}

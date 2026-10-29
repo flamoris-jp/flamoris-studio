@@ -3,7 +3,7 @@ import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { ImageEditor, initialImageDraft, restoreImageDraft, type ImageDraft } from './App'
-import { api, type Asset, type Discovery, type Workflow } from './api'
+import { api, HTTPFailure, type Asset, type Discovery, type Workflow } from './api'
 import { legalSeed, seedDomain, validValue, workflowPayload } from './WorkflowImage'
 
 const workflow: Workflow = { id: 'text-to-image', kind: 'builtin', name: 'Builtin image', selectable: true, reason: null, definitionVersion: null, definitionDigest: null,
@@ -27,6 +27,13 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 const button = (text: string) => [...host.querySelectorAll('button')].find(b => b.textContent?.includes(text))!
 async function click(text: string) { await act(async () => button(text).dispatchEvent(new MouseEvent('click', { bubbles: true }))) }
+async function expectValidationExplanation() {
+  expect(button('Generate image').disabled).toBe(false)
+  await click('Generate image')
+  expect(host.querySelector('[aria-label="Image generation needs attention"]')).not.toBeNull()
+  expect(host.textContent).toContain('No generation was submitted.')
+}
+
 async function show(data = discovery, restore = false) {
   const submit = vi.fn()
   function Editor() {
@@ -68,7 +75,7 @@ test('Clear inputs resets the complete draft and picker while keeping saved Styl
   expect([...style.options].some(option => option.textContent === 'Recipe')).toBe(true)
   expect([...host.querySelectorAll('label')].find(label => label.textContent === 'Style name')!.querySelector('input')!.value).toBe('')
   expect(document.activeElement).toBe(host.querySelector('textarea'))
-  expect(button('Generate image').disabled).toBe(true)
+  await expectValidationExplanation()
   expect(submit).not.toHaveBeenCalled()
 })
 
@@ -162,11 +169,11 @@ test('builtin generation does not depend on reference infrastructure', async () 
 
 test('restored references remain visible and keep builtin generation blocked', async () => {
   await show(discovery, true)
-  expect(button('Generate image').disabled).toBe(true)
+  await expectValidationExplanation()
   expect(host.querySelector('img')?.getAttribute('src')).toBe('/input-thumb')
   await act(async () => host.querySelector('img')!.dispatchEvent(new Event('error')))
   expect(host.textContent).toContain('Preview unavailable')
-  expect(button('Generate image').disabled).toBe(true)
+  await expectValidationExplanation()
   await click('Remove reference')
   expect(button('Generate image').disabled).toBe(false)
 })
@@ -180,7 +187,7 @@ test('retired saved selection preserves the draft until explicit builtin reselec
     return <ImageEditor discovery={discovery} form={form} setForm={setForm} busy={false} csrf="csrf" onSubmit={vi.fn()} />
   }
   await act(async () => root.render(<Editor />))
-  expect(button('Generate image').disabled).toBe(true)
+  await expectValidationExplanation()
   expect(host.querySelector('textarea')?.value).toBe('keep retired draft')
   await selectWorkflow()
   expect(button('Generate image').disabled).toBe(false)
@@ -280,7 +287,7 @@ test('restored v3 settings keep the draft and require reselection when the exact
     return <ImageEditor discovery={{ ...discovery, workflows: [wrapped] }} form={form} setForm={setForm} busy={false} csrf="csrf" onSubmit={vi.fn()} />
   }
   await act(async () => root.render(<Editor />))
-  expect(button('Generate image').disabled).toBe(true)
+  await expectValidationExplanation()
   expect(host.querySelector('textarea')?.value).toBe('my restored prompt')
   expect(host.querySelector('select')?.value).toBe('__stale')
 })
@@ -304,12 +311,12 @@ test('local upload prepares a private reference before readiness but cannot be i
   await chooseFile([file])
   expect(api.uploadInput).toHaveBeenCalledWith(file, 'csrf')
   expect(submit).not.toHaveBeenCalled()
-  expect(button('Generate image').disabled).toBe(true)
+  await expectValidationExplanation()
   expect(host.textContent).toContain('Remove the reference')
   expect(host.querySelector('textarea')?.value).toBe('keep this prompt')
   expect(host.querySelector('img')?.getAttribute('src')).toBe('/input-thumb')
   await selectWorkflow()
-  expect(button('Generate image').disabled).toBe(true)
+  await expectValidationExplanation()
   await click('Remove reference')
   expect(button('Generate image').disabled).toBe(false)
   await click('Generate image')
@@ -321,7 +328,7 @@ test('preparing uploads while infrastructure is offline keeps generation blocked
   expect(button('Upload image').disabled).toBe(false)
   await chooseFile([new File(['fixture'], 'x.webp', { type: 'image/webp' })])
   expect(api.uploadInput).toHaveBeenCalledTimes(1)
-  expect(button('Generate image').disabled).toBe(true)
+  await expectValidationExplanation()
   expect(submit).not.toHaveBeenCalled()
 })
 
@@ -330,16 +337,28 @@ test('upload replacement blocks generation during transfer and preserves the pre
   let reject!: (error: Error) => void
   vi.mocked(api.uploadInput).mockImplementation(() => new Promise((_resolve, fail) => { reject = fail }))
   await chooseFile([new File(['fixture'], 'x.jpg', { type: 'image/jpeg' })])
-  expect(button('Generate image').disabled).toBe(true)
+  await expectValidationExplanation()
   expect(button('Remove reference').disabled).toBe(true)
   await act(async () => reject(new Error('network failed')))
-  expect(button('Generate image').disabled).toBe(true)
+  await expectValidationExplanation()
   expect(host.textContent).toContain('No automatic retry')
   expect(api.uploadInput).toHaveBeenCalledTimes(1)
   expect(host.querySelector('img')?.getAttribute('src')).toBe('/input-thumb')
   expect(submit).not.toHaveBeenCalled()
   await click('Remove reference')
   expect(button('Generate image').disabled).toBe(false)
+})
+
+test('upload quota errors remain visible without losing the attached image or prompt', async () => {
+  const submit = await show(discovery, true)
+  vi.mocked(api.uploadInput).mockRejectedValue(new HTTPFailure('private raw failure', 409, 'reference_quota'))
+  await chooseFile([new File(['fixture'], 'x.jpg', { type: 'image/jpeg' })])
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('Reference-image storage is full (HTTP 409)')
+  expect(host.textContent).not.toContain('private raw failure')
+  expect(host.querySelector('textarea')!.value).toBe('keep this prompt')
+  expect(host.querySelector('img')?.getAttribute('src')).toBe('/input-thumb')
+  expect(api.uploadInput).toHaveBeenCalledTimes(1)
+  expect(submit).not.toHaveBeenCalled()
 })
 
 test('drop accepts a single image and rejects unsupported, empty, oversized and multiple files before upload', async () => {

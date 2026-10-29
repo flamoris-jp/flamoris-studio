@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, HTTPFailure, type Execution, type ManagedInput, type SpeechInput } from './api'
 import { ResultPreview } from './Gallery'
+import { invalidFields, useActionFeedback, type ReportProblem } from './ActionFeedback'
 
 export type SpeechDraft = { text: string; caption: string; seconds: string; steps: string; seed: string }
 export const initialSpeechDraft = (): SpeechDraft => ({ text: '', caption: '', seconds: '', steps: '40', seed: '0' })
@@ -9,12 +10,15 @@ const textValid = (value: string, required: boolean) => (!required || !!value.tr
   [...value].length <= 512 && new TextEncoder().encode(value).length <= 2048 &&
   !/[\u0000-\u0008\u000b-\u001f]/.test(value)
 
-export function speechPayload(form: SpeechDraft): SpeechInput | null {
+export function speechPayload(form: SpeechDraft, report?: ReportProblem): SpeechInput | null {
   const seconds = form.seconds.trim() ? Number(form.seconds) : null, steps = Number(form.steps), seed = Number(form.seed)
-  if (!textValid(form.text, true) || !textValid(form.caption, false) ||
-    seconds !== null && (!Number.isFinite(seconds) || seconds < 0.5 || seconds > 30) || !form.steps.trim() ||
-    !Number.isSafeInteger(steps) || steps < 1 || steps > 80 || form.seed.trim() &&
-    (!Number.isSafeInteger(seed) || seed < 0 || seed > Number.MAX_SAFE_INTEGER)) return null
+  if (invalidFields([
+    [!textValid(form.text, true), 'Speech text: enter 1 to 512 characters within 2048 UTF-8 bytes, without unsupported control characters.'],
+    [!textValid(form.caption, false), 'Voice description: use at most 512 characters within 2048 UTF-8 bytes, without unsupported control characters.'],
+    [seconds !== null && (!Number.isFinite(seconds) || seconds < 0.5 || seconds > 30), 'Output length: leave blank for Automatic or enter 0.5 to 30 seconds.'],
+    [!form.steps.trim() || !Number.isSafeInteger(steps) || steps < 1 || steps > 80, 'Sampling steps: enter a whole number from 1 to 80.'],
+    [form.seed.trim() && (!Number.isSafeInteger(seed) || seed < 0 || seed > Number.MAX_SAFE_INTEGER), 'Seed: leave blank for Random or enter a whole number from 0 to 9007199254740991.'],
+  ], report)) return null
   return { text: form.text, caption: form.caption, seconds, steps, seed: form.seed.trim() ? seed : null }
 }
 
@@ -42,8 +46,15 @@ export default function Speech({ csrf, accountKey, form, setForm, execution, onE
   const current = (version: number) => mounted.current && epoch.current === version && authorized()
   const storageKey = `flamoris.speech.pending:${accountKey}`
   const clearPending = () => { try { sessionStorage.removeItem(storageKey) } catch {} }
-  const payload = speechPayload(form)
+  const problems: string[] = []
+  const payload = speechPayload(form, message => problems.push(message))
   const active = execution && ['queued', 'running', 'submitting', 'cancel_requested', 'unknown', 'submission_unknown'].includes(execution.state)
+  if (checking) problems.push('Speech service: availability is still being checked. Wait, then press Generate again.')
+  else if (!available) problems.push('Speech service: unavailable. Use Check again to refresh availability.')
+  if (referenceFile && (!reference || !referenceAvailable || !reference.available)) problems.push('Reference audio: upload an available WAV supported by the speech service, or remove the reference to generate without it.')
+  if (uncertain || execution?.state === 'submission_unknown' || execution?.state === 'unknown') problems.push('Previous Speech request: its outcome is unconfirmed. Check the previous request or result; no new recording will be submitted.')
+  else if (active) problems.push('Previous Speech request: still active. Wait for completion or request cancellation and confirm it has finished.')
+  const validation = useActionFeedback(problems)
   const change = (key: keyof SpeechDraft, value: string) => setForm({ ...form, [key]: value })
   async function check() {
     const version = epoch.current
@@ -104,8 +115,9 @@ export default function Speech({ csrf, accountKey, form, setForm, execution, onE
   return <section className="panel"><span className="eyebrow">SPEECH</span><h2>Japanese speech</h2>
     <p>Generate one speech recording from text and an optional voice description. Add a reference recording to guide the voice when reference speech is available.</p>
     {!available && <p role="status">{checking ? 'Checking speech availability…' : 'Speech is unavailable for the configured service.'} <button type="button" disabled={checking || busy} onClick={check}>Check again</button></p>}
-    <form onSubmit={async event => {
+    <form noValidate onSubmit={async event => {
       event.preventDefault()
+      if (busy || !validation.check()) return
       if (!payload || !available || busy || active || uncertain || referenceFile && (!reference || !referenceAvailable || !reference.available)) return
       const version = epoch.current
       setBusy(true); setError('')
@@ -172,7 +184,8 @@ export default function Speech({ csrf, accountKey, form, setForm, execution, onE
       <small>Text and description each allow up to 512 characters. Leave output length blank to let the voice determine its duration.</small>
       {(error || statusError) && <p role="alert" className="error">{error || statusError}</p>}
       {uncertain && pendingId && <button type="button" disabled={busy} onClick={() => recover(pendingId)}>Check previous request</button>}
-      <button className="primary" disabled={!available || checking || busy || !payload || !!active || uncertain || !!referenceFile && (!reference || !referenceAvailable || !reference.available)}>{busy ? 'Submitting…' : 'Generate speech'}</button>
+      {validation.feedback}
+      <button className="primary" disabled={busy}>{busy ? 'Submitting…' : 'Generate speech'}</button>
     </form>
     {execution && <div className="results"><h3>Speech result</h3><span className="badge">{execution.state.replaceAll('_', ' ')}</span>
       {execution.state === 'busy' && <p>The generation service is busy; no new generation was accepted.</p>}

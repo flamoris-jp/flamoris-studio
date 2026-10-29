@@ -1,5 +1,35 @@
 # AGENTS.md
 
+## 2026-10-29 Studio #101
+
+The owner extended this behavior to Video, Music generation/transcription,
+Speech, Raw Intelligence, Assistant send/model selection and personality save.
+Use docs/ACTION_FEEDBACK.md. Keep active/unknown request fences, exact model
+switch retry identities and read-only permissions; clicking for an explanation
+must not create a request identity, send work or change a draft. In-flight
+operations and structural/read-only controls retain applicable disabled states.
+
+Image Generate stays clickable for validation feedback, including Service ready
+with incomplete/invalid settings. Only an in-flight Image submission disables
+it. Preserve the same payload/reference/model gates, no submission on validation
+failure, drafts and explicit retry after correction. Use the existing payload
+validators for field diagnostics; bypass native form bubbles with noValidate so
+clicks and keyboard submission receive the same focused explanation. Remove the
+PHASE 1A development badge. Yesterday's historical cause remains unconfirmed.
+
+## 2026-10-29 Studio #99
+
+Repair failed reference-upload byte reservations only after exact upstream deletion
+and thumbnail cleanup are confirmed and no execution references the input. Keep
+ownership/count tombstones, historical previews and unknown charges. Expose only
+allowlisted upload diagnostics, preserve drafts and never replay automatically.
+The observed original HTTP 422 cause remains unconfirmed; do not weaken image,
+receipt, expiry or account checks as a speculative fix.
+The owner's follow-up requests a practical 2 GiB per-user reference budget.
+Use finite 8 GiB aggregate / 1,024 per-user rows / 4,096 aggregate rows defaults;
+preserve explicit environment overrides, per-file bounds and retention. Record
+source defaults separately from actual host configuration and acceptance.
+
 ## 2026-10-28 Studio #97
 
 The user requests Studio Video integration after the first real Controller AnimeGen I2V receipt. Follow docs/VIDEO_OPERATION.md. Reuse authenticated Controller HTTP, owned managed inputs, request/execution/input fences and existing MP4 Assets delivery. Do not introduce MCP routing, a second job/GPU authority, raw graph editing, model downloads or Kachinco changes. A successful external test clip is not Studio browser acceptance or general model-quality qualification.

@@ -66,7 +66,7 @@ test('video payload keeps image roles separate and validates exact clip budgets'
 test('image upload enables one request with actual duration and no private browser storage', async () => {
   const send = vi.spyOn(api, 'videoSubmit').mockResolvedValue(queued)
   const observer = await show()
-  expect(button('Generate video').disabled).toBe(true)
+  await explainBlockedAction()
   expect(host.textContent).toContain('5.0625 seconds')
   await upload()
   expect(button('Generate video').disabled).toBe(false)
@@ -84,7 +84,7 @@ test('unavailable Video keeps the motion draft when checking again', async () =>
   const send = vi.spyOn(api, 'videoSubmit')
   await act(async () => button('Check again').click())
   expect(host.querySelector('textarea')!.value).toBe('Keep this motion')
-  expect(button('Generate video').disabled).toBe(true)
+  await explainBlockedAction()
   await submit(); expect(send).not.toHaveBeenCalled()
 })
 
@@ -93,7 +93,7 @@ test('FLF2V requires a separately attached end image and never silently discards
   vi.mocked(api.videoDiscovery).mockResolvedValue({ available: true, workflows: [flf], managedInputReady: true })
   const send = vi.spyOn(api, 'videoSubmit').mockResolvedValue(queued)
   await show(); expect(host.textContent).toContain('End image')
-  await upload(0); expect(button('Generate video').disabled).toBe(true)
+  await upload(0); await explainBlockedAction()
   await upload(1); expect(button('Generate video').disabled).toBe(false)
   await submit(); expect(send.mock.calls[0][0].imageInputs).toEqual({ start_image: HANDLE, end_image: HANDLE })
 })
@@ -102,7 +102,7 @@ test('ambiguous submission recovers only through the existing request and never 
   const send = vi.spyOn(api, 'videoSubmit').mockRejectedValue(new Error('lost receipt'))
   const recover = vi.spyOn(api, 'videoRequest').mockResolvedValue({ ...queued, state: 'submission_unknown' })
   await show(); await upload(); await submit()
-  expect(button('Generate video').disabled).toBe(true)
+  await explainBlockedAction()
   await act(async () => root.render(<div />)); const observer = await show()
   expect(recover).toHaveBeenCalledExactlyOnceWith(REQUEST)
   expect(observer).toHaveBeenCalledWith({ ...queued, state: 'submission_unknown' })
@@ -130,6 +130,33 @@ test('completed result uses the owned video player and download routes', async (
 test('an expired or failed reference cannot enable generation', async () => {
   vi.mocked(api.input).mockResolvedValue({ id: HANDLE, available: false, thumbnailUrl: null })
   const send = vi.spyOn(api, 'videoSubmit')
-  await show(); await upload(); expect(button('Generate video').disabled).toBe(true)
+  await show(); await upload(); await explainBlockedAction()
   await submit(); expect(send).not.toHaveBeenCalled()
 })
+
+test('invalid frame count explains the field on click without an identity; correction requires another click', async () => {
+  const send = vi.spyOn(api, 'videoSubmit').mockResolvedValue(queued)
+  await show(); await upload()
+  const identity = vi.spyOn(crypto, 'randomUUID')
+  const frames = [...host.querySelectorAll('label')].find(label => label.textContent?.startsWith('Frames') && !label.textContent.startsWith('Frames per second'))!.querySelector('input')!
+  await change(frames, '82')
+  expect(frames.checkValidity()).toBe(false)
+  await act(async () => button('Generate video').click())
+  expect(host.querySelector('[aria-label="Action needs attention"]')?.textContent).toContain('Frames: use 5, 9, 13')
+  expect(send).not.toHaveBeenCalled(); expect(identity).not.toHaveBeenCalled(); expect(sessionStorage.length).toBe(0)
+  await change(frames, '81')
+  expect(host.querySelector('[aria-label="Action needs attention"]')).toBeNull()
+  expect(send).not.toHaveBeenCalled()
+  await act(async () => button('Generate video').click())
+  expect(send).toHaveBeenCalledOnce(); expect(identity).toHaveBeenCalledOnce()
+})
+
+async function explainBlockedAction() {
+  const action = button('Generate video') as HTMLButtonElement
+  expect(action.disabled).toBe(false)
+  const before = vi.isMockFunction(api.videoSubmit) ? vi.mocked(api.videoSubmit).mock.calls.length : null
+  await act(async () => action.click())
+  expect(host.querySelector('[aria-label="Action needs attention"]')).not.toBeNull()
+  expect(host.textContent).toContain('No request was sent.')
+  if (before !== null) expect(api.videoSubmit).toHaveBeenCalledTimes(before)
+}

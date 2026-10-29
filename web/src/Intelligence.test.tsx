@@ -30,7 +30,7 @@ test('offline draft survives checks; execution uses selected model and plain tex
   const discovery = vi.spyOn(api, 'intelligenceDiscovery').mockResolvedValue({ available: false, models: [], capabilities: [] })
   const execute = vi.spyOn(api, 'intelligenceExecute').mockImplementation(async payload => ({ ...payload, executionId: 'correlation', text: '<script>plain answer</script>', finishReason: 'length', usage: null, elapsedMs: 1 }))
   await show(); await input(host.querySelectorAll('textarea')[1], 'one private prompt')
-  expect(button('Run inference').disabled).toBe(true)
+  await explainBlockedAction()
   discovery.mockResolvedValue(ready()); await click('Check Intelligence'); await fill(); await click('Run inference')
   expect(execute).toHaveBeenCalledTimes(1)
   expect(execute.mock.calls[0][0]).toMatchObject({ modelId: 'local', input: 'one private prompt', maxOutputTokens: 1024, temperature: 0.7 })
@@ -45,7 +45,7 @@ test('uncertain inference keeps the snapshot and no refresh/navigation replays i
   const execute = vi.spyOn(api, 'intelligenceExecute').mockRejectedValue(new IntelligenceFailure('No automatic retry was made.', true))
   await show(); await fill(); await click('Run inference'); await click('Check Intelligence'); await show(false); await show(true)
   expect(execute).toHaveBeenCalledTimes(1)
-  expect(button('Run inference').disabled).toBe(true)
+  await explainBlockedAction()
   expect(host.querySelectorAll('textarea')[1].value).toBe('one private prompt')
   await click('Start new request')
   expect(host.querySelectorAll('textarea')[1].value).toBe('')
@@ -58,4 +58,31 @@ test('text/code attachment is bounded UTF-8 with no executable markup', async ()
   await expect(textAttachment(file('image.png', new Uint8Array(1)))).rejects.toThrow()
   await expect(textAttachment(file('huge.txt', new Uint8Array(16385)))).rejects.toThrow()
   await expect(textAttachment(file('invalid.txt', new Uint8Array([255])))).rejects.toThrow()
+})
+
+async function explainBlockedAction() {
+  const action = button('Run inference') as HTMLButtonElement
+  expect(action.disabled).toBe(false)
+  const before = vi.isMockFunction(api.intelligenceExecute) ? vi.mocked(api.intelligenceExecute).mock.calls.length : null
+  await act(async () => action.click())
+  expect(host.querySelector('[aria-label="Action needs attention"]')).not.toBeNull()
+  expect(host.textContent).toContain('No request was sent.')
+  if (before !== null) expect(api.intelligenceExecute).toHaveBeenCalledTimes(before)
+}
+
+test('invalid Intelligence token budget and temperature are named without running inference', async () => {
+  vi.spyOn(api, 'intelligenceDiscovery').mockResolvedValue(ready())
+  const execute = vi.spyOn(api, 'intelligenceExecute')
+  await show(); await fill()
+  const fields = host.querySelectorAll<HTMLInputElement>('input:not([type=file])')
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(fields[0], '99999')
+    fields[0].dispatchEvent(new Event('input', { bubbles: true }))
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(fields[1], '3')
+    fields[1].dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await explainBlockedAction()
+  const message = host.querySelector('[aria-label="Action needs attention"]')!.textContent
+  expect(message).toContain('Max output tokens:'); expect(message).toContain('Context budget:'); expect(message).toContain('Temperature:')
+  expect(execute).not.toHaveBeenCalled()
 })

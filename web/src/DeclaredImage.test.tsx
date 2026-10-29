@@ -29,8 +29,8 @@ test.each([true,false])('declared controls use their labels and owned image avai
   expect(host.textContent).toContain('Source image');expect(host.textContent).toContain('Edit instruction');expect(host.querySelector('textarea')?.value).toBe('Wave')
   expect([...host.querySelectorAll('label')].some(l=>l.textContent?.startsWith('Positive prompt'))).toBe(false)
   const button=[...host.querySelectorAll('button')].find(b=>b.textContent?.includes('Generate image'))!
-  expect(button.disabled).toBe(!available)
+  expect(button.disabled).toBe(false)
   if(available){await act(async()=>button.click());expect(submit).toHaveBeenCalledTimes(1);expect(submit.mock.calls[0][0]).not.toHaveProperty('checkpoint')}
-  else expect(submit).not.toHaveBeenCalled()
+  else {await act(async()=>button.click());expect(submit).not.toHaveBeenCalled();expect(host.querySelector('[aria-label="Image generation needs attention"]')?.textContent).toContain('Source image')}
  }finally{await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();vi.unstubAllGlobals()}
 })

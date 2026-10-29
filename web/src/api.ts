@@ -26,9 +26,17 @@ export type SpeechInput = { text: string; caption: string; seconds: number | nul
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { credentials: 'same-origin', ...options })
   if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
+    const rawBody = await response.json().catch(() => ({}))
+    const body = rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody) ? rawBody : {}
     if (response.status === 401) throw new HTTPFailure('Session expired. Refresh and sign in again.', 401)
-    throw new HTTPFailure(body.message || body.error || `Request failed (${response.status}).`, response.status)
+    const reason = typeof body.detail === 'string' ? new Map(Object.entries({
+      'Reference storage quota reached': 'reference_quota',
+      'Reference storage is busy': 'reference_busy',
+      'Reference upload was incomplete': 'incomplete_upload',
+      'Image upload metadata could not be verified': 'upload_receipt_invalid',
+      'Image upload was rejected by the generation service': 'upload_rejected',
+    })).get(body.detail) : undefined
+    throw new HTTPFailure(body.message || body.error || `Request failed (${response.status}).`, response.status, reason)
   }
   const text = await response.text()
   return (text ? JSON.parse(text) : undefined) as T
@@ -66,7 +74,29 @@ async function uploadInput(file: File, csrf: string): Promise<ManagedInput> {
 }
 export class HTTPFailure extends Error {
   status: number
-  constructor(message: string, status: number) { super(message); this.status = status }
+  reason?: string
+  constructor(message: string, status: number, reason?: string) { super(message); this.status = status; this.reason = reason }
+}
+export function imageUploadError(failure: unknown): string {
+  let message = 'Could not confirm the image upload. Check your connection before trying again.'
+  if (failure instanceof HTTPFailure) {
+    const status = failure.status
+    if (status === 401) message = 'Your session expired (HTTP 401). Sign in again before uploading.'
+    else if (status === 403) message = 'The upload was not authorized (HTTP 403). Refresh Studio before trying again.'
+    else if (status === 409 && failure.reason === 'reference_quota') message = 'Reference-image storage is full (HTTP 409). Keep any already attached image; try again after storage is freed.'
+    else if (status === 409 && failure.reason === 'reference_busy') message = 'Reference storage is busy (HTTP 409). Wait for the other operation to finish before trying again.'
+    else if (status === 409) message = 'The image upload was refused (HTTP 409).'
+    else if (status === 413) message = 'The server rejected the upload size (HTTP 413). Studio accepts images up to 8 MiB.'
+    else if (status === 415) message = 'This image format is not supported (HTTP 415). Choose a PNG, JPEG or WebP image.'
+    else if (status === 422) message = new Map(Object.entries({
+      incomplete_upload: 'The image upload was incomplete (HTTP 422).',
+      upload_receipt_invalid: 'Studio could not verify the uploaded image (HTTP 422).',
+      upload_rejected: 'The generation service rejected the image upload (HTTP 422).',
+    })).get(failure.reason ?? '') ?? 'The image upload failed validation (HTTP 422).'
+    else if (status === 429) message = 'Another reference file is uploading (HTTP 429). Wait for it to finish before trying again.'
+    else if (status >= 500) message = `The upload service could not confirm the image (HTTP ${status}).`
+  }
+  return message + ' Your draft is preserved. No automatic retry was made.'
 }
 export type AgentModel = { id: string; display_name: string; data_flow: "local_only" | "remote_authorized" }
 export type Personality = { revision: number; display_name: string; sections: { title: string; content: string }[]; can_edit: boolean; scope: "shared_agent"; updated_at: string; sessionKey: string }

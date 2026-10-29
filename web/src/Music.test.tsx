@@ -56,7 +56,7 @@ test('unavailable Music preserves its draft and never submits', async () => {
   vi.mocked(api.musicDiscovery).mockResolvedValue({ generate: false, transcribe: false })
   const send = vi.spyOn(api, 'musicSubmit')
   await show(); await value(host.querySelector('textarea')!, 'calypso')
-  expect((button('Generate music') as HTMLButtonElement).disabled).toBe(true)
+  await explainBlockedAction()
   await submit(); expect(send).not.toHaveBeenCalled(); expect(host.querySelector('textarea')!.value).toBe('calypso')
 })
 
@@ -74,7 +74,7 @@ test('ambiguous request recovers through owner-checked lookup without replay or 
   const lookup = vi.spyOn(api, 'musicRequest').mockResolvedValue({ ...created, state: 'submission_unknown' })
   await show(); await value(host.querySelector('textarea')!, 'private lyrics'); await submit()
   expect(sessionStorage.getItem('flamoris.music.pending:owner-a')).toBe(REQUEST)
-  expect((button('Generate music') as HTMLButtonElement).disabled).toBe(true)
+  await explainBlockedAction()
   await act(async () => root.render(<div />)); const observed = await show()
   expect(lookup).toHaveBeenCalledExactlyOnceWith(REQUEST); expect(observed).toHaveBeenCalledWith({ ...created, state: 'submission_unknown' }); expect(send).toHaveBeenCalledOnce()
 })
@@ -104,3 +104,27 @@ test('transcription accepts only selected WAV Assets and never passes raw asset 
   await submit()
   expect(send).toHaveBeenCalledExactlyOnceWith({ referenceInputId: REQUEST, max_seconds: 30, melody_only: false }, 'transcribe', REQUEST, 'csrf')
 })
+
+test('Music style and unattached transcription explain what to do without allocating a request', async () => {
+  const send = vi.spyOn(api, 'musicSubmit'), attach = vi.spyOn(api, 'createInput')
+  await show()
+  const identity = vi.spyOn(crypto, 'randomUUID')
+  await act(async () => button('Generate music').click())
+  expect(host.querySelector('[aria-label="Action needs attention"]')?.textContent).toContain('Music style:')
+  await value(host.querySelector('select')!, 'transcribe')
+  await act(async () => button('Transcribe audio').click())
+  expect(host.querySelector('[aria-label="Action needs attention"]')?.textContent).toContain('Attach selected audio')
+  await act(async () => button('Attach selected audio').click())
+  expect(host.textContent).toContain('Audio Asset: choose a WAV Asset first')
+  expect(send).not.toHaveBeenCalled(); expect(attach).not.toHaveBeenCalled(); expect(identity).not.toHaveBeenCalled()
+})
+
+async function explainBlockedAction() {
+  const action = button('Generate music') as HTMLButtonElement
+  expect(action.disabled).toBe(false)
+  const before = vi.isMockFunction(api.musicSubmit) ? vi.mocked(api.musicSubmit).mock.calls.length : null
+  await act(async () => action.click())
+  expect(host.querySelector('[aria-label="Action needs attention"]')).not.toBeNull()
+  expect(host.textContent).toContain('No request was sent.')
+  if (before !== null) expect(api.musicSubmit).toHaveBeenCalledTimes(before)
+}

@@ -75,16 +75,21 @@ test('four references restore independently and submit opaque handles with their
 
 test('missing or expired style reference blocks generation without removing the other references', async () => {
   const submit = await show(true)
-  expect(button('Generate image').disabled).toBe(true)
+  expect(button('Generate image').disabled).toBe(false)
+  await act(async () => button('Generate image').click())
+  expect(host.querySelector('[aria-label="Image generation needs attention"]')?.textContent).toContain('Visual style reference')
+  expect(submit).not.toHaveBeenCalled()
   expect(host.querySelectorAll('img')).toHaveLength(3)
   expect(host.textContent).toContain('Choose an available image for every reference')
   await act(async () => root.unmount())
   root = createRoot(host)
   vi.mocked(api.input).mockImplementation(async id => ({ id, available: id !== ids[2], thumbnailUrl: '/thumb/' + id }))
-  await show()
-  expect(button('Generate image').disabled).toBe(true)
+  const expiredSubmit = await show()
+  expect(button('Generate image').disabled).toBe(false)
+  await act(async () => button('Generate image').click())
+  expect(host.querySelector('[aria-label="Image generation needs attention"]')?.textContent).toContain('Visual style reference')
   expect(host.querySelectorAll('img')).toHaveLength(4)
-  expect(submit).not.toHaveBeenCalled()
+  expect(expiredSubmit).not.toHaveBeenCalled()
 })
 
 test('switching to text only keeps all attachments visible and prevents silent reference loss', async () => {
@@ -93,7 +98,9 @@ test('switching to text only keeps all attachments visible and prevents silent r
   await act(async () => { select.value = builtin.id; select.dispatchEvent(new Event('change', { bubbles: true })) })
   expect(host.querySelectorAll('img')).toHaveLength(4)
   expect(host.textContent).toContain('does not use every attached reference')
-  expect(button('Generate image').disabled).toBe(true)
+  expect(button('Generate image').disabled).toBe(false)
+  await act(async () => button('Generate image').click())
+  expect(host.querySelector('[aria-label="Image generation needs attention"]')?.textContent).toContain('Reference images')
   expect(submit).not.toHaveBeenCalled()
 })
 

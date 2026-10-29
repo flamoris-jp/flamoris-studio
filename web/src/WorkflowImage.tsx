@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, imageUploadLimit, imageUploadTypes, type Discovery, type Workflow, type ParameterSpec, type ManagedInput, type Asset } from './api'
+import { api, imageUploadError, imageUploadLimit, imageUploadTypes, type Discovery, type Workflow, type ParameterSpec, type ManagedInput, type Asset } from './api'
 import type { ImageDraft, ImageSubmission } from './App'
 
 export const referenceFields: Record<string, keyof ImageDraft> = { initial_image: "referenceInputId", character_image: "characterInputId", style_image: "styleInputId", control_image: "controlInputId" }
@@ -64,16 +64,29 @@ export function legalSeed(spec?: ParameterSpec): number | null {
   return Number(domain.first! + domain.step! * index)
 }
 
-export function workflowPayload(form: ImageDraft, item: Workflow): ImageSubmission | null {
+export function parameterProblem(label: string, spec: ParameterSpec): string {
+  if (spec.role === 'managed_input' || Boolean(spec.role && referenceFields[spec.role])) return `${label}: choose an available reference image.`
+  if (spec.enum) return `${label}: choose one of the available options.`
+  if (spec.type === 'integer' || spec.type === 'number') {
+    const range = spec.minimum !== undefined && spec.maximum !== undefined ? ` from ${spec.minimum} to ${spec.maximum}` :
+      spec.minimum !== undefined ? ` of at least ${spec.minimum}` : spec.maximum !== undefined ? ` no greater than ${spec.maximum}` : ''
+    return `${label}: enter a ${spec.type === 'integer' ? 'whole number' : 'number'}${range}${spec.multiple_of ? ` in multiples of ${spec.multiple_of}` : ''}.`
+  }
+  if (spec.type === 'string') return `${label}: enter text${spec.min_length ? ` of at least ${spec.min_length} characters` : ''}${spec.max_length ? `, at most ${spec.max_length} characters` : ''}${spec.max_bytes ? ` and within ${spec.max_bytes} encoded bytes` : ''}${spec.pattern ? ' in the format required by this template' : ''}.`
+  return `${label}: check the value required by this template.`
+}
+
+export function workflowPayload(form: ImageDraft, item: Workflow, report?: (message: string) => void): ImageSubmission | null {
+  const fail = (message: string) => { report?.(message); return null }
   if (item.recipeSchema === 10) {
-    if (!item.selectable || item.kind !== 'registered-comfy' || item.definitionVersion !== 1 || item.definitionDigest !== item.id.slice(6) || form.definitionDigest !== item.definitionDigest || form.definitionVersion !== 1) return null
+    if (!item.selectable || item.kind !== 'registered-comfy' || item.definitionVersion !== 1 || item.definitionDigest !== item.id.slice(6) || form.definitionDigest !== item.definitionDigest || form.definitionVersion !== 1) return fail('Image template: reselect an available template; the saved selection is unavailable or has changed.')
     const additionalParameters: Record<string, unknown> = {}, imageInputs: Record<string, string> = {}
     const images = Object.entries(item.parameters).filter(([,spec]) => spec.role === 'managed_input').map(([key]) => key)
-    if (Object.keys(form.imageInputs ?? {}).some(key => !images.includes(key))) return null
+    if (Object.keys(form.imageInputs ?? {}).some(key => !images.includes(key))) return fail('Reference images: this template does not use every attached image. Remove unsupported attachments or select another template.')
     for (const [key, spec] of Object.entries(item.parameters)) {
       const value = spec.role === 'managed_input' ? form.imageInputs?.[key] : form.additionalParameters?.[key] ?? spec.default
       if (value === undefined && !spec.required) continue
-      if (!validValue(spec, value)) return null
+      if (!validValue(spec, value)) return fail(parameterProblem(spec.label ?? key, spec))
       if (spec.role === 'managed_input') imageInputs[key] = value as string
       else additionalParameters[key] = value
     }
@@ -84,11 +97,13 @@ export function workflowPayload(form: ImageDraft, item: Workflow): ImageSubmissi
       item.image.dimensions.mode !== 'parameters' ||
       (registered ? item.definitionVersion !== 1 || item.definitionDigest !== item.id.slice(6) :
         item.image.mode !== 'txt2img' || item.definitionVersion !== null || item.definitionDigest !== null) ||
-      (form.definitionVersion ?? null) !== item.definitionVersion || (form.definitionDigest ?? null) !== item.definitionDigest) return null
-  if (!registered && Object.values(item.parameters).some(s => s.type === "managed_input" || Boolean(s.role && referenceFields[s.role]))) return null
+      (form.definitionVersion ?? null) !== item.definitionVersion || (form.definitionDigest ?? null) !== item.definitionDigest) return fail('Image template: reselect an available template; the saved selection is unavailable or has changed.')
+  if (!registered && Object.values(item.parameters).some(s => s.type === "managed_input" || Boolean(s.role && referenceFields[s.role]))) return fail('Image template: select a compatible reference-image template.')
   const supported = new Set(Object.values(item.parameters).filter(s => s.role && referenceFields[s.role]).map(s => referenceFields[s.role!]))
-  if (Object.values(referenceFields).some(field => form[field] && !supported.has(field))) return null
-  if (!item.selectable || !form.positivePrompt || !form.checkpoint) return null
+  if (Object.values(referenceFields).some(field => form[field] && !supported.has(field))) return fail('Reference images: remove the images this template does not support, or select another template.')
+  if (!item.selectable) return fail('Image template: select an available template.')
+  if (!form.positivePrompt) return fail('Positive prompt: describe the image you want to generate.')
+  if (!form.checkpoint) return fail('Model: choose an available image model.')
   const values: Record<string, unknown> = { ...form, workflowId: item.id, workflowKind: item.kind, definitionVersion: item.definitionVersion, definitionDigest: item.definitionDigest }
   for (const key of ['width', 'height', 'steps', 'cfg', 'denoise', 'seed']) {
     const raw = form[key as 'width']
@@ -98,21 +113,21 @@ export function workflowPayload(form: ImageDraft, item: Workflow): ImageSubmissi
     if (!roleSpec(item, role)) delete values[fields[role]]
   }
   const loras = roleSpec(item, 'loras')
-  if (form.loras.length && !loras) return null
-  if (loras && (form.loras.length < (loras.min_items ?? 0) || form.loras.length > (loras.max_items ?? 16))) return null
-  if (form.loras.some(l => !l.name || [l.strengthModel, l.strengthClip].some(v => v.trim() === '' || !Number.isFinite(Number(v)) || Number(v) < -20 || Number(v) > 20))) return null
+  if (form.loras.length && !loras) return fail('LoRA layers: this template does not support LoRAs. Remove the layers or select another template.')
+  if (loras && (form.loras.length < (loras.min_items ?? 0) || form.loras.length > (loras.max_items ?? 16))) return fail(`LoRA layers: use between ${loras.min_items ?? 0} and ${loras.max_items ?? 16} layers for this template.`)
+  if (form.loras.some(l => !l.name || [l.strengthModel, l.strengthClip].some(v => v.trim() === '' || !Number.isFinite(Number(v)) || Number(v) < -20 || Number(v) > 20))) return fail('LoRA layers: choose a model for each layer and enter strengths from -20 to 20.')
   values.loras = form.loras.map(l => ({ ...l, strengthModel: Number(l.strengthModel), strengthClip: Number(l.strengthClip) }))
   for (const [key, spec] of Object.entries(item.parameters)) {
-    if (spec.role && !fields[spec.role] && spec.role !== 'loras') return null
+    if (spec.role && !fields[spec.role] && spec.role !== 'loras') return fail('Image template: this template requires controls this editor cannot use. Select another template.')
     if (spec.role === 'loras') continue
     const field = spec.role ? fields[spec.role] : undefined
     let value = field ? values[field] : form.additionalParameters?.[key] ?? spec.default
-    if (spec.role === 'seed' && value === undefined) { if (!seedDomain(spec)) return null; continue }
+    if (spec.role === 'seed' && value === undefined) { if (!seedDomain(spec)) return fail('Seed: this template has no usable automatic seed. Select another template.'); continue }
     if (value === undefined && !spec.required) {
       value = spec.default
       if (value === undefined) continue
     }
-    if (!validValue(spec, value)) return null
+    if (!validValue(spec, value)) return fail(parameterProblem(spec.label ?? spec.role?.replaceAll('_', ' ') ?? key, spec))
     if (field) values[field] = value
   }
   return values as unknown as ImageSubmission
@@ -193,7 +208,7 @@ export function ReferencePicker({ enabled, inputId, csrf, onChange, onBusy, labe
     }
     if (!start()) return
     try { const value = await api.uploadInput(files[0], csrf); if (active.current) { onChange(value.id); setOpen(false) } }
-    catch { if (active.current) setError('Could not upload this image. Your draft is preserved. No automatic retry was made.') }
+    catch (failure) { if (active.current) setError(imageUploadError(failure)) }
     finally { finish() }
   }
   return <div className="reference-note"><strong>{label}</strong>

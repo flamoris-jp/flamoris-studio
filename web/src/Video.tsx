@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, HTTPFailure, type Execution, type ParameterSpec, type VideoDiscovery, type VideoInput, type VideoWorkflow } from './api'
 import { ResultPreview } from './Gallery'
-import { legalSeed, ReferencePicker, seedDomain, validValue } from './WorkflowImage'
+import { legalSeed, parameterProblem, ReferencePicker, seedDomain, validValue } from './WorkflowImage'
+import { useActionFeedback, type ReportProblem } from './ActionFeedback'
 
 export type VideoDraft = Partial<VideoInput>
 const terminal = ['completed', 'failed', 'cancelled', 'busy']
@@ -10,24 +11,29 @@ export function videoDraft(item: VideoWorkflow): VideoDraft {
   return { workflowId: item.id, definitionVersion: item.definitionVersion!, definitionDigest: item.definitionDigest!, imageInputs: {},
     additionalParameters: Object.fromEntries(Object.entries(item.parameters).filter(([key, spec]) => key !== 'seed' && spec.role !== 'managed_input' && spec.default !== undefined).map(([key, spec]) => [key, spec.default])) }
 }
-export function videoPayload(form: VideoDraft, item?: VideoWorkflow): VideoInput | null {
-  if (!item?.selectable || item.recipeSchema !== 11 || form.workflowId !== item.id || form.definitionVersion !== item.definitionVersion || form.definitionDigest !== item.definitionDigest) return null
+export function videoPayload(form: VideoDraft, item?: VideoWorkflow, report?: ReportProblem): VideoInput | null {
+  const fail = (message: string) => { report?.(message); return null }
+  if (!item?.selectable || item.recipeSchema !== 11 || form.workflowId !== item.id || form.definitionVersion !== item.definitionVersion || form.definitionDigest !== item.definitionDigest) return fail('Video recipe: choose an available recipe, or reselect it if it has changed.')
   const images = Object.entries(item.parameters).filter(([, spec]) => spec.role === 'managed_input').map(([key]) => key)
-  if (Object.keys(form.imageInputs ?? {}).some(key => !images.includes(key))) return null
-  if (Object.keys(form.additionalParameters ?? {}).some(key => !item.parameters[key] || images.includes(key))) return null
+  if (Object.keys(form.imageInputs ?? {}).some(key => !images.includes(key))) return fail('Reference images: remove images this recipe does not support, or select another recipe.')
+  if (Object.keys(form.additionalParameters ?? {}).some(key => !item.parameters[key] || images.includes(key))) return fail('Video settings: this recipe has different controls. Reselect it before generating.')
   const imageInputs: Record<string, string> = {}, additionalParameters: Record<string, unknown> = {}
   for (const [key, spec] of Object.entries(item.parameters)) {
-    if (key === 'seed' && (form.additionalParameters?.seed === undefined || form.additionalParameters.seed === '')) { if (!seedDomain(spec)) return null; continue }
+    if (key === 'seed' && (form.additionalParameters?.seed === undefined || form.additionalParameters.seed === '')) { if (!seedDomain(spec)) return fail('Seed: this recipe has no usable automatic seed. Choose another recipe.'); continue }
     const value = spec.role === 'managed_input' ? form.imageInputs?.[key] : form.additionalParameters?.[key] ?? spec.default
     if (value === undefined && !spec.required) continue
-    if (!validValue(spec, value)) return null
+    if (!validValue(spec, value)) return fail(parameterProblem(spec.label ?? key, spec))
     if (spec.role === 'managed_input') imageInputs[key] = value as string
     else additionalParameters[key] = value
   }
   const { width, height, frames, fps } = additionalParameters
-  if ([width, height, frames, fps].some(value => typeof value !== 'number' || !Number.isSafeInteger(value))) return null
+  if ([width, height, frames, fps].some(value => typeof value !== 'number' || !Number.isSafeInteger(value))) return fail('Width, height, frames and frame rate: enter whole numbers.')
   const [w, h, n, rate] = [width, height, frames, fps] as number[]
-  if (w < 64 || w > 1024 || h < 64 || h > 1024 || w % 16 || h % 16 || w * h > 832 * 832 || n < 5 || n > 161 || n % 4 !== 1 || rate < 1 || rate > 32 || n / rate > 10.1) return null
+  if (w < 64 || w > 1024 || h < 64 || h > 1024 || w % 16 || h % 16) return fail('Width and height: use whole numbers from 64 to 1024 in multiples of 16.')
+  if (w * h > 832 * 832) return fail('Video size: width × height must not exceed 692224 pixels. Reduce either dimension.')
+  if (n < 5 || n > 161 || n % 4 !== 1) return fail('Frames: use 5, 9, 13 and so on, up to 161.')
+  if (rate < 1 || rate > 32) return fail('Frames per second: use a whole number from 1 to 32.')
+  if (n / rate > 10.1) return fail('Clip duration: use at most 10.1 seconds. Reduce frames or increase the frame rate.')
   return { workflowId: item.id, definitionVersion: 1, definitionDigest: item.definitionDigest!, imageInputs, additionalParameters }
 }
 
@@ -56,10 +62,19 @@ export default function Video({ csrf, accountKey, execution, onExecution, author
   const clearPending = () => { try { sessionStorage.removeItem(storageKey) } catch {} }
   const active = !!execution && !terminal.includes(execution.state)
   const item = discovery.workflows.find(value => value.id === form.workflowId)
-  const payload = videoPayload(form, item)
+  const problems: string[] = []
+  const payload = videoPayload(form, item, message => problems.push(message))
   const working = Object.values(referenceBusy).some(Boolean)
   const locked = busy || active || uncertain
   const missing = item?.referenceRoles?.some(role => references[role] !== true) ?? true
+  if (checking) problems.push('Video service: availability is still being checked. Wait, then press Generate again.')
+  else if (!discovery.available) problems.push('Video service: unavailable. Use Check again to refresh availability.')
+  if (!discovery.managedInputReady) problems.push('Reference image storage: unavailable. Use Check again before generating.')
+  if (working) problems.push('Reference images: preparation is still in progress. Wait for it to finish.')
+  if (missing) problems.push('Start/end images: choose an available image for every reference required by the recipe.')
+  if (uncertain || execution?.state === 'submission_unknown' || execution?.state === 'unknown') problems.push('Previous Video request: its outcome is unconfirmed. Check the previous request or result; no new video will be submitted.')
+  else if (active) problems.push('Previous Video request: still active. Wait for completion or request cancellation and confirm it has finished.')
+  const validation = useActionFeedback(problems)
   const duration = Number(form.additionalParameters?.frames) / Number(form.additionalParameters?.fps)
   const update = (name: string, value: unknown) => setForm(old => ({ ...old, additionalParameters: { ...old.additionalParameters, [name]: value } }))
   async function check() {
@@ -115,8 +130,9 @@ export default function Video({ csrf, accountKey, execution, onExecution, author
       <button type="button" disabled={checking || busy || working} onClick={check}>Check again</button></div>
     {!discovery.available && <p role="status">{checking ? 'Checking Video availability…' : 'Video generation is unavailable. An available video service and recipe are required.'}</p>}
     {item && item.definitionDigest !== form.definitionDigest && <p role="alert">This recipe changed. Select it again before generating. Your current draft has been kept.</p>}
-    <form onSubmit={async event => {
+    <form noValidate onSubmit={async event => {
       event.preventDefault()
+      if (busy || sending.current || !validation.check()) return
       if (!payload || !discovery.available || !discovery.managedInputReady || checking || locked || working || missing || sending.current) return
       sending.current = true
       const version = epoch.current, requestId = crypto.randomUUID()
@@ -149,7 +165,8 @@ export default function Video({ csrf, accountKey, execution, onExecution, author
       </>}
       {error && <p role="alert" className="error">{error}</p>}
       {uncertain && pendingId && <button type="button" disabled={busy} onClick={() => recover(pendingId)}>Check previous request</button>}
-      <button className="primary" disabled={!payload || !discovery.available || !discovery.managedInputReady || checking || locked || working || missing}>{busy ? 'Submitting…' : 'Generate video'}</button>
+      {validation.feedback}
+      <button className="primary" disabled={busy}>{busy ? 'Submitting…' : 'Generate video'}</button>
     </form>
     {execution && <div className="results"><h3>Video result</h3><span className="badge">{execution.state.replaceAll('_', ' ')}</span>
       {execution.state === 'busy' && <p>The generation service is busy; no new generation was accepted.</p>}

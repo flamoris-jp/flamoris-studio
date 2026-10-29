@@ -1,13 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, HTTPFailure, type Asset, type Execution, type MusicDiscovery, type MusicInput, type MusicOperation, type TranscriptionInput } from './api'
 import { ResultPreview } from './Gallery'
+import { invalidFields, useActionFeedback, type ReportProblem } from './ActionFeedback'
 
 export type MusicDraft = { style: string; lyrics: string; seconds: string; steps: string; seed: string; lm_seed: string }
 export const initialMusicDraft = (): MusicDraft => ({ style: '', lyrics: '', seconds: '30', steps: '32', seed: '0', lm_seed: '0' })
 const textValid = (value: string, limit: number, required: boolean) => (!required || !!value.trim()) && [...value].length <= limit && new TextEncoder().encode(value).length <= limit * 4 && !/[\u0000-\u0008\u000b-\u001f]/.test(value)
-export function musicPayload(form: MusicDraft): MusicInput | null {
+export function musicPayload(form: MusicDraft, report?: ReportProblem): MusicInput | null {
   const seconds = Number(form.seconds), steps = Number(form.steps), seed = Number(form.seed), lmSeed = Number(form.lm_seed)
-  if (!textValid(form.style, 1024, true) || !textValid(form.lyrics, 4096, false) || !form.seconds.trim() || !Number.isFinite(seconds) || seconds < 1 || seconds > 120 || !form.steps.trim() || !Number.isSafeInteger(steps) || steps < 1 || steps > 64 || [form.seed, form.lm_seed].some(value => value.trim() && (!Number.isSafeInteger(Number(value)) || Number(value) < 0 || Number(value) > Number.MAX_SAFE_INTEGER))) return null
+  if (invalidFields([
+    [!textValid(form.style, 1024, true), 'Music style: enter 1 to 1024 characters without unsupported control characters.'],
+    [!textValid(form.lyrics, 4096, false), 'Lyrics: use at most 4096 characters without unsupported control characters.'],
+    [!form.seconds.trim() || !Number.isFinite(seconds) || seconds < 1 || seconds > 120, 'Duration: enter a number from 1 to 120 seconds.'],
+    [!form.steps.trim() || !Number.isSafeInteger(steps) || steps < 1 || steps > 64, 'Sampling steps: enter a whole number from 1 to 64.'],
+    ...([['Audio seed', form.seed], ['Composition seed', form.lm_seed]] as const).map(([label, value]): [unknown, string] => [value.trim() && (!Number.isSafeInteger(Number(value)) || Number(value) < 0 || Number(value) > Number.MAX_SAFE_INTEGER), `${label}: leave blank for Random or enter a whole number from 0 to 9007199254740991.`]),
+  ], report)) return null
   return { style: form.style, lyrics: form.lyrics, seconds, steps, seed: form.seed.trim() ? seed : null, lm_seed: form.lm_seed.trim() ? lmSeed : null }
 }
 const terminal = ['completed', 'failed', 'cancelled', 'busy']
@@ -37,7 +44,17 @@ export default function Music({ csrf, accountKey, execution, onExecution, author
   const active = !!execution && !terminal.includes(execution.state)
   const seconds = Number(maxSeconds)
   const transcription: TranscriptionInput | null = reference && maxSeconds.trim() && Number.isFinite(seconds) && seconds >= 1 && seconds <= 120 ? { referenceInputId: reference, max_seconds: seconds, melody_only: melodyOnly } : null
-  const payload = operation === 'generate' ? musicPayload(form) : transcription
+  const problems: string[] = []
+  const payload = operation === 'generate' ? musicPayload(form, message => problems.push(message)) : transcription
+  if (operation === 'transcribe') {
+    if (!reference) problems.push('Audio Asset: load your WAV Assets, choose one, then press Attach selected audio.')
+    if (!maxSeconds.trim() || !Number.isFinite(seconds) || seconds < 1 || seconds > 120) problems.push('Maximum audio length: enter a number from 1 to 120 seconds.')
+  }
+  if (checking) problems.push('Music service: availability is still being checked. Wait, then try again.')
+  else if (!availability[operation]) problems.push('Music operation: unavailable for the configured service. Use Check again to refresh availability.')
+  if (uncertain || execution?.state === 'submission_unknown' || execution?.state === 'unknown') problems.push('Previous Music request: its outcome is unconfirmed. Check the previous request or result; no new work will be submitted.')
+  else if (active) problems.push('Previous Music request: still active. Wait for completion or request cancellation and confirm it has finished.')
+  const validation = useActionFeedback(problems)
   const change = (key: keyof MusicDraft, value: string) => setForm(old => ({ ...old, [key]: value }))
   async function check() {
     const version = epoch.current
@@ -95,8 +112,9 @@ export default function Music({ csrf, accountKey, execution, onExecution, author
   return <section className="panel"><span className="eyebrow">MUSIC</span><h2>Create music or transcribe audio</h2>
     <div className="row"><label>Operation<select value={operation} disabled={busy || active || uncertain} onChange={event => { setOperation(event.target.value as MusicOperation); setError('') }}><option value="generate">Generate music</option><option value="transcribe">Transcribe audio</option></select></label></div>
     {!availability[operation] && <p role="status">{checking ? 'Checking Music availability…' : 'This Music operation is unavailable for the configured service.'} <button type="button" disabled={checking || busy} onClick={check}>Check again</button></p>}
-    <form onSubmit={async event => {
+    <form noValidate onSubmit={async event => {
       event.preventDefault()
+      if (busy || !validation.check()) return
       if (!payload || !availability[operation] || checking || busy || active || uncertain) return
       const version = epoch.current, requestId = crypto.randomUUID()
       setBusy(true); setError(''); setPendingId(requestId)
@@ -122,7 +140,8 @@ export default function Music({ csrf, accountKey, execution, onExecution, author
         <button type="button" disabled={busy || active} onClick={() => loadSources()}>Load audio Assets</button>
         <label>Audio Asset<select value={selectedAsset} disabled={busy || active || !!reference} onChange={event => { setSelectedAsset(event.target.value); setReference(null) }}><option value="">Choose your WAV Asset</option>{sources.map(item => <option key={item.id} value={item.id}>{item.displayName}</option>)}</select></label>
         {offset !== null && offset > 0 && <button type="button" disabled={busy || active} onClick={() => loadSources(offset)}>Load more Assets</button>}
-        <button type="button" disabled={!selectedAsset || !!reference || busy || active || !availability.transcribe} onClick={async () => {
+        <button type="button" disabled={busy} onClick={async () => {
+          if (!selectedAsset || reference || active || uncertain || !availability.transcribe) { setError(!selectedAsset ? 'Audio Asset: choose a WAV Asset first.' : reference ? 'Audio Asset: detach the current audio before attaching another.' : active || uncertain ? 'Confirm the previous Music request has finished before changing its audio.' : 'Audio transcription is unavailable. Use Check again.'); return }
           const version = epoch.current
           setBusy(true); setError('')
           try { const value = await api.createInput(selectedAsset, csrf); if (current(version)) { if (!value.available) throw new Error(); setReference(value.id) } }
@@ -140,7 +159,8 @@ export default function Music({ csrf, accountKey, execution, onExecution, author
       </>}
       {error && <p role="alert" className="error">{error}</p>}
       {uncertain && pendingId && <button type="button" disabled={busy} onClick={() => recover(pendingId)}>Check previous request</button>}
-      <button className="primary" disabled={!availability[operation] || checking || busy || !payload || active || uncertain}>{busy ? 'Submitting…' : operation === 'generate' ? 'Generate music' : 'Transcribe audio'}</button>
+      {validation.feedback}
+      <button className="primary" disabled={busy}>{busy ? 'Submitting…' : operation === 'generate' ? 'Generate music' : 'Transcribe audio'}</button>
     </form>
     {execution && <div className="results"><h3>{execution.operation === 'music.transcribe' ? 'Transcription result' : 'Music result'}</h3><span className="badge">{execution.state.replaceAll('_', ' ')}</span>
       {execution.state === 'busy' && <p>The generation service is busy; no new generation was accepted.</p>}
