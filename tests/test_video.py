@@ -48,6 +48,26 @@ def test_descriptor_roles_are_distinct_and_not_image_templates(mode):
         normalize_video_catalog({"descriptors": [raw, raw]})
 
 
+@pytest.mark.parametrize("mode", ["i2v", "flf2v"])
+def test_h3_uses_its_own_frame_grid_geometry_and_fixed_rate(mode):
+    raw = descriptor(mode)
+    raw["video"]["profile"] = "minimax-h3-video-v1"
+    raw["parameters"]["width"]["default"] = 608
+    raw["parameters"]["height"]["default"] = 352
+    raw["parameters"]["frames"]["default"] = 124
+    raw["parameters"]["fps"].update(default=24, minimum=24, maximum=24)
+    item = normalize_video_descriptor(raw)
+    assert item["video"]["profile"] == "minimax-h3-video-v1"
+    assert item["parameters"]["width"]["multiple_of"] == 32
+    images = {key: str(uuid.uuid4()) for key in item["referenceRoles"]}
+    assert video_parameters(item, {"imageInputs": images})["frames"] == 124
+    for changes in ({"frames": 81}, {"width": 624}, {"fps": 16}):
+        with pytest.raises(ValueError):
+            video_parameters(item, {"imageInputs": images, "additionalParameters": changes})
+    raw["parameters"]["frames"]["default"] = 81
+    assert normalize_video_catalog({"descriptors": [raw]}) == []
+
+
 @pytest.mark.parametrize("bad", ["version", "metadata", "provider", "profile", "managed_default", "ignored_end", "width", "frames", "dynamic_parameter"])
 def test_malformed_video_catalog_fails_closed(bad):
     raw = descriptor()
@@ -112,13 +132,20 @@ async def test_build_echo_is_exact_before_submit(monkeypatch, bad):
         with pytest.raises(GatewayError): await gateway.build_selected(item, parameters)
 
 
-def setup(clients, mode="i2v"):
+def setup(clients, mode="i2v", family="wan"):
     a, b, gateway, factory = clients
     ca, cb = register(a, "video-a@example.test"), register(b, "video-b@example.test")
     asset = source(a, ca)
     prepare_gateway(gateway)
     handle = a.post("/api/generation/inputs", json={"assetId": asset["id"]}, headers={"X-CSRF-TOKEN": ca}).json()["id"]
-    item = normalize_video_descriptor(descriptor(mode))
+    raw = descriptor(mode)
+    if family == "h3":
+        raw["video"]["profile"] = "minimax-h3-video-v1"
+        raw["parameters"]["width"]["default"] = 608
+        raw["parameters"]["height"]["default"] = 352
+        raw["parameters"]["frames"]["default"] = 124
+        raw["parameters"]["fps"].update(default=24, minimum=24, maximum=24)
+    item = normalize_video_descriptor(raw)
     calls, submissions = [], []
     async def discover(): calls.append("discover"); return {"available": True, "managedInputReady": True, "workflows": [item]}
     async def build(selected, parameters): calls.append(("build", copy.deepcopy(parameters))); return RECIPE
@@ -133,8 +160,9 @@ def setup(clients, mode="i2v"):
 
 
 @pytest.mark.parametrize("mode", ["i2v", "flf2v"])
-def test_owned_submission_inputs_results_ranges_and_cross_account_isolation(clients, mode):
-    a, b, gateway, factory, ca, cb, body, calls, submissions = setup(clients, mode)
+@pytest.mark.parametrize("family", ["wan", "h3"])
+def test_owned_submission_inputs_results_ranges_and_cross_account_isolation(clients, mode, family):
+    a, b, gateway, factory, ca, cb, body, calls, submissions = setup(clients, mode, family)
     assert b.post("/api/generation/video/jobs", json=body, headers={"X-CSRF-TOKEN": cb}).status_code == 404
     assert not calls and not submissions
     assert a.post("/api/generation/video/jobs", json=body).status_code == 403

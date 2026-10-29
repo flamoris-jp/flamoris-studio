@@ -1,3 +1,7 @@
+# 2026-10-29 — Studio #104
+
+Prepare H3-specific Video validation and controls alongside Wan. Local web build and 174 tests pass; backend 357 tests pass locally, with PostgreSQL-backed cases requiring CI. PostgreSQL-backed CI and real GPU/browser acceptance remain separate. No DB migration or new service configuration.
+
 # Automatic speech duration — 2026-10-17
 
 ## 2026-10-18 — Controller #26

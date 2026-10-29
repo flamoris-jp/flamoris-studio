@@ -1,3 +1,7 @@
+# flamoris-studio 1.3.0
+
+Accept Controller's bounded silent MiniMax H3 video recipes alongside Wan. Apply profile-specific frame, dimension and FPS validation in both backend and form; preserve owned inputs, request/session fences and existing MP4 delivery. No database migration or new service credentials. Real model execution and browser acceptance remain separate.
+
 # flamoris-studio 1.2.2
 
 Fix a reproduced reference-receipt clock comparison that rejected a valid 24-hour input when the generation host was even 0.1 seconds ahead of Studio. Validate the receipt's creation/expiry pair and maximum 24-hour lifetime, allow at most one second of future creation and cap stored expiry so the local lifetime never exceeds the declared duration or 24 hours. Expired inputs and identity, checksum, size, media and provenance mismatches still fail closed. Image/Video upload errors now identify an allowlisted rejection category in Studio itself, even when DevTools evicts the response body. No database migration, quota change, GPU/model update or automatic retry. The concrete clock defect is reproduced; attribution of the operator's intermittent PNG failure remains pending browser acceptance. See [reference-upload recovery](../docs/REFERENCE_UPLOAD_RECOVERY.md).
