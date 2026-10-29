@@ -18,6 +18,30 @@ from flamoris_studio.workflow_contract import normalize_catalog
 clients = studio_clients
 
 
+def test_reference_capacity_defaults_and_explicit_legacy_overrides(monkeypatch):
+    for key in ("USER_ROWS", "GLOBAL_ROWS", "USER_BYTES", "GLOBAL_BYTES"):
+        monkeypatch.delenv("STUDIO_INPUT_" + key, raising=False)
+    assert Limits.from_env() == Limits(user_rows=1024, global_rows=4096,
+                                      user_bytes=2 * 1024**3, global_bytes=8 * 1024**3)
+    monkeypatch.setenv("STUDIO_INPUT_USER_ROWS", "128")
+    monkeypatch.setenv("STUDIO_INPUT_GLOBAL_ROWS", "1024")
+    monkeypatch.setenv("STUDIO_INPUT_USER_BYTES", "33554432")
+    monkeypatch.setenv("STUDIO_INPUT_GLOBAL_BYTES", "134217728")
+    assert Limits.from_env() == Limits(user_rows=128, global_rows=1024,
+                                      user_bytes=32 * 1024**2, global_bytes=128 * 1024**2)
+
+
+@pytest.mark.parametrize("key,value", [
+    ("USER_BYTES", "0"), ("GLOBAL_BYTES", "-1"),
+    ("USER_BYTES", str(8 * 1024**3 + 1)), ("GLOBAL_BYTES", str(8 * 1024**3 + 1)),
+    ("USER_ROWS", "0"), ("GLOBAL_ROWS", "4097"), ("USER_BYTES", "unlimited"),
+])
+def test_reference_capacity_rejects_unbounded_or_invalid_overrides(monkeypatch, key, value):
+    monkeypatch.setenv("STUDIO_INPUT_" + key, value)
+    with pytest.raises(ValueError):
+        Limits.from_env()
+
+
 @pytest.mark.parametrize("workflow_id", [None, 7])
 def test_invalid_selected_build_response_fails_before_submission(clients, monkeypatch, workflow_id):
     a, _, gateway, factory = clients
@@ -167,6 +191,35 @@ def test_quota_lock_and_byte_quota_reject_before_upstream(clients):
     a.app.state.input_limits = Limits(global_bytes=256 * 1024 - 1)
     assert a.post(path, json={"assetId": asset["id"]}, headers={"X-CSRF-TOKEN": csrf}).status_code == 409
     assert gateway.input_calls == []
+
+
+@pytest.mark.parametrize("scope", ["user", "global"])
+def test_gib_reference_budget_sum_and_exact_admission_boundary(clients, scope):
+    a, _, gateway, factory = clients
+    csrf = register(a, "gib-budget@example.test")
+    asset = source(a, csrf)
+    prepare_gateway(gateway)
+    limits = Limits() if scope == "user" else Limits(user_bytes=8 * 1024**3)
+    a.app.state.input_limits = limits
+    budget = limits.user_bytes if scope == "user" else limits.global_bytes
+    # Exercise PostgreSQL SUM beyond signed 32-bit capacity without large files.
+    with factory() as db:
+        owner = db.get(Asset, uuid.UUID(asset["id"])).user_id
+        remaining = budget - 256 * 1024
+        while remaining:
+            charged = min(remaining, 1024**3)
+            db.add(ManagedInput(owner_user_id=owner, state="create_unknown",
+                                accounted_bytes=charged, expires_at=now() + timedelta(hours=24)))
+            remaining -= charged
+        db.commit()
+    path = "/api/generation/inputs"
+    accepted = a.post(path, json={"assetId": asset["id"]}, headers={"X-CSRF-TOKEN": csrf})
+    assert accepted.status_code == 201, accepted.text
+    before = list(gateway.input_calls)
+    rejected = a.post(path, json={"assetId": asset["id"]}, headers={"X-CSRF-TOKEN": csrf})
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"] == "Reference storage quota reached"
+    assert gateway.input_calls == before
 
 
 def test_unknown_create_is_charged_and_never_replayed(clients):

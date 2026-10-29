@@ -8,6 +8,10 @@ ownership/count tombstones, historical previews and unknown charges. Expose only
 allowlisted upload diagnostics, preserve drafts and never replay automatically.
 The observed original HTTP 422 cause remains unconfirmed; do not weaken image,
 receipt, expiry or account checks as a speculative fix.
+The owner's follow-up requests a practical 2 GiB per-user reference budget.
+Use finite 8 GiB aggregate / 1,024 per-user rows / 4,096 aggregate rows defaults;
+preserve explicit environment overrides, per-file bounds and retention. Record
+source defaults separately from actual host configuration and acceptance.
 
 ## 2026-10-28 Studio #97
 

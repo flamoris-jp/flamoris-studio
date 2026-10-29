@@ -24,10 +24,10 @@ LOCK_ID = 761042917
 
 @dataclass(frozen=True)
 class Limits:
-    user_rows: int = 128
-    global_rows: int = 1024
-    user_bytes: int = 32 * 1024**2
-    global_bytes: int = 128 * 1024**2
+    user_rows: int = 1024
+    global_rows: int = 4096
+    user_bytes: int = 2 * 1024**3
+    global_bytes: int = 8 * 1024**3
 
     @classmethod
     def from_env(cls):
@@ -36,7 +36,7 @@ class Limits:
             for key, default in cls().__dict__.items()
         }
         if any(
-            not 1 <= value <= (4096 if key.endswith("rows") else 1024**3)
+            not 1 <= value <= (4096 if key.endswith("rows") else 8 * 1024**3)
             for key, value in values.items()
         ):
             raise ValueError("Invalid managed input quota configuration")
