@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, imageUploadLimit, imageUploadTypes, type Discovery, type Workflow, type ParameterSpec, type ManagedInput, type Asset } from './api'
+import { api, imageUploadError, imageUploadLimit, imageUploadTypes, type Discovery, type Workflow, type ParameterSpec, type ManagedInput, type Asset } from './api'
 import type { ImageDraft, ImageSubmission } from './App'
 
 export const referenceFields: Record<string, keyof ImageDraft> = { initial_image: "referenceInputId", character_image: "characterInputId", style_image: "styleInputId", control_image: "controlInputId" }
@@ -193,7 +193,7 @@ export function ReferencePicker({ enabled, inputId, csrf, onChange, onBusy, labe
     }
     if (!start()) return
     try { const value = await api.uploadInput(files[0], csrf); if (active.current) { onChange(value.id); setOpen(false) } }
-    catch { if (active.current) setError('Could not upload this image. Your draft is preserved. No automatic retry was made.') }
+    catch (failure) { if (active.current) setError(imageUploadError(failure)) }
     finally { finish() }
   }
   return <div className="reference-note"><strong>{label}</strong>

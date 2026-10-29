@@ -1,7 +1,39 @@
 import { afterEach, expect, test, vi } from 'vitest'
-import { api, IntelligenceFailure, type IntelligenceInput } from './api'
+import { api, imageUploadError, IntelligenceFailure, type IntelligenceInput } from './api'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
+
+test.each([
+  [409, { detail: 'Reference storage quota reached' }, 'Reference-image storage is full'],
+  [409, { detail: 'Reference storage is busy' }, 'Reference storage is busy'],
+  [409, { detail: 'private server text' }, 'The image upload was refused'],
+  [409, { detail: '__proto__' }, 'The image upload was refused'],
+  [422, null, 'The image upload failed validation'],
+  [422, { detail: 'Reference upload was incomplete' }, 'The image upload was incomplete'],
+  [422, { detail: 'Image upload metadata could not be verified' }, 'Studio could not verify the uploaded image'],
+  [422, { detail: 'Image upload was rejected by the generation service' }, 'The generation service rejected the image upload'],
+  [422, { detail: [{ input: 'private-payload' }] }, 'The image upload failed validation'],
+  [429, {}, 'Another reference file is uploading'],
+  [413, {}, 'The server rejected the upload size'],
+  [503, {}, 'The upload service could not confirm'],
+])('reference upload HTTP %s gives a safe actionable error without retry', async (status, body, expected) => {
+  const fetch = vi.fn().mockResolvedValue({ ok: false, status, json: async () => body })
+  vi.stubGlobal('fetch', fetch)
+  const failure = await api.uploadInput(new File(['x'], 'x.png', { type: 'image/png' }), 'csrf').catch(error => error)
+  const message = imageUploadError(failure)
+  expect(message).toContain(expected)
+  expect(message).toContain(`HTTP ${status}`)
+  expect(message).toContain('No automatic retry')
+  expect(message).not.toMatch(/private|\[object Object\]/)
+  expect(fetch).toHaveBeenCalledTimes(1)
+})
+
+test('proxy HTML and private network errors never enter upload presentation', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 413, json: async () => { throw new Error('private HTML') } }))
+  const failure = await api.uploadInput(new File(['x'], 'x.png', { type: 'image/png' }), 'csrf').catch(error => error)
+  expect(imageUploadError(failure)).toContain('HTTP 413')
+  expect(imageUploadError(new Error('private network diagnostic'))).not.toContain('private')
+})
 
 test('assistant start and switch use explicit model selection without browser consent fields', async () => {
   const fetch = vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify({ sessionKey: 'owned-session', modelId: 'api' }) })

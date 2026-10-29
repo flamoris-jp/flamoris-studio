@@ -3,7 +3,7 @@ import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { ImageEditor, initialImageDraft, restoreImageDraft, type ImageDraft } from './App'
-import { api, type Asset, type Discovery, type Workflow } from './api'
+import { api, HTTPFailure, type Asset, type Discovery, type Workflow } from './api'
 import { legalSeed, seedDomain, validValue, workflowPayload } from './WorkflowImage'
 
 const workflow: Workflow = { id: 'text-to-image', kind: 'builtin', name: 'Builtin image', selectable: true, reason: null, definitionVersion: null, definitionDigest: null,
@@ -340,6 +340,18 @@ test('upload replacement blocks generation during transfer and preserves the pre
   expect(submit).not.toHaveBeenCalled()
   await click('Remove reference')
   expect(button('Generate image').disabled).toBe(false)
+})
+
+test('upload quota errors remain visible without losing the attached image or prompt', async () => {
+  const submit = await show(discovery, true)
+  vi.mocked(api.uploadInput).mockRejectedValue(new HTTPFailure('private raw failure', 409, 'reference_quota'))
+  await chooseFile([new File(['fixture'], 'x.jpg', { type: 'image/jpeg' })])
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('Reference-image storage is full (HTTP 409)')
+  expect(host.textContent).not.toContain('private raw failure')
+  expect(host.querySelector('textarea')!.value).toBe('keep this prompt')
+  expect(host.querySelector('img')?.getAttribute('src')).toBe('/input-thumb')
+  expect(api.uploadInput).toHaveBeenCalledTimes(1)
+  expect(submit).not.toHaveBeenCalled()
 })
 
 test('drop accepts a single image and rejects unsupported, empty, oversized and multiple files before upload', async () => {

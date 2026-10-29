@@ -1,5 +1,14 @@
 # AGENTS.md
 
+## 2026-10-29 Studio #99
+
+Repair failed reference-upload byte reservations only after exact upstream deletion
+and thumbnail cleanup are confirmed and no execution references the input. Keep
+ownership/count tombstones, historical previews and unknown charges. Expose only
+allowlisted upload diagnostics, preserve drafts and never replay automatically.
+The observed original HTTP 422 cause remains unconfirmed; do not weaken image,
+receipt, expiry or account checks as a speculative fix.
+
 ## 2026-10-28 Studio #97
 
 The user requests Studio Video integration after the first real Controller AnimeGen I2V receipt. Follow docs/VIDEO_OPERATION.md. Reuse authenticated Controller HTTP, owned managed inputs, request/execution/input fences and existing MP4 Assets delivery. Do not introduce MCP routing, a second job/GPU authority, raw graph editing, model downloads or Kachinco changes. A successful external test clip is not Studio browser acceptance or general model-quality qualification.

@@ -296,10 +296,76 @@ async def reconcile_expired(app, cursor=None):
 
 @guarded()
 async def maintenance_pass(app, cursor):
+    await reclaim_failed_uploads(app)
     cursor = await reconcile_expired(app, cursor)
     with app.state.session_factory() as db:
         prune(db, app.state.input_thumbnails)
     return cursor
+
+
+def release_deleted_upload(app, db, input_id, upstream_id, *, preserve_preview=True):
+    """Release bytes, not ownership/history, after exact upstream deletion proof.
+
+    The caller obtained that proof outside this transaction. Recheck the mapping
+    and every execution reference under the same quota/row fences as admission.
+    Old revoked uploads with a historical preview retain their retention window.
+    """
+    quota_guard(db)
+    row = db.get(ManagedInput, input_id)
+    if row is None:
+        return False
+    db.refresh(row, with_for_update=True)
+    if (row.state != "revoked" or row.source_upstream_id is not None
+        or row.source_asset_id is not None or row.upstream_input_id != upstream_id
+        or row.accounted_bytes <= 0
+        or db.scalar(select(Execution.id).where(input_referenced(row.id)).limit(1)) is not None):
+        return False
+    if preserve_preview and row.thumbnail_locator and app.state.input_thumbnails.load(row.thumbnail_locator) is not None:
+        return False
+    app.state.input_thumbnails.delete(row.thumbnail_locator)
+    row.thumbnail_locator = None
+    row.accounted_bytes = 0
+    db.commit()
+    return True
+
+
+async def reclaim_failed_uploads(app):
+    """Bounded repair for old revoked upload reservations without a preview.
+
+    Never reclaim unknown creates, live inputs, retained previews, or references
+    from any execution (including completed history). Deletion is idempotent and
+    must be positively confirmed; timeouts retain the entire existing charge.
+    """
+    cursor = getattr(app.state, "failed_upload_cursor", None)
+    query = select(ManagedInput.id, ManagedInput.upstream_input_id)
+    query = (query
+            .where(ManagedInput.state == "revoked", ManagedInput.accounted_bytes > 0,
+                   ManagedInput.source_asset_id.is_(None), ManagedInput.source_upstream_id.is_(None),
+                   ManagedInput.upstream_input_id.is_not(None),
+                   ~select(Execution.id).where(input_referenced(ManagedInput.id))
+                   .correlate(ManagedInput).exists())
+            .order_by(ManagedInput.id).limit(10))
+    with app.state.session_factory() as db:
+        rows = db.execute(query.where(ManagedInput.id > cursor) if cursor else query).all()
+        if not rows and cursor:
+            rows = db.execute(query).all()
+    deadline = asyncio.get_running_loop().time() + 30
+    for input_id, upstream_id in rows:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        app.state.failed_upload_cursor = input_id  # Retained previews cannot starve later rows.
+        try:
+            with app.state.session_factory() as db:
+                row = db.get(ManagedInput, input_id)
+                if row is None or row.thumbnail_locator and app.state.input_thumbnails.load(row.thumbnail_locator) is not None:
+                    continue
+            proof = await asyncio.wait_for(app.state.gateway.delete_input(upstream_id), min(5, remaining))
+            if isinstance(proof, dict) and proof.get("deleted") is True:
+                with app.state.session_factory() as db:
+                    release_deleted_upload(app, db, input_id, upstream_id)
+        except (GatewayError, TimeoutError, OSError, SQLAlchemyError, HTTPException):
+            continue
 
 
 async def maintenance(app):

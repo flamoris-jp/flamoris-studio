@@ -1,3 +1,7 @@
+# flamoris-studio 1.2.1
+
+Failed reference-image uploads release their byte reservation after upstream deletion and local cleanup are confirmed, provided no execution references the input. Bounded maintenance also rechecks eligible older revoked uploads; unknown results and retained historical previews stay protected. Image/Video upload errors now distinguish storage quota, busy admission, size/format, incomplete transfer, upstream validation and receipt verification, while preserving drafts and never replaying automatically. No database migration or quota-setting change is required. The original intermittent HTTP 422 still requires live acceptance; this release does not claim that its cause is identified. See [reference-upload recovery](../docs/REFERENCE_UPLOAD_RECOVERY.md).
+
 # flamoris-studio 1.2.0
 
 Connect the dedicated Video editor to Controller / Generation 1.2.1 through the existing authenticated internal HTTP boundary. Choose an owned start image, describe motion, set bounded dimensions/frames/FPS and seed, then track one durable request and retrieve an owned MP4 through the existing player, Assets catalog and download/range endpoints. A distinct end-image field appears only for a matching registered FLF2V definition. Preserve existing accounts, Image/Assistant/Music/Speech behavior, input deletion fences and unknown/no-replay. No database migration or new service credential is required. UI support is distinct from model quality and real Studio/browser acceptance. See [Video operation](../docs/VIDEO_OPERATION.md).

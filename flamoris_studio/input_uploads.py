@@ -10,7 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from .auth import authenticated_user, current_user, database
 from .db import ManagedInput, now
 from .gateway import GatewayError
-from .managed_inputs import input_view, owned_input, reserve, validate_metadata
+from .managed_inputs import input_view, owned_input, reserve, validate_metadata, release_deleted_upload
 
 MAX_UPLOAD_BYTES = 8 * 1024**2
 IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
@@ -22,7 +22,10 @@ async def publish_upload(app, db, row, data):
         # The random private identity and full storage charge were committed
         # before the first RPC. Unknown begin/finish cannot orphan authority.
         raw = await app.state.gateway.upload_input(row.upstream_input_id, data, row.mime_type)
-        validate_metadata(raw, row, creating=True)
+        try:
+            validate_metadata(raw, row, creating=True)
+        except GatewayError:
+            raise GatewayError("upload_receipt_invalid") from None
         row.expires_at = datetime.fromtimestamp(raw["expires_at"], timezone.utc)
         locator = None
         try:
@@ -58,7 +61,9 @@ async def publish_upload(app, db, row, data):
             persisted.terminal_at = now() if compensated else persisted.expires_at
             try:
                 db.commit()
-            except SQLAlchemyError:
+                if compensated:
+                    release_deleted_upload(app, db, key, persisted.upstream_input_id, preserve_preview=False)
+            except (SQLAlchemyError, HTTPException, OSError):
                 db.rollback()
         raise
 
@@ -101,5 +106,11 @@ def mount_input_uploads(app):
                     raise HTTPException(401)
                 owned_input(db, row.id, user_id)
                 return result
+        except GatewayError as exc:
+            if exc.code in {"validation", "upload_receipt_invalid"}:
+                detail = ("Image upload metadata could not be verified" if exc.code == "upload_receipt_invalid"
+                          else "Image upload was rejected by the generation service")
+                raise HTTPException(422, detail) from None
+            raise
         except TimeoutError:
             raise HTTPException(504, "Reference upload could not be confirmed; no automatic retry was made") from None

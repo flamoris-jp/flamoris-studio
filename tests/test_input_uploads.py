@@ -14,10 +14,10 @@ from test_studio import clients as studio_clients
 from test_studio import image_request, register
 from test_managed_inputs import prepare_gateway
 
-from flamoris_studio.db import Execution, LoginSession, ManagedInput, now
+from flamoris_studio.db import Execution, ExecutionInput, LoginSession, ManagedInput, now
 from flamoris_studio.gateway import GatewayError, GenerationGateway
 from flamoris_studio.input_uploads import publish_upload
-from flamoris_studio.managed_inputs import Limits
+from flamoris_studio.managed_inputs import Limits, release_deleted_upload, reclaim_failed_uploads
 
 clients = studio_clients
 PATH = "/api/generation/inputs/upload"
@@ -212,7 +212,11 @@ def test_unknown_upload_retains_known_identity_and_quota_until_confirmed_cleanup
     with factory() as db:
         row = db.scalar(select(ManagedInput))
         assert row.state == ("revoked" if confirmed else "create_unknown")
-        assert row.upstream_input_id is not None and row.accounted_bytes >= len(gateway.image)
+        assert row.upstream_input_id is not None
+        if confirmed:
+            assert row.accounted_bytes == 0
+        else:
+            assert row.accounted_bytes >= len(gateway.image)
         assert gateway.input_calls == [("upload", row.upstream_input_id), ("delete", row.upstream_input_id)]
 
 
@@ -227,6 +231,88 @@ def test_upload_receipt_identity_mismatch_is_not_published(clients):
     assert a.post(PATH, content=gateway.image, headers={"Content-Type": "image/png", "X-CSRF-TOKEN": csrf}).status_code == 422
     with factory() as db:
         assert db.scalar(select(ManagedInput)).state == "revoked"
+
+
+def test_confirmed_failed_uploads_release_bytes_before_the_next_attempt(clients):
+    a, _, gateway, factory = clients
+    csrf = register(a, "failed-budget@example.test")
+    uploading(gateway, factory)
+    a.app.state.input_limits = Limits(user_bytes=len(gateway.image) + 256 * 1024)
+    async def rejected(*args):
+        raise GatewayError("validation")
+    gateway.upload_input = rejected
+    for _ in range(3):
+        response = a.post(PATH, content=gateway.image, headers={"Content-Type": "image/png", "X-CSRF-TOKEN": csrf})
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"] == "Image upload was rejected by the generation service"
+    with factory() as db:
+        rows = db.scalars(select(ManagedInput)).all()
+        assert len(rows) == 3  # Keep ownership tombstones and the count bound.
+        assert all(row.state == "revoked" and row.accounted_bytes == 0 for row in rows)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("execution_reference,preview,deletion_proven", [(None, False, True), (None, False, False), (None, True, True), ("image", False, True), ("video", False, True)])
+async def test_existing_failed_reservations_reclaimed_only_after_safe_proof(clients, execution_reference, preview, deletion_proven):
+    a, _, gateway, factory = clients
+    csrf = register(a, "legacy-reservation@example.test")
+    uploading(gateway, factory)
+    value = a.post(PATH, content=gateway.image, headers={"Content-Type": "image/png", "X-CSRF-TOKEN": csrf}).json()
+    key = uuid.UUID(value["id"])
+    with factory() as db:
+        row = db.get(ManagedInput, key)
+        row.state = "revoked"
+        row.terminal_at = now()
+        upstream, before = row.upstream_input_id, row.accounted_bytes
+        if not preview:
+            a.app.state.input_thumbnails.delete(row.thumbnail_locator)
+        if execution_reference:
+            execution = Execution(user_id=row.owner_user_id, source="generation", category=execution_reference,
+                operation=execution_reference + ".generate", workflow="test", request_snapshot={}, last_known_status="completed",
+                reference_input_id=key if execution_reference == "image" else None)
+            db.add(execution)
+            db.flush()
+            if execution_reference == "video":
+                db.add(ExecutionInput(execution_id=execution.id, role="start_image", input_id=key))
+        db.commit()
+    calls = []
+    async def remove(input_id):
+        calls.append(input_id)
+        return {"deleted": deletion_proven}
+    gateway.delete_input = remove
+    await reclaim_failed_uploads(a.app)
+    with factory() as db:
+        row = db.get(ManagedInput, key)
+        expected = 0 if not preview and not execution_reference and deletion_proven else before
+        assert row.accounted_bytes == expected
+        assert row.state == "revoked"
+    assert calls == ([] if preview or execution_reference else [upstream])
+
+
+@pytest.mark.parametrize("reference,preview,preserve_preview,upstream_match,cleanup_fails,expected", [
+    (False, False, False, True, False, True),
+    (False, True, True, True, False, False),
+    (True, False, False, True, False, False),
+    (False, False, False, False, False, False),
+    (False, False, False, True, True, False),
+])
+def test_failed_upload_release_fences_and_thumbnail_failure(reference, preview, preserve_preview, upstream_match, cleanup_fails, expected):
+    row = SimpleNamespace(id=uuid.uuid4(), state="revoked", source_asset_id=None, source_upstream_id=None,
+                          upstream_input_id="a" * 32, accounted_bytes=300000, thumbnail_locator="b" * 32)
+    db = Mock(); db.get.return_value = row
+    db.scalar.side_effect = [True, uuid.uuid4() if reference else None]
+    thumbnails = Mock(); thumbnails.load.return_value = b"preview" if preview else None
+    if cleanup_fails:
+        thumbnails.delete.side_effect = OSError("private path must not escape")
+    app = SimpleNamespace(state=SimpleNamespace(input_thumbnails=thumbnails))
+    if cleanup_fails:
+        with pytest.raises(OSError):
+            release_deleted_upload(app, db, row.id, row.upstream_input_id, preserve_preview=preserve_preview)
+    else:
+        assert release_deleted_upload(app, db, row.id, row.upstream_input_id if upstream_match else "c" * 32,
+                                      preserve_preview=preserve_preview) is expected
+    assert row.accounted_bytes == (0 if expected else 300000)
+    assert db.commit.call_count == (1 if expected else 0)
 
 
 def test_retired_upload_selection_preserves_input_and_historical_deletion_gate(clients):
