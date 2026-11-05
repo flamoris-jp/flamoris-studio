@@ -25,6 +25,7 @@ from .db import Asset, Execution, ExecutionInput, ExternalAssetClaim, ExternalIm
 from .gateway import GatewayError, GenerationGateway
 from .media import Thumbnails, filename, generated_filename, inspect_image
 from .logging_setup import configure_logging
+from .diagnostics import DiagnosticStore, DiagnosticsMiddleware, mount_diagnostics
 from .managed_inputs import (Limits, owned_input, usable, input_view, reserve, check_input,
     create_snapshot, maintenance, prune, protected, quota_guard)
 from .workflow_contract import REFERENCE_FIELDS, ROLES, map_parameters
@@ -261,6 +262,10 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     root = app.state.thumbnails.root
     app.state.input_thumbnails = InputThumbnails(str(root / "inputs") if root else "")
     app.state.input_limits = Limits.from_env()
+    app.state.diagnostics = DiagnosticStore(os.getenv("STUDIO_DIAGNOSTICS_DIR") or (str(root / "diagnostics") if root else ""))
+    app.state.diagnostic_client_reports = {}
+    configure_logging()
+    mount_diagnostics(app)
     mount_input_uploads(app)
     app.state.download_slots = asyncio.Semaphore(2)
     app.state.preview_admission = PreviewAdmission(app.state.download_slots)
@@ -1135,6 +1140,7 @@ def create_app(session_factory=None, gateway=None, thumbnails=None):
     dist = os.getenv("STUDIO_WEB_DIST")
     if dist and os.path.isdir(dist):
         app.mount("/", StaticFiles(directory=dist, html=True), name="web")
+    app.add_middleware(DiagnosticsMiddleware, store=app.state.diagnostics)
     return app
 
 

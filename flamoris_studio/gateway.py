@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 import httpx2
 
+from .diagnostics import upstream, emit
 from .workflow_contract import normalize_catalog, validate_value
 from .video_contract import normalize_video_catalog
 
@@ -83,7 +84,7 @@ class GenerationGateway:
         except Exception as exc:
             raise GatewayError("unavailable") from exc
 
-    async def _exchange(self, http, name, args, timeout, *, max_bytes=None):
+    async def _exchange(self, http, name, args, timeout, *, max_bytes=None, diagnostic=None):
         # The operation name is selected by backend code; no MCP envelope or user URL.
         operations = {
             "system.health",
@@ -113,12 +114,16 @@ class GenerationGateway:
         }
         if name not in operations:
             raise GatewayError("validation")
+        if diagnostic is not None:
+            diagnostic["phase"] = "dispatch"
         async with (
             asyncio.timeout(timeout),
             http.stream(
                 "POST", name, json=args or {}, timeout=httpx2.Timeout(30, read=timeout)
             ) as response,
         ):
+            if diagnostic is not None:
+                diagnostic.update(phase="response", status=response.status_code)
             if 300 <= response.status_code < 400:
                 raise GatewayError("unavailable")
             if response.headers.get("content-encoding", "identity") != "identity":
@@ -193,10 +198,11 @@ class GenerationGateway:
         try:
             # httpx's read timeout resets on each chunk. Bound the whole call,
             # including connection setup, headers, streaming and cleanup.
-            async with asyncio.timeout(timeout), self._connection() as http:
-                return await self._exchange(
-                    http, name, args, timeout, max_bytes=max_bytes
-                )
+            with upstream("generation", name) as diagnostic:
+                async with asyncio.timeout(timeout), self._connection() as http:
+                    return await self._exchange(
+                        http, name, args, timeout, max_bytes=max_bytes, diagnostic=diagnostic
+                    )
         except GatewayError as exc:
             if name in {"assets.get", "assets.prepare", "assets.read"}:
                 logging.getLogger(__name__).warning(
@@ -214,6 +220,8 @@ class GenerationGateway:
         data = await self._call(name, args)
         if not isinstance(data, dict):
             raise GatewayError("upstream_failure")
+        if name in {"jobs.status", "jobs.result"} and data.get("status") in {"failed", "unknown"}:
+            emit("generation", name, "execution", reason="execution_error" if data["status"] == "failed" else "submission_unknown")
         return data
 
     async def discover(self):

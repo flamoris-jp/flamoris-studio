@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type Session, type Discovery, type Execution, type ImageSettings, type ImageStyle, type ImagePreferences, type Workflow } from './api'
+import Logs from './Logs'
 import Gallery, { ResultPreview } from './Gallery'
 import { WorkflowPicker, ReferencePicker, referenceFields, workflowPayload, roleSpec, legalSeed, DeclaredFields } from './WorkflowImage'
 import Assistant from './Assistant'
@@ -77,6 +78,8 @@ export default function App() {
   const [execution, setExecution] = useState<Execution | null>(null)
   const [resultSettings, setResultSettings] = useState<Partial<ImageSettings> | null>(null)
   const [error, setError] = useState('')
+  const [diagnosticReference, setDiagnosticReference] = useState('')
+  const [logReference, setLogReference] = useState('')
   const [busy, setBusy] = useState(false)
   const [form, setForm] = useState<ImageDraft>(() => initialImageDraft())
   const [speechForm, setSpeechForm] = useState<SpeechDraft>(() => initialSpeechDraft())
@@ -94,6 +97,32 @@ export default function App() {
     accountEpoch.current += 1
     return () => { accountEpoch.current += 1 }
   }, [session?.authenticated, session?.accountKey ?? session?.userName])
+  useEffect(() => {
+    setDiagnosticReference(''); setLogReference('')
+    if (!session?.authenticated) return
+    let active = true
+    const report = async (kind: 'network_failure' | 'script_error' | 'unhandled_rejection' | 'http_failure', status?: number) => {
+      const id = await api.reportDiagnostic(kind, session.csrfToken, status)
+      if (active && id) setDiagnosticReference(id)
+    }
+    const failure = (event: Event) => {
+      const detail = (event as CustomEvent).detail
+      if (detail?.requestId && /^[a-f0-9]{32}$/.test(detail.requestId)) setDiagnosticReference(detail.requestId)
+      else if (detail?.kind === 'network_failure') void report('network_failure')
+      else if (detail?.kind === 'http_failure' && Number.isInteger(detail.status) && detail.status >= 400 && detail.status <= 599) void report('http_failure', detail.status)
+    }
+    const scriptError = (event: ErrorEvent) => { if (event instanceof ErrorEvent) void report('script_error') }
+    const rejection = () => { void report('unhandled_rejection') }
+    window.addEventListener('studio-request-failure', failure)
+    window.addEventListener('error', scriptError)
+    window.addEventListener('unhandledrejection', rejection)
+    return () => {
+      active = false
+      window.removeEventListener('studio-request-failure', failure)
+      window.removeEventListener('error', scriptError)
+      window.removeEventListener('unhandledrejection', rejection)
+    }
+  }, [session?.authenticated, session?.accountKey ?? session?.userName, session?.csrfToken])
   useEffect(() => { api.session().then(setSession).catch(() => setError('Studio is unavailable.')) }, [])
   useEffect(() => {
     if (!session?.authenticated) return
@@ -174,13 +203,14 @@ export default function App() {
   if (!session.authenticated) return <Account allowRegistration={session.allowRegistration} onReady={setSession} />
   return <div className="layout"><aside><div className="brand">✦ <strong>FLAMORIS</strong><small>STUDIO</small></div><p className="eyebrow">WORKSPACE</p>
     <nav aria-label="Creative domains">{sections.map(name => <button key={name} aria-current={section === name ? 'page' : undefined} onClick={() => setSection(name)}>{name}</button>)}</nav>
-    <div className="account-footer"><span>{session.userName}</span><button onClick={() => setSection('Account')}>Account settings</button><button onClick={async () => { signingOut.current = true; try { await api.logout(session.csrfToken); accountEpoch.current += 1; try { sessionStorage.removeItem(`flamoris.speech.pending:${session.accountKey ?? session.userName ?? ''}`); sessionStorage.removeItem(`flamoris.music.pending:${session.accountKey ?? session.userName ?? ''}`); sessionStorage.removeItem(`flamoris.video.pending:${session.accountKey ?? session.userName ?? ''}`) } catch {} setForm(initialImageDraft()); setSpeechForm(initialSpeechDraft()); setSpeechExecution(null); setMusicExecution(null); setVideoExecution(null); setExecution(null); setResultSettings(null); setDiscovery(null); setBusy(false); setError(''); window.location.hash = ''; setSession(await api.session()) } catch { signingOut.current = false; setError('Could not sign out.') } }}>Sign out</button></div></aside>
+    <div className="account-footer"><span>{session.userName}</span><button onClick={() => { setLogReference(''); setSection('Logs') }}>Logs</button><button onClick={() => setSection('Account')}>Account settings</button><button onClick={async () => { signingOut.current = true; try { await api.logout(session.csrfToken); accountEpoch.current += 1; try { sessionStorage.removeItem(`flamoris.speech.pending:${session.accountKey ?? session.userName ?? ''}`); sessionStorage.removeItem(`flamoris.music.pending:${session.accountKey ?? session.userName ?? ''}`); sessionStorage.removeItem(`flamoris.video.pending:${session.accountKey ?? session.userName ?? ''}`) } catch {} setForm(initialImageDraft()); setSpeechForm(initialSpeechDraft()); setSpeechExecution(null); setMusicExecution(null); setVideoExecution(null); setExecution(null); setResultSettings(null); setDiscovery(null); setBusy(false); setError(''); window.location.hash = ''; setSession(await api.session()) } catch { signingOut.current = false; setError('Could not sign out.') } }}>Sign out</button></div></aside>
     <main><header><div><span className="eyebrow">CREATIVE CONTROL PLANE</span><h1>{section}</h1></div></header>
+    {diagnosticReference && section !== 'Logs' && <div className="diagnostic-notice" role="status">Error reference: <code>{diagnosticReference}</code> <button onClick={() => { setLogReference(diagnosticReference); setSection('Logs') }}>View logs</button><button aria-label="Dismiss error reference" onClick={() => setDiagnosticReference('')}>×</button></div>}
     <div hidden={section !== 'Intelligence'}><Intelligence key={session.userName} csrf={session.csrfToken} active={section === 'Intelligence'} /></div>
     <div hidden={section !== 'Speech'}><Speech key={session.accountKey ?? session.userName} csrf={session.csrfToken} accountKey={session.accountKey ?? session.userName ?? ''} form={speechForm} setForm={setSpeechForm} execution={speechExecution} onExecution={setSpeechExecution} authorized={() => !signingOut.current} /></div>
     <div hidden={section !== 'Music'}><Music key={session.accountKey ?? session.userName} csrf={session.csrfToken} accountKey={session.accountKey ?? session.userName ?? ''} execution={musicExecution} onExecution={setMusicExecution} authorized={() => !signingOut.current} /></div>
     <div hidden={section !== 'Video'}><Video key={session.accountKey ?? session.userName} csrf={session.csrfToken} accountKey={session.accountKey ?? session.userName ?? ''} execution={videoExecution} onExecution={setVideoExecution} authorized={() => !signingOut.current} /></div>
-    {section === 'Intelligence' || section === 'Speech' || section === 'Music' || section === 'Video' ? null : section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Assets' ? <Gallery csrf={session.csrfToken} onUseSettings={useSettings} /> : section === 'Assistant' ? <Assistant key={session.accountKey ?? session.userName} accountKey={session.accountKey ?? session.userName ?? ''} csrf={session.csrfToken} initiallyOpen /> : section === 'Image' ? <div className="image-workspace"><div><p>Turn a prompt into something you can keep.</p>
+    {section === 'Intelligence' || section === 'Speech' || section === 'Music' || section === 'Video' ? null : section === 'Logs' ? <Logs key={session.accountKey ?? session.userName} initialRequestId={logReference} /> : section === 'Account' ? <AccountSettings session={session} onChanged={setSession} /> : section === 'Assets' ? <Gallery csrf={session.csrfToken} onUseSettings={useSettings} /> : section === 'Assistant' ? <Assistant key={session.accountKey ?? session.userName} accountKey={session.accountKey ?? session.userName ?? ''} csrf={session.csrfToken} initiallyOpen /> : section === 'Image' ? <div className="image-workspace"><div><p>Turn a prompt into something you can keep.</p>
       {preferencesError && <p role="alert" className="error">{preferencesError}</p>}
       {!discovery?.available && <section className="panel"><h2>Image generation unavailable</h2><p>You can prepare a reference below. Generation requires an available image service.</p><button onClick={() => { const version = accountEpoch.current; api.discovery().then(value => { if (currentAccount(version)) setDiscovery(value) }).catch(() => { if (currentAccount(version)) setError('Service unavailable.') }) }}>Check again</button></section>}
       <ImageEditor discovery={discovery ?? { available: false, checkpoints: [], loras: [], templates: [] }} busy={busy} form={form} setForm={setForm} csrf={session.csrfToken} onReset={() => { imageDraftEpoch.current += 1; setError('') }} onSubmit={async form => {

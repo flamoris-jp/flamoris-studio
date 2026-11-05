@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 
 class JsonFormatter(logging.Formatter):
     def format(self, record):
+        if isinstance(getattr(record, "diagnostic", None), dict):
+            return json.dumps(record.diagnostic, ensure_ascii=False)
         return json.dumps({"time": datetime.fromtimestamp(record.created, timezone.utc).isoformat(),
                            "level": record.levelname, "category": record.name,
                            "event": record.getMessage()}, ensure_ascii=False)

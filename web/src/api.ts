@@ -37,11 +37,19 @@ const receiptMessages = new Map(Object.entries({
 }))
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { credentials: 'same-origin', ...options })
+  let response: Response
+  try { response = await fetch(path, { credentials: 'same-origin', ...options }) }
+  catch (failure) {
+    if (!(failure instanceof DOMException && failure.name === 'AbortError')) typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('studio-request-failure', { detail: { kind: 'network_failure' } }))
+    throw failure
+  }
+  const requestId = response.headers?.get('X-Request-ID') ?? undefined
+  const reference = requestId && /^[a-f0-9]{32}$/.test(requestId) ? requestId : undefined
   if (!response.ok) {
     const rawBody = await response.json().catch(() => ({}))
     const body = rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody) ? rawBody : {}
-    if (response.status === 401) throw new HTTPFailure('Session expired. Refresh and sign in again.', 401)
+    typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('studio-request-failure', { detail: { requestId: reference, kind: reference ? undefined : 'http_failure', status: response.status } }))
+    if (response.status === 401) throw new HTTPFailure('Session expired. Refresh and sign in again.', 401, undefined, reference)
     let reason = typeof body.detail === 'string' ? new Map(Object.entries({
       'Reference storage quota reached': 'reference_quota',
       'Reference storage is busy': 'reference_busy',
@@ -50,7 +58,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
       'Image upload was rejected by the generation service': 'upload_rejected',
     })).get(body.detail) : undefined
     if (response.status === 422 && reason === 'upload_receipt_invalid' && typeof body.reason === 'string' && receiptMessages.has(body.reason)) reason = body.reason
-    throw new HTTPFailure(body.message || body.error || `Request failed (${response.status}).`, response.status, reason)
+    throw new HTTPFailure(body.message || body.error || `Request failed (${response.status}).`, response.status, reason, reference)
   }
   const text = await response.text()
   return (text ? JSON.parse(text) : undefined) as T
@@ -89,7 +97,11 @@ async function uploadInput(file: File, csrf: string): Promise<ManagedInput> {
 export class HTTPFailure extends Error {
   status: number
   reason?: string
-  constructor(message: string, status: number, reason?: string) { super(message); this.status = status; this.reason = reason }
+  requestId?: string
+  constructor(message: string, status: number, reason?: string, requestId?: string) {
+    super(message + (requestId ? ` Reference: ${requestId}` : ''))
+    this.status = status; this.reason = reason; this.requestId = requestId
+  }
 }
 export function imageUploadError(failure: unknown): string {
   let message = 'Could not confirm the image upload. Check your connection before trying again.'
@@ -166,7 +178,24 @@ async function assistantAsk(payload: unknown, csrf: string): Promise<AssistantAn
   try { return await response.json() as AssistantAnswer }
   catch { throw new AssistantFailure('Assistant outcome could not be confirmed.', true) }
 }
+export type DiagnosticEvent = {
+  id: number; time: string; requestId: string; level: string; component: string;
+  operation: string; phase: string; route: string; method: string; reason?: string;
+  status?: number; elapsedMs?: number;
+  exceptions?: { type: string; frames: { file: string; line: number; function: string }[] }[];
+}
+export type DiagnosticPage = { items: DiagnosticEvent[]; nextCursor: number | null; canViewAll: boolean; scope: string }
+export type DiagnosticQuery = { requestId?: string; level?: string; component?: string; before?: number; scope?: string }
 export const api = {
+  logs: (query: DiagnosticQuery = {}) => request<DiagnosticPage>(`/api/diagnostics/logs?${new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined && value !== '').map(([key, value]) => [key, String(value)]))}`),
+  reportDiagnostic: async (kind: 'network_failure' | 'script_error' | 'unhandled_rejection' | 'http_failure', csrf: string, status?: number) => {
+    try {
+      const response = await fetch('/api/diagnostics/client', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify({ kind, status }) })
+      const id = response.headers?.get('X-Request-ID')
+      return response.ok && id && /^[a-f0-9]{32}$/.test(id) ? id : undefined
+    } catch { return undefined }
+  },
   intelligenceDiscovery: () => request<IntelligenceDiscovery>('/api/intelligence/discovery'),
   intelligenceExecute,
   assistantModels: (csrf: string) => post<{ models: AgentModel[]; defaultModelId?: string }>('/api/assistant/models', {}, csrf),

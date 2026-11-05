@@ -212,6 +212,10 @@ In early phases, result assets may come from `flamoris-generation-mcp`.
 
 Later, `flamoris-studio-client` will make large desktop-local projects and media available through explicit asset references without requiring permanent storage on the Studio server.
 
+## Diagnostics
+
+The authenticated **Logs** screen filters retained request/service errors by correlation ID, severity and component. Editors show an error reference; diagnostics retain upstream HTTP status and exception locations without recording prompts or credentials. Accounts see their own events; configured operators can read all events. See [diagnostics and operator configuration](docs/DIAGNOSTICS.md).
+
 ## Deployment
 
 For a generic Docker/Compose deployment, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). The public setup does not assume a particular FLAMORIS host. PostgreSQL, thumbnail storage, bind address/port, Controller API, reverse proxy, and secrets are supplied by the deployment environment.
