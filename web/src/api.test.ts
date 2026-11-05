@@ -200,3 +200,17 @@ test('browser diagnostics send only a bounded failure kind and never retry', asy
   expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ kind: 'network_failure' })
   expect(fetch).toHaveBeenCalledTimes(1)
 })
+
+test('Assistant and Intelligence specialized submissions preserve server error references and uncertainty', async () => {
+  const ref = 'b'.repeat(32)
+  const fetch = vi.fn().mockResolvedValue({ ok: false, status: 503, headers: new Headers({ 'X-Request-ID': ref }), json: async () => ({ message: 'Service unavailable.', detail: 'Service unavailable.', uncertain: true }) })
+  vi.stubGlobal('fetch', fetch)
+  const assistant = await api.assistantAsk({}, 'csrf').catch(error => error)
+  expect(assistant.requestId).toBe(ref)
+  expect(assistant.uncertain).toBe(true)
+  const intelligence = await api.intelligenceExecute({ requestId: 'request', modelId: 'local', capabilityId: 'text.generate', input: 'private', instruction: '', maxOutputTokens: 10, temperature: 0 }, 'csrf').catch(error => error)
+  expect(intelligence.requestId).toBe(ref)
+  expect(intelligence.message).toContain(ref)
+  expect(intelligence.uncertain).toBe(true)
+  expect(fetch).toHaveBeenCalledTimes(2)
+})

@@ -36,19 +36,30 @@ const receiptMessages = new Map(Object.entries({
   receipt_expired: 'The uploaded image receipt has already expired. Ask the operator to check server time synchronization.',
 }))
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function observedFetch(path: string, options: RequestInit = {}): Promise<Response> {
   let response: Response
   try { response = await fetch(path, { credentials: 'same-origin', ...options }) }
   catch (failure) {
     if (!(failure instanceof DOMException && failure.name === 'AbortError')) typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('studio-request-failure', { detail: { kind: 'network_failure' } }))
     throw failure
   }
+  if (!response.ok) notifyHTTPFailure(response)
+  return response
+}
+function responseReference(response: Response): string | undefined {
   const requestId = response.headers?.get('X-Request-ID') ?? undefined
-  const reference = requestId && /^[a-f0-9]{32}$/.test(requestId) ? requestId : undefined
+  return requestId && /^[a-f0-9]{32}$/.test(requestId) ? requestId : undefined
+}
+function notifyHTTPFailure(response: Response) {
+  const reference = responseReference(response)
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('studio-request-failure', { detail: { requestId: reference, kind: reference ? undefined : 'http_failure', status: response.status } }))
+}
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await observedFetch(path, options)
+  const reference = responseReference(response)
   if (!response.ok) {
     const rawBody = await response.json().catch(() => ({}))
     const body = rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody) ? rawBody : {}
-    typeof window !== 'undefined' && window.dispatchEvent(new CustomEvent('studio-request-failure', { detail: { requestId: reference, kind: reference ? undefined : 'http_failure', status: response.status } }))
     if (response.status === 401) throw new HTTPFailure('Session expired. Refresh and sign in again.', 401, undefined, reference)
     let reason = typeof body.detail === 'string' ? new Map(Object.entries({
       'Reference storage quota reached': 'reference_quota',
@@ -130,14 +141,14 @@ export type AssistantAvailability = { available: boolean; state: 'ready' | 'offl
 export type AssistantAnswer = { requestHandle: string; sessionKey: string; text: string; provenance: { model: string; provider: string; execution_id?: string } }
 export class AssistantFailure extends Error {
   uncertain: boolean
-  constructor(message: string, uncertain: boolean) { super(message); this.uncertain = uncertain }
+  constructor(message: string, uncertain: boolean, readonly requestId?: string) { super(message + (requestId ? ` Reference: ${requestId}` : '')); this.uncertain = uncertain }
 }
 export type IntelligenceModel = { id: string; contextTokens: number; maxOutputTokens: number; available: boolean }
 export type IntelligenceDiscovery = { available: boolean; models: IntelligenceModel[]; capabilities: string[]; dataFlow?: string; reason?: string }
 export type IntelligenceInput = { requestId: string; modelId: string; capabilityId: string; input: string; instruction: string; maxOutputTokens: number; temperature: number }
 export type IntelligenceAnswer = { requestId: string; executionId: string; text: string; finishReason: 'stop' | 'length'; modelId: string; capabilityId: string; elapsedMs: number; usage: { input_tokens: number; output_tokens: number; total_tokens: number } | null }
 export class IntelligenceFailure extends Error {
-  constructor(message: string, readonly uncertain: boolean) { super(message) }
+  constructor(message: string, readonly uncertain: boolean, readonly requestId?: string) { super(message + (requestId ? ` Reference: ${requestId}` : '')) }
 }
 async function intelligenceExecute(payload: IntelligenceInput, csrf: string): Promise<IntelligenceAnswer> {
   const controller = new AbortController()
@@ -147,7 +158,7 @@ async function intelligenceExecute(payload: IntelligenceInput, csrf: string): Pr
   try {
     let response: Response
     try {
-      response = await fetch('/api/intelligence/execute', { credentials: 'same-origin', method: 'POST', signal: controller.signal,
+      response = await observedFetch('/api/intelligence/execute', { credentials: 'same-origin', method: 'POST', signal: controller.signal,
         headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify(payload) })
     } catch { throw new IntelligenceFailure('Inference outcome could not be confirmed. No automatic retry was made.', true) }
     let body: Record<string, unknown>
@@ -156,7 +167,7 @@ async function intelligenceExecute(payload: IntelligenceInput, csrf: string): Pr
     if (!response.ok) {
       const message = typeof body.message === 'string' ? body.message : typeof body.detail === 'string' ? body.detail : 'Inference unavailable.'
       const uncertain = typeof body.uncertain === 'boolean' ? body.uncertain : response.status >= 500 || response.status === 401 || /already recorded|result withheld/.test(message)
-      throw new IntelligenceFailure(message, uncertain)
+      throw new IntelligenceFailure(message, uncertain, responseReference(response))
     }
     if (body.requestId !== payload.requestId || body.modelId !== payload.modelId || body.capabilityId !== payload.capabilityId || typeof body.text !== 'string' || !['stop', 'length'].includes(String(body.finishReason))) {
       throw new IntelligenceFailure('Inference result could not be confirmed.', true)
@@ -167,13 +178,13 @@ async function intelligenceExecute(payload: IntelligenceInput, csrf: string): Pr
 async function assistantAsk(payload: unknown, csrf: string): Promise<AssistantAnswer> {
   let response: Response
   try {
-    response = await fetch('/api/assistant/ask', { credentials: 'same-origin', method: 'POST',
+    response = await observedFetch('/api/assistant/ask', { credentials: 'same-origin', method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': csrf }, body: JSON.stringify(payload) })
   } catch { throw new AssistantFailure('Assistant outcome could not be confirmed.', true) }
   if (!response.ok) {
     const body = await response.json().catch(() => { throw new AssistantFailure('Assistant outcome could not be confirmed.', true) })
     const message = typeof body.detail === 'string' ? body.detail : 'Assistant request failed.'
-    throw new AssistantFailure(message, response.status >= 500 || response.status === 401 || /already recorded|result withheld/.test(message))
+    throw new AssistantFailure(message, response.status >= 500 || response.status === 401 || /already recorded|result withheld/.test(message), responseReference(response))
   }
   try { return await response.json() as AssistantAnswer }
   catch { throw new AssistantFailure('Assistant outcome could not be confirmed.', true) }
