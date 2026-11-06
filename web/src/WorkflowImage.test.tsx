@@ -146,6 +146,7 @@ test('builtin selection submits bounded parameters without a reference gate', as
   await click('Generate image')
   expect(submit).toHaveBeenCalledTimes(1)
   expect(submit.mock.calls[0][0]).toMatchObject({ workflowId: workflow.id, workflowKind: 'builtin', positivePrompt: 'keep this prompt' })
+  expect(submit.mock.calls[0][0]).not.toHaveProperty('imageInputs')
   expect(api.createInput).not.toHaveBeenCalled()
 })
 
