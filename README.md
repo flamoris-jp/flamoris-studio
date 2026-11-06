@@ -61,6 +61,10 @@ and a random seed action. Generated result details show Studio's original reques
 snapshot and offer **Use settings** to return to the Image editor. The recipe
 picker accepts the original builtin text-to-image/LoRA recipes and the current registered checkpoint ComfyWorkFlow profiles. The [reference-image editor](docs/REFERENCE_IMAGES.md) connects img2img, IPAdapter appearance/style and prepared-map ControlNet through Controller HTTP. Legacy custom definitions and v3 execution remain retired; restoring an unsupported selection preserves the draft and requires explicit reselection.
 
+Image submissions serialize only the fields supported by the selected request
+contract. Declared-graph image inputs remain in declared requests; selecting a
+builtin or registered reference template does not send draft-only `imageInputs`.
+
 Existing owned Assets and immutable PNG/JPEG/WebP inputs retain their bounded
 upload, preview and deletion APIs. Uploads remain limited to 8 MiB and 24 hours.
 The two retained builtin txt2img recipes still reject attached references. Registered reference profiles declare their own initial/appearance/style/control image roles, with one picker per required role. Historical executions and uncertain input

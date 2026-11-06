@@ -66,7 +66,9 @@ export function imagePayload(form: ImageDraft, report?: (message: string) => voi
   ]
   const problems = checks.filter(([invalid]) => invalid)
   if (problems.length) { problems.forEach(([, message]) => report?.(message)); return null }
-  return { ...form, width: numberValue(form.width), height: numberValue(form.height),
+  return { positivePrompt: form.positivePrompt, negativePrompt: form.negativePrompt,
+    checkpoint: form.checkpoint, sampler: form.sampler, scheduler: form.scheduler,
+    width: numberValue(form.width), height: numberValue(form.height),
     steps: numberValue(form.steps), cfg: numberValue(form.cfg), seed: form.seed.trim() === '' ? undefined : numberValue(form.seed), denoise: numberValue(form.denoise),
     loras: form.loras.map(lora => ({ ...lora, strengthModel: numberValue(lora.strengthModel), strengthClip: numberValue(lora.strengthClip) })) }
 }

@@ -104,7 +104,16 @@ export function workflowPayload(form: ImageDraft, item: Workflow, report?: (mess
   if (!item.selectable) return fail('Image template: select an available template.')
   if (!form.positivePrompt) return fail('Positive prompt: describe the image you want to generate.')
   if (!form.checkpoint) return fail('Model: choose an available image model.')
-  const values: Record<string, unknown> = { ...form, workflowId: item.id, workflowKind: item.kind, definitionVersion: item.definitionVersion, definitionDigest: item.definitionDigest }
+  // Draft-only fields (including declared-graph imageInputs) are not part of this DTO.
+  const values: Record<string, unknown> = {
+    positivePrompt: form.positivePrompt, negativePrompt: form.negativePrompt,
+    checkpoint: form.checkpoint, sampler: form.sampler, scheduler: form.scheduler,
+    referenceInputId: form.referenceInputId, characterInputId: form.characterInputId,
+    styleInputId: form.styleInputId, controlInputId: form.controlInputId,
+    additionalParameters: form.additionalParameters,
+    workflowId: item.id, workflowKind: item.kind,
+    definitionVersion: item.definitionVersion, definitionDigest: item.definitionDigest,
+  }
   for (const key of ['width', 'height', 'steps', 'cfg', 'denoise', 'seed']) {
     const raw = form[key as 'width']
     values[key] = raw.trim() === '' ? undefined : Number(raw)

@@ -5,6 +5,17 @@ const base = () => ({ ...initialImageDraft('model'), positivePrompt: 'stage',
   loras: [{ name: 'detail', strengthModel: '1', strengthClip: '1' }] })
 
 describe('image numeric draft', () => {
+  it('sends only automatic image DTO fields after clearing a workflow selection', () => {
+    const draft = { ...base(), imageInputs: {}, additionalParameters: {},
+      workflowId: undefined, workflowKind: undefined, definitionVersion: null, definitionDigest: null }
+    const payload = JSON.parse(JSON.stringify(imagePayload(draft)))
+    expect(Object.keys(payload).sort()).toEqual([
+      'positivePrompt', 'negativePrompt', 'checkpoint', 'width', 'height',
+      'steps', 'cfg', 'denoise', 'sampler', 'scheduler', 'loras',
+    ].sort())
+    expect(draft.imageInputs).toEqual({})
+  })
+
   it('allows intermediate empty fields but submits only complete numeric values', () => {
     const draft = base()
     draft.seed = ''

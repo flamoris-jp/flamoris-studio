@@ -47,7 +47,7 @@ async function show(missing = false) {
   function Editor() {
     const [form, setForm] = useState<ImageDraft>(() => restoreImageDraft(initialImageDraft('model'), {
       workflowId: reference.id, workflowKind: reference.kind, definitionVersion: 1, definitionDigest: reference.definitionDigest,
-      positivePrompt: 'same character in a new scene', seed: 42,
+      positivePrompt: 'same character in a new scene', seed: 42, imageInputs: {},
       additionalParameters: { character_strength: 0.45, style_strength: 0.3, control_strength: 0.9 },
       ...Object.fromEntries(fields.map((field, i) => [field, missing && i === 2 ? undefined : ids[i]])),
     }))
@@ -66,6 +66,7 @@ test('four references restore independently and submit opaque handles with their
   expect(button('Generate image').disabled).toBe(false)
   await act(async () => button('Generate image').click())
   expect(submit).toHaveBeenCalledTimes(1)
+  expect(submit.mock.calls[0][0]).not.toHaveProperty('imageInputs')
   expect(submit.mock.calls[0][0]).toMatchObject({
     workflowId: reference.id, definitionDigest: reference.definitionDigest,
     referenceInputId: ids[0], characterInputId: ids[1], styleInputId: ids[2], controlInputId: ids[3],
