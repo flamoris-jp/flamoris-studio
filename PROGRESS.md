@@ -1,3 +1,14 @@
+# Diagnostics release preparation — 2026-11-06
+
+- The operator authorizes PR #107 merge, immutable 1.3.1 publication and DECO PON rollout. Align package/image/workflow/owner/recipe versions and retain 1.3.0 update compatibility. No PostgreSQL schema change or generation replay.
+- Final release-head CI, publication and actual-host verification are recorded separately in the PR/deployment receipt.
+
+# Correlated diagnostics and log viewer — 2026-11-06
+
+- Studio #106: request IDs, bounded retained events, Generation/Agent/Intelligence failure attribution and authenticated Logs filters. Original upstream status is recorded before public error normalization.
+- Normal accounts see only their events; explicit operator UUID configuration permits all-account diagnostics. Browser reports contain only fixed failure kinds. Records exclude prompts, credentials, raw provider bodies and exception messages.
+- Persistence uses the existing thumbnail volume by default; no PostgreSQL migration, generation replay, runtime change or production rollout. Validation and final CI receipts are recorded in the PR.
+
 # 2026-10-29 — Studio #104
 
 Prepare H3-specific Video validation and controls alongside Wan. Local web build and 174 tests pass; backend 357 tests pass locally, with PostgreSQL-backed cases requiring CI. PostgreSQL-backed CI and real GPU/browser acceptance remain separate. No DB migration or new service configuration.

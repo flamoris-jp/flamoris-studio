@@ -90,3 +90,9 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 audio, video { max-width: 100%; }
 .intelligence-result pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; background: #14121c; border-radius: 9px; }
 .gallery-detail video { max-height: 60vh; }
+
+.diagnostic-notice { display: flex; flex-wrap: wrap; gap: .7rem; align-items: center; padding: .8rem 1rem; margin-bottom: 1rem; border: 1px solid #a07745; border-radius: .6rem; }
+.diagnostic-notice code, .diagnostic-event code { overflow-wrap: anywhere; }
+.diagnostic-event { border-top: 1px solid #5556; padding: 1rem 0; }
+.diagnostic-event p { overflow-wrap: anywhere; }
+.diagnostic-event time { font-size: .85rem; opacity: .8; }

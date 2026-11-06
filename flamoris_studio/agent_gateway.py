@@ -12,6 +12,8 @@ from uuid import UUID
 
 import httpx2
 
+from .diagnostics import upstream, transport_status
+
 CATALOG = {"health", "sessions.open", "ask_scoped", "ask_availability"}
 SETTINGS_TOOLS = {
     "sessions.continue",
@@ -70,6 +72,7 @@ class AgentTransport(httpx2.AsyncBaseTransport):
 
     async def handle_async_request(self, request):
         response = await self.inner.handle_async_request(request)
+        transport_status(response.status_code)
         if (
             300 <= response.status_code < 400
             or response.headers.get("content-encoding", "identity") != "identity"
@@ -159,86 +162,91 @@ class AgentGateway:
         marker = PRIVATE.set(True)
         callback_started = callback_done = False
         try:
-            async with asyncio.timeout(timeout):
-                async with httpx2.AsyncClient(
-                    transport=self.transport_factory(),
-                    trust_env=False,
-                    follow_redirects=False,
-                    timeout=httpx2.Timeout(timeout),
-                    headers={
-                        "Authorization": f"Bearer {self.token}",
-                        "Accept-Encoding": "identity",
-                    },
-                ) as http:
-                    response = await http.get(self.endpoint + "/api/v1/capabilities")
-                    response.raise_for_status()
-                    catalog = response.json()
-                    if (
-                        type(catalog) is not dict
-                        or catalog.get("ok") is not True
-                        or type(catalog.get("api_version")) is not int
-                        or catalog["api_version"] != 1
-                        or type(catalog.get("operations")) is not list
-                        or any(
-                            type(operation) is not str
-                            for operation in catalog["operations"]
-                        )
-                        or len(catalog["operations"]) != len(permitted)
-                        or set(catalog["operations"]) != permitted
-                    ):
-                        raise AgentError()
-                    if before_dispatch is not None:
-                        callback_started = True
-                        await before_dispatch()
-                        callback_done = True
-                    if name == "health":
-                        response = await http.get(self.endpoint + routes[name])
-                    else:
-                        response = await http.post(
-                            self.endpoint + routes[name], json=request
-                        )
-                    response.raise_for_status()
-                    data = response.json()
-                    if (
-                        type(data) is not dict
-                        or len(
-                            json.dumps(
-                                data, ensure_ascii=False, allow_nan=False
-                            ).encode()
-                        )
-                        > 128 * 1024
-                    ):
-                        raise AgentError()
-                    if data.get("ok") is not True:
-                        code = (
-                            data.get("error", {}).get("code")
-                            if type(data.get("error")) is dict
-                            else None
-                        )
-                        raise AgentError(
-                            code
-                            if code
-                            in {
-                                "busy",
-                                "principal_unavailable",
-                                "invalid_input",
-                                "input_too_large",
-                                "conversation_unavailable",
-                                "duplicate_request",
-                                "revision_conflict",
-                                "personality_forbidden",
-                                "personality_unavailable",
-                                "personality_capacity",
-                                "update_identity_mismatch",
-                                "model_forbidden",
-                                "model_selection_changed",
-                                "session_continuation_changed",
-                                "conversation_incomplete",
-                                "remote_consent_required",
-                            }
-                            else "uncertain"
-                        )
-                    return data
+            with upstream("agent", name) as diagnostic:
+                async with asyncio.timeout(timeout):
+                    async with httpx2.AsyncClient(
+                        transport=self.transport_factory(),
+                        trust_env=False,
+                        follow_redirects=False,
+                        timeout=httpx2.Timeout(timeout),
+                        headers={
+                            "Authorization": f"Bearer {self.token}",
+                            "Accept-Encoding": "identity",
+                        },
+                    ) as http:
+                        diagnostic["phase"] = "capabilities"
+                        response = await http.get(self.endpoint + "/api/v1/capabilities")
+                        diagnostic["status"] = response.status_code
+                        response.raise_for_status()
+                        catalog = response.json()
+                        if (
+                            type(catalog) is not dict
+                            or catalog.get("ok") is not True
+                            or type(catalog.get("api_version")) is not int
+                            or catalog["api_version"] != 1
+                            or type(catalog.get("operations")) is not list
+                            or any(
+                                type(operation) is not str
+                                for operation in catalog["operations"]
+                            )
+                            or len(catalog["operations"]) != len(permitted)
+                            or set(catalog["operations"]) != permitted
+                        ):
+                            raise AgentError()
+                        diagnostic.update(phase="dispatch", status=None)
+                        if before_dispatch is not None:
+                            callback_started = True
+                            await before_dispatch()
+                            callback_done = True
+                        if name == "health":
+                            response = await http.get(self.endpoint + routes[name])
+                        else:
+                            response = await http.post(
+                                self.endpoint + routes[name], json=request
+                            )
+                        diagnostic.update(phase="response", status=response.status_code)
+                        response.raise_for_status()
+                        data = response.json()
+                        if (
+                            type(data) is not dict
+                            or len(
+                                json.dumps(
+                                    data, ensure_ascii=False, allow_nan=False
+                                ).encode()
+                            )
+                            > 128 * 1024
+                        ):
+                            raise AgentError()
+                        if data.get("ok") is not True:
+                            code = (
+                                data.get("error", {}).get("code")
+                                if type(data.get("error")) is dict
+                                else None
+                            )
+                            raise AgentError(
+                                code
+                                if code
+                                in {
+                                    "busy",
+                                    "principal_unavailable",
+                                    "invalid_input",
+                                    "input_too_large",
+                                    "conversation_unavailable",
+                                    "duplicate_request",
+                                    "revision_conflict",
+                                    "personality_forbidden",
+                                    "personality_unavailable",
+                                    "personality_capacity",
+                                    "update_identity_mismatch",
+                                    "model_forbidden",
+                                    "model_selection_changed",
+                                    "session_continuation_changed",
+                                    "conversation_incomplete",
+                                    "remote_consent_required",
+                                }
+                                else "uncertain"
+                            )
+                        return data
         except AgentError:
             raise
         except Exception:

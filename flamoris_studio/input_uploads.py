@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from .auth import authenticated_user, current_user, database
 from .db import ManagedInput, now
 from .gateway import GatewayError
+from .diagnostics import emit
 from .managed_inputs import input_view, owned_input, reserve, validate_metadata, release_deleted_upload, ReceiptValidationError
 
 MAX_UPLOAD_BYTES = 8 * 1024**2
@@ -26,6 +27,7 @@ async def publish_upload(app, db, row, data):
         try:
             raw = validate_metadata(raw, row, creating=True)
         except GatewayError as exc:
+            emit("generation", "inputs.upload", "validation", reason=getattr(exc, "reason", exc.code), exc=exc)
             raise ReceiptValidationError(getattr(exc, "reason", "receipt_metadata"), code="upload_receipt_invalid") from None
         row.expires_at = datetime.fromtimestamp(raw["expires_at"], timezone.utc)
         locator = None
@@ -108,6 +110,7 @@ def mount_input_uploads(app):
                 owned_input(db, row.id, user_id)
                 return result
         except GatewayError as exc:
+            emit("generation", "inputs.upload", "validation", reason=getattr(exc, "reason", exc.code), exc=exc)
             if exc.code in {"validation", "upload_receipt_invalid"}:
                 detail = ("Image upload metadata could not be verified" if exc.code == "upload_receipt_invalid"
                           else "Image upload was rejected by the generation service")

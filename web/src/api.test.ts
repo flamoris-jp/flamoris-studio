@@ -180,3 +180,37 @@ test('upload deadline bounds a stalled response body and never replays the file'
   expect(vi.getTimerCount()).toBe(0)
 })
 
+
+test('HTTP errors retain a validated server reference and never trust arbitrary header text', async () => {
+  const ref = 'a'.repeat(32)
+  const fetch = vi.fn().mockResolvedValue({ ok: false, status: 502, headers: new Headers({ 'X-Request-ID': ref }), json: async () => ({ message: 'Generation service failed.' }) })
+  vi.stubGlobal('fetch', fetch)
+  const failure = await api.submit({}, 'csrf').catch(error => error)
+  expect(failure.requestId).toBe(ref)
+  expect(failure.message).toContain(`Reference: ${ref}`)
+  fetch.mockResolvedValue({ ok: false, status: 502, headers: new Headers({ 'X-Request-ID': 'private-header' }), json: async () => ({}) })
+  await expect(api.submit({}, 'csrf')).rejects.not.toThrow('private-header')
+  expect(fetch).toHaveBeenCalledTimes(2)
+})
+
+test('browser diagnostics send only a bounded failure kind and never retry', async () => {
+  const fetch = vi.fn().mockRejectedValue(new Error('PRIVATE connection detail'))
+  vi.stubGlobal('fetch', fetch)
+  expect(await api.reportDiagnostic('network_failure', 'csrf')).toBeUndefined()
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ kind: 'network_failure' })
+  expect(fetch).toHaveBeenCalledTimes(1)
+})
+
+test('Assistant and Intelligence specialized submissions preserve server error references and uncertainty', async () => {
+  const ref = 'b'.repeat(32)
+  const fetch = vi.fn().mockResolvedValue({ ok: false, status: 503, headers: new Headers({ 'X-Request-ID': ref }), json: async () => ({ message: 'Service unavailable.', detail: 'Service unavailable.', uncertain: true }) })
+  vi.stubGlobal('fetch', fetch)
+  const assistant = await api.assistantAsk({}, 'csrf').catch(error => error)
+  expect(assistant.requestId).toBe(ref)
+  expect(assistant.uncertain).toBe(true)
+  const intelligence = await api.intelligenceExecute({ requestId: 'request', modelId: 'local', capabilityId: 'text.generate', input: 'private', instruction: '', maxOutputTokens: 10, temperature: 0 }, 'csrf').catch(error => error)
+  expect(intelligence.requestId).toBe(ref)
+  expect(intelligence.message).toContain(ref)
+  expect(intelligence.uncertain).toBe(true)
+  expect(fetch).toHaveBeenCalledTimes(2)
+})

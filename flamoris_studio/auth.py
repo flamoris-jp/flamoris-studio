@@ -38,6 +38,8 @@ def current_user(request: Request, db: Session = Depends(database)) -> uuid.UUID
     login = db.get(LoginSession, digest(token))
     if login is None or login.expires_at <= now() or db.get(User, login.user_id) is None:
         raise HTTPException(401)
+    from .diagnostics import bind_owner
+    bind_owner(request, login.user_id)
     return login.user_id
 
 

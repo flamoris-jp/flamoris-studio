@@ -1,3 +1,7 @@
+# flamoris-studio 1.3.1
+
+Add correlated operational diagnostics and an authenticated Logs screen across Studio. Retain original upstream HTTP status, operation/phase, elapsed time and safe exception locations; connect creative error references to filtered logs. Normal accounts see their own events; operator UUID configuration enables all-account diagnostics. Bounded persistent logging uses the existing thumbnail volume and preserves account, input, request and unknown/no-replay protections. No PostgreSQL migration or new service credential. Compatible updates from 1.3.0 retain current configuration and production data. See [diagnostics](../docs/DIAGNOSTICS.md).
+
 # flamoris-studio 1.3.0
 
 Accept Controller's bounded silent MiniMax H3 video recipes alongside Wan. Apply profile-specific frame, dimension and FPS validation in both backend and form; preserve owned inputs, request/session fences and existing MP4 delivery. No database migration or new service credentials. Real model execution and browser acceptance remain separate.

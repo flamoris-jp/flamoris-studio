@@ -1,6 +1,7 @@
 """Studio policy wrapper over the shared non-MCP intelligence adapters."""
 
 import re
+import httpx
 from typing import Protocol
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -13,6 +14,8 @@ from flamoris_intelligence import (
     Settings,
     create_service,
 )
+
+from .diagnostics import upstream, transport_status, emit
 
 CAPABILITIES = {"text.generate", "reasoning.generate", "code.generate"}
 SAFE_CODES = {
@@ -74,6 +77,24 @@ def endpoint_valid(endpoint, token):
         raise IntelligenceError() from None
 
 
+class DiagnosticTransport(httpx.AsyncBaseTransport):
+    """Observe status before the shared adapter normalizes its private response."""
+    def __init__(self, inner=None):
+        self.inner = inner or httpx.AsyncHTTPTransport(retries=0)
+
+    async def handle_async_request(self, request):
+        try:
+            response = await self.inner.handle_async_request(request)
+        except Exception as exc:
+            emit("intelligence", "transport", "connect", reason="exception", exc=exc)
+            raise
+        transport_status(response.status_code)
+        return response
+
+    async def aclose(self):
+        await self.inner.aclose()
+
+
 class IntelligenceGateway:
     def __init__(self, endpoint, token="", *, transport_factory=None):
         endpoint_valid(endpoint, token)
@@ -105,7 +126,7 @@ class IntelligenceGateway:
         )
         return create_service(
             settings,
-            transport=self.transport_factory() if self.transport_factory else None,
+            transport=DiagnosticTransport(self.transport_factory() if self.transport_factory else None),
         )
 
     async def discover(self, approved):
@@ -115,7 +136,9 @@ class IntelligenceGateway:
             for pin in approved:
                 available = False
                 try:
-                    model = await service.model_available(pin["model_id"])
+                    with upstream("intelligence", "models.available") as diagnostic:
+                        diagnostic["phase"] = "discovery"
+                        model = await service.model_available(pin["model_id"])
                     available = model_matches(model, pin)
                 except ProviderError:
                     pass
@@ -145,29 +168,31 @@ class IntelligenceGateway:
         dispatched = False
         callback_started = callback_done = False
         try:
-            model = await service.model_available(approved_model["model_id"])
-            if not model_matches(model, approved_model):
-                raise IntelligenceError("contract_mismatch")
-            callback_started = True
-            await before_dispatch()
-            callback_done = True
-            dispatched = True
-            data = await service.execute(request)
-            if type(data) is not dict:
-                raise IntelligenceError("invalid_result", uncertain=True)
-            if data.get("ok") is not True:
-                error = data.get("error")
-                code = error.get("code") if type(error) is dict else None
-                if code not in SAFE_CODES or data.get("ok") is not False:
+            with upstream("intelligence", "execute") as diagnostic:
+                model = await service.model_available(approved_model["model_id"])
+                if not model_matches(model, approved_model):
+                    raise IntelligenceError("contract_mismatch")
+                callback_started = True
+                await before_dispatch()
+                callback_done = True
+                dispatched = True
+                diagnostic.update(phase="execute", status=None)
+                data = await service.execute(request)
+                if type(data) is not dict:
                     raise IntelligenceError("invalid_result", uncertain=True)
-                safe_rejection = code in {
-                    "invalid_request",
-                    "unknown_model",
-                    "unknown_capability",
-                    "context_limit",
-                    "busy",
-                }
-                raise IntelligenceError(code, uncertain=not safe_rejection)
+                if data.get("ok") is not True:
+                    error = data.get("error")
+                    code = error.get("code") if type(error) is dict else None
+                    if code not in SAFE_CODES or data.get("ok") is not False:
+                        raise IntelligenceError("invalid_result", uncertain=True)
+                    safe_rejection = code in {
+                        "invalid_request",
+                        "unknown_model",
+                        "unknown_capability",
+                        "context_limit",
+                        "busy",
+                    }
+                    raise IntelligenceError(code, uncertain=not safe_rejection)
         except IntelligenceError:
             raise
         except ProviderError as exc:
