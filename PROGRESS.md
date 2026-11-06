@@ -1,3 +1,8 @@
+# Diagnostics release preparation — 2026-11-06
+
+- The operator authorizes PR #107 merge, immutable 1.3.1 publication and DECO PON rollout. Align package/image/workflow/owner/recipe versions and retain 1.3.0 update compatibility. No PostgreSQL schema change or generation replay.
+- Final release-head CI, publication and actual-host verification are recorded separately in the PR/deployment receipt.
+
 # Correlated diagnostics and log viewer — 2026-11-06
 
 - Studio #106: request IDs, bounded retained events, Generation/Agent/Intelligence failure attribution and authenticated Logs filters. Original upstream status is recorded before public error normalization.
