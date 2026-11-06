@@ -40,7 +40,7 @@ def inspect_domain(config, resources):
 
 
 def factory(config):
-    return ApplicationOwner(config, "flamoris-studio", "1.3.1", inspect_domain)
+    return ApplicationOwner(config, "flamoris-studio", "1.3.2", inspect_domain)
 
 
 def main():
