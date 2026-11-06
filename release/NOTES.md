@@ -1,3 +1,7 @@
+# flamoris-studio 1.3.2
+
+Fix Image HTTP 422 after workflow selection by sending only the selected request contract fields. Preserve registered reference handles and declared-graph inputs without leaking editor draft fields into scalar or automatic requests. No database migration or new credentials. Compatible updates from 1.3.1 preserve configuration and stored data. Source tests do not certify actual GPU generation.
+
 # flamoris-studio 1.3.1
 
 Add correlated operational diagnostics and an authenticated Logs screen across Studio. Retain original upstream HTTP status, operation/phase, elapsed time and safe exception locations; connect creative error references to filtered logs. Normal accounts see their own events; operator UUID configuration enables all-account diagnostics. Bounded persistent logging uses the existing thumbnail volume and preserves account, input, request and unknown/no-replay protections. No PostgreSQL migration or new service credential. Compatible updates from 1.3.0 retain current configuration and production data. See [diagnostics](../docs/DIAGNOSTICS.md).
